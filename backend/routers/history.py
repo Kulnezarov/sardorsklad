@@ -1,0 +1,68 @@
+from datetime import datetime, timedelta
+from typing import List, Optional
+
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import desc
+from sqlalchemy.orm import Session
+
+import models
+import schemas
+from database import get_db
+
+router = APIRouter(prefix="/api/v1/history", tags=["history"])
+
+
+@router.get("/", response_model=List[schemas.HistoryResponse])
+def list_history(
+    db: Session = Depends(get_db),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=1000),
+    operation_type: Optional[str] = Query(None),
+    product_id: Optional[int] = Query(None),
+    reference_type: Optional[str] = Query(None),
+):
+    query = db.query(models.History)
+
+    if operation_type:
+        query = query.filter(models.History.operation_type == operation_type)
+    if product_id:
+        query = query.filter(models.History.product_id == product_id)
+    if reference_type:
+        query = query.filter(models.History.reference_type == reference_type)
+
+    return query.order_by(desc(models.History.created_at)).offset(skip).limit(limit).all()
+
+
+@router.delete("/{history_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_history(history_id: int, db: Session = Depends(get_db)):
+    record = db.query(models.History).filter(models.History.id == history_id).first()
+    if not record:
+        raise HTTPException(status_code=404, detail="History record not found")
+    db.delete(record)
+    db.commit()
+    return None
+
+
+@router.delete("/")
+def clear_all_history(db: Session = Depends(get_db)):
+    count = db.query(models.History).count()
+    db.query(models.History).delete()
+    db.commit()
+    return {"message": f"Deleted {count} history records"}
+
+
+@router.post("/cleanup")
+def cleanup_old_history(db: Session = Depends(get_db)):
+    settings = db.query(models.Settings).first()
+    retention_days = settings.history_auto_clean_days if settings else 30
+    cutoff_date = datetime.utcnow() - timedelta(days=retention_days)
+
+    count = db.query(models.History).filter(models.History.created_at < cutoff_date).count()
+    db.query(models.History).filter(models.History.created_at < cutoff_date).delete()
+    db.commit()
+
+    return {
+        "message": f"Deleted {count} old records",
+        "retention_days": retention_days,
+        "cutoff_date": cutoff_date.isoformat(),
+    }

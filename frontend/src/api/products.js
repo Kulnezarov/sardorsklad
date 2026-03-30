@@ -1,0 +1,11 @@
+import apiClient from './client';
+
+export const productsApi = {
+  getProducts: (filters = {}) => apiClient.get('/api/v1/products/', { params: filters }),
+  getProduct: (id) => apiClient.get(`/api/v1/products/${id}`),
+  createProduct: (data) => apiClient.post('/api/v1/products/', data),
+  updateProduct: (id, data) => apiClient.put(`/api/v1/products/${id}`, data),
+  deleteProduct: (id) => apiClient.delete(`/api/v1/products/${id}`),
+  getCategories: () => apiClient.get('/api/v1/products/categories/list'),
+  getStats: () => apiClient.get('/api/v1/products/stats/summary'),
+};

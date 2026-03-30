@@ -1,0 +1,269 @@
+import os
+from contextlib import asynccontextmanager
+from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from fastapi.exceptions import RequestValidationError
+from datetime import datetime
+from sqlalchemy.exc import OperationalError
+
+import database
+import models
+from routers import products, sales, reserve, history, revision, settings
+from routers import wish_orders
+from config.logger import setup_logger
+
+# ============================================================================
+# LOGGING CONFIGURATION
+# ============================================================================
+logger = setup_logger("skladpro")
+
+
+# ============================================================================
+# LIFESPAN - Startup/Shutdown
+# ============================================================================
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """
+    Manage application lifecycle.
+
+    Startup:
+    - Create database tables
+    - Initialize default settings
+
+    Shutdown:
+    - Close database connections
+    - Clean up resources
+    """
+    # STARTUP
+    logger.info("Starting SkladPro API...")
+
+    try:
+        # Create tables
+        database.create_tables()
+        database.ensure_schema_updates()
+        logger.info("✓ Database tables created")
+
+        # Initialize default settings if not exist
+        db = next(database.get_db())
+        settings_check = db.query(models.Settings).first()
+        if not settings_check:
+            default_settings = models.Settings()
+            db.add(default_settings)
+            db.commit()
+            logger.info("✓ Default settings initialized")
+        db.close()
+
+        logger.info("✓ SkladPro API startup complete")
+
+    except OperationalError as e:
+        err = str(e).lower()
+        if "could not translate host name" in err or "nodename nor servname" in err:
+            logger.error(
+                "✗ База данных: не удаётся разрешить имя хоста (DNS). "
+                "Проверьте интернет, отключите VPN при тесте, убедитесь что проект Supabase активен, "
+                "и что DATABASE_URL в .env указывает на доступный хост. "
+                "Для работы без облака: поднимите PostgreSQL локально и задайте "
+                "DATABASE_URL=postgresql://USER:PASS@localhost:5432/DBNAME"
+            )
+        logger.error(f"✗ Startup failed (БД): {e}")
+        raise
+    except Exception as e:
+        logger.error(f"✗ Startup failed: {str(e)}")
+        raise
+
+    yield
+
+    # SHUTDOWN
+    logger.info("Shutting down SkladPro API...")
+
+    try:
+        database.engine.dispose()
+        logger.info("✓ Database connections closed")
+        logger.info("✓ SkladPro API shutdown complete")
+
+    except Exception as e:
+        logger.error(f"✗ Shutdown error: {str(e)}")
+
+
+# ============================================================================
+# APP INITIALIZATION
+# ============================================================================
+app = FastAPI(
+    title="SkladPro API",
+    description="Smart inventory management system for warehouse management",
+    version="1.0.0",
+    docs_url="/api/docs",
+    redoc_url="/api/redoc",
+    openapi_url="/api/openapi.json",
+    lifespan=lifespan,
+)
+
+# ============================================================================
+# CORS MIDDLEWARE
+# ============================================================================
+ORIGINS = [
+    o.strip()
+    for o in os.getenv(
+        "ORIGINS",
+        "http://localhost:5173,http://localhost:3000,http://127.0.0.1:5173",
+    ).split(",")
+    if o.strip()
+]
+
+# Browsers send Origin with the real host (e.g. http://192.168.1.5:5173), not "localhost", when you open the app by IP.
+# Vercel production & preview: https://*.vercel.app (add your custom domain to ORIGINS in env).
+_CORS_ORIGIN_REGEX = (
+    r"^(https?://(localhost|127\.0\.0\.1|192\.168\.\d{1,3}\.\d{1,3}|10\.\d{1,3}\.\d{1,3}\.\d{1,3})(:\d+)?"
+    r"|https://([a-zA-Z0-9-]+\.)*vercel\.app)$"
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=ORIGINS,
+    allow_origin_regex=_CORS_ORIGIN_REGEX,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+    expose_headers=["*"],
+)
+
+logger.info(f"CORS enabled for: {', '.join(ORIGINS)}")
+
+
+# ============================================================================
+# EXCEPTION HANDLERS
+# ============================================================================
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    """Handle validation errors."""
+    return JSONResponse(
+        status_code=422,
+        content={
+            "detail": "Validation error",
+            "errors": exc.errors(),
+            "timestamp": datetime.utcnow().isoformat(),
+        },
+    )
+
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    """Handle unexpected errors."""
+    logger.error(f"Unhandled exception: {str(exc)}", exc_info=True)
+
+    return JSONResponse(
+        status_code=500,
+        content={
+            "error": "Internal server error",
+            "detail": str(exc) if not isinstance(exc, str) else exc,
+            "timestamp": datetime.utcnow().isoformat(),
+            "path": str(request.url),
+        },
+    )
+
+
+# ============================================================================
+# MIDDLEWARE - REQUEST LOGGING
+# ============================================================================
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    """Log incoming requests."""
+    start_time = datetime.utcnow()
+
+    response = await call_next(request)
+
+    duration = (datetime.utcnow() - start_time).total_seconds()
+
+    logger.info(
+        f"{request.method} {request.url.path} - "
+        f"Status: {response.status_code} - "
+        f"Duration: {duration:.3f}s"
+    )
+
+    return response
+
+
+# ============================================================================
+# ROUTERS
+# ============================================================================
+# Include all routers with versioned API prefixes
+app.include_router(products.router)
+app.include_router(sales.router)
+app.include_router(reserve.router)
+app.include_router(history.router)
+app.include_router(revision.router)
+app.include_router(settings.router)
+app.include_router(wish_orders.router)
+
+
+# ============================================================================
+# ROOT ENDPOINTS
+# ============================================================================
+@app.get("/")
+def read_root():
+    """Root endpoint with API info."""
+    return {
+        "name": "SkladPro",
+        "description": "Smart inventory management system",
+        "version": "1.0.0",
+        "status": "operational",
+        "endpoints": {
+            "docs": "/api/docs",
+            "redoc": "/api/redoc",
+            "openapi": "/api/openapi.json",
+        },
+        "timestamp": datetime.utcnow().isoformat(),
+    }
+
+
+@app.get("/health")
+def health_check():
+    """Health check endpoint."""
+    try:
+        # Try database connection
+        db = next(database.get_db())
+        db.query(models.Product).first()
+        db.close()
+        db_status = "healthy"
+    except Exception as e:
+        logger.error(f"Database health check failed: {str(e)}")
+        db_status = "unhealthy"
+
+    return {
+        "status": "healthy" if db_status == "healthy" else "degraded",
+        "database": db_status,
+        "timestamp": datetime.utcnow().isoformat(),
+    }
+
+
+@app.get("/api/v1/info")
+def api_info():
+    """Get API information."""
+    return {
+        "app_name": "SkladPro API",
+        "version": "1.0.0",
+        "environment": os.getenv("ENVIRONMENT", "development"),
+        "database_url": os.getenv("DATABASE_URL", "").split("@")[1] if "@" in os.getenv("DATABASE_URL", "") else "configured",
+        "cache_enabled": os.getenv("CACHE_ENABLED", "true").lower() == "true",
+        "notifications_enabled": os.getenv("NOTIFICATIONS_ENABLED", "true").lower() == "true",
+    }
+
+
+# ============================================================================
+# RUN
+# ============================================================================
+if __name__ == "__main__":
+    import uvicorn
+
+    host = os.getenv("API_HOST", "0.0.0.0")
+    port = int(os.getenv("PORT", os.getenv("API_PORT", 8000)))
+    reload = os.getenv("ENVIRONMENT", "development") == "development"
+
+    uvicorn.run(
+        "main:app",
+        host=host,
+        port=port,
+        reload=reload,
+        log_level="info",
+    )

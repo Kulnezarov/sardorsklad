@@ -1,0 +1,923 @@
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import toast from 'react-hot-toast';
+import {
+  FiPlus, FiEdit2, FiTrash2, FiSearch, FiAlertTriangle,
+  FiMic, FiMicOff, FiGrid, FiShoppingCart, FiLock, FiUnlock, FiRefreshCw, FiMaximize2,
+  FiTag, FiUpload, FiDownload, FiX, FiLoader, FiClock, FiPackage,
+} from 'react-icons/fi';
+import { Button, Modal, Input, TextArea, LoadingSpinner, Alert } from '../components/ui';
+import { productApi } from '../api/client';
+import { importExcelStream } from '../api/importExcelStream';
+import { settingsApi } from '../api/settings';
+import {
+  isSpeechRecognitionSupported,
+  isAddProductCommand,
+  startListening,
+  parseVoiceSmart,
+} from '../voice/productVoiceFill';
+import { generateEAN13 } from '../utils/barcodeGen';
+import LabelPrint from '../components/LabelPrint';
+import QRCode from 'qrcode.react';
+import JsBarcode from 'jsbarcode';
+
+/* ── helpers ── */
+function formatImportError(err) {
+  if (!err || err.code === 'ERR_CANCELED') return '';
+  const status = err.response?.status;
+  const data = err.response?.data;
+  const d = data?.detail;
+  if (typeof d === 'string') return d;
+  if (Array.isArray(d)) return d.map((e) => (typeof e === 'object' ? e.msg || JSON.stringify(e) : String(e))).join('; ');
+  if (err.message === 'Network Error') return 'Нет связи с сервером.';
+  if (status === 413) return 'Файл слишком большой.';
+  return err.message || (status ? `Ошибка сервера (${status})` : 'Неизвестная ошибка импорта');
+}
+
+const CAT_COLORS = [
+  { bg: 'rgba(99,102,241,0.14)', color: '#4338ca' },
+  { bg: 'rgba(16,185,129,0.14)', color: '#047857' },
+  { bg: 'rgba(245,158,11,0.14)', color: '#b45309' },
+  { bg: 'rgba(239,68,68,0.14)', color: '#b91c1c' },
+  { bg: 'rgba(6,182,212,0.14)', color: '#0e7490' },
+  { bg: 'rgba(168,85,247,0.14)', color: '#7e22ce' },
+  { bg: 'rgba(234,179,8,0.14)', color: '#a16207' },
+  { bg: 'rgba(59,130,246,0.14)', color: '#1d4ed8' },
+];
+function getCatColor(cat) {
+  if (!cat) return CAT_COLORS[0];
+  let h = 0;
+  for (let i = 0; i < cat.length; i++) h = (h * 31 + cat.charCodeAt(i)) & 0xfffff;
+  return CAT_COLORS[h % CAT_COLORS.length];
+}
+
+const emptyForm = () => ({
+  id: null, name: '', sku: '', barcode: '', brand: '', category: '',
+  purchase_price: 0, sale_price: 0, cny_price: '', delivery_cost_kzt: '',
+  quantity: 0, min_quantity: 0, description: '', supplier: '', storage_location: '',
+});
+
+const num = (v) => { if (v === '' || v == null) return 0; const n = parseFloat(String(v).replace(',', '.')); return Number.isFinite(n) ? n : 0; };
+const optionalNum = (v) => { if (v === '' || v == null) return null; const n = parseFloat(String(v).replace(',', '.')); return Number.isFinite(n) ? n : null; };
+
+function buildPayload(formData, cnyRate = 65) {
+  const skuTrim = formData.sku?.trim();
+  const cny = optionalNum(formData.cny_price);
+  const del = optionalNum(formData.delivery_cost_kzt) || 0;
+  let purchase = num(formData.purchase_price);
+  if (!purchase && cny != null && cny > 0) purchase = Number(cny) * Number(cnyRate) + del;
+  return {
+    name: formData.name.trim(),
+    sku: skuTrim || undefined,
+    barcode: formData.barcode?.trim() || null,
+    brand: formData.brand?.trim() || null,
+    category: formData.category?.trim() || null,
+    description: formData.description?.trim() || null,
+    supplier: formData.supplier?.trim() || null,
+    location_zone: formData.storage_location?.trim() || null,
+    purchase_price: purchase,
+    sale_price: num(formData.sale_price),
+    cny_price: cny,
+    delivery_cost_kzt: optionalNum(formData.delivery_cost_kzt),
+    quantity: parseInt(formData.quantity, 10) || 0,
+    min_quantity: parseInt(formData.min_quantity, 10) || 0,
+  };
+}
+
+function mergeVoiceIntoForm(prev, updates) {
+  if (!updates) return prev;
+  const next = { ...prev };
+  Object.entries(updates).forEach(([k, v]) => {
+    if (v === undefined || v === null) return;
+    if (['name','brand','category','supplier'].includes(k)) next[k] = String(v);
+    else if (k === 'storage_location') next.storage_location = String(v);
+    else if (['cny_price','delivery_cost_kzt'].includes(k)) next[k] = String(v);
+    else if (k === 'sale_price') next.sale_price = Number(v) || 0;
+    else if (k === 'quantity') next.quantity = Number(v) || 0;
+    else next[k] = v;
+  });
+  return next;
+}
+
+function genMathProblem() {
+  const a = Math.floor(Math.random() * 20) + 5;
+  const b = Math.floor(Math.random() * 20) + 5;
+  return { problem: `${a} + ${b}`, answer: String(a + b) };
+}
+
+const STALE_MS = 30 * 24 * 60 * 60 * 1000;
+const PRODUCTS_PAGE_SIZE = 30;
+function isStale(p) {
+  if (!p.quantity || p.quantity <= 0) return false;
+  const now = Date.now();
+  const created = p.created_at ? new Date(p.created_at).getTime() : null;
+  if (created && now - created < STALE_MS) return false;
+  if (!p.last_sale_date) return true;
+  return now - new Date(p.last_sale_date).getTime() > STALE_MS;
+}
+
+/* ── component ── */
+const Products = () => {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  const [searchInput, setSearchInput] = useState('');
+  const [search, setSearch] = useState('');
+  const [selectedCategory, setSelectedCategory] = useState('');
+  const [showStale, setShowStale] = useState(false);
+
+  const [showForm, setShowForm] = useState(false);
+  const [formData, setFormData] = useState(emptyForm);
+  const [formError, setFormError] = useState('');
+  const [barcodeLocked, setBarcodeLocked] = useState(false);
+  const [showQrPanel, setShowQrPanel] = useState(false);
+
+  const [sideProduct, setSideProduct] = useState(null);
+  const [deleteModal, setDeleteModal] = useState(null);
+  const [hoveredRowId, setHoveredRowId] = useState(null);
+
+  const [showPrint, setShowPrint] = useState(false);
+  const [printProduct, setPrintProduct] = useState(null);
+  const [printType, setPrintType] = useState('barcode');
+  const [showPrintSuggest, setShowPrintSuggest] = useState(false);
+  const [savedProduct, setSavedProduct] = useState(null);
+
+  const [voiceListening, setVoiceListening] = useState(false);
+  const [voiceLastText, setVoiceLastText] = useState('');
+
+  const [importReport, setImportReport] = useState(null);
+  const [importOverlay, setImportOverlay] = useState(null);
+  const [importError, setImportError] = useState('');
+
+  const [scanNotFound, setScanNotFound] = useState(null); // scanned barcode string when not found
+
+  const importAbortRef = useRef(null);
+  const importFileRef = useRef(null);
+  const voiceCtlRef = useRef(null);
+  const barcodeCanvasRef = useRef(null);
+  const formRef = useRef(formData);
+  const productsRef = useRef([]);
+  const scanBufRef = useRef('');
+  const scanLastRef = useRef(0);
+  const queryClient = useQueryClient();
+
+  useEffect(() => { formRef.current = formData; }, [formData]);
+
+  // Debounce search 300ms
+  useEffect(() => {
+    const t = setTimeout(() => setSearch(searchInput), 300);
+    return () => clearTimeout(t);
+  }, [searchInput]);
+
+  const { data: settingsRow } = useQuery({
+    queryKey: ['settings-row'],
+    queryFn: async () => { try { const r = await settingsApi.getSettings(); return r.data; } catch { return { cny_rate: 65 }; } },
+    staleTime: 120000,
+  });
+  const cnyRate = Number(settingsRow?.cny_rate) || 65;
+
+  // Voice: open form on openVoiceAdd from nav
+  // Also handles openAdd + barcode from Sales page scanner
+  useEffect(() => {
+    if (location.state?.openVoiceAdd) {
+      setFormData({ ...emptyForm(), barcode: generateEAN13() });
+      setFormError(''); setBarcodeLocked(false); setShowQrPanel(false); setShowForm(true); setVoiceLastText('');
+      navigate(location.pathname, { replace: true, state: {} });
+    } else if (location.state?.openAdd) {
+      const bc = location.state.barcode || '';
+      setFormData({ ...emptyForm(), barcode: bc });
+      setFormError(''); setBarcodeLocked(Boolean(bc)); setShowQrPanel(false); setShowForm(true);
+      navigate(location.pathname, { replace: true, state: {} });
+    }
+  }, [location.state, location.pathname, navigate]);
+
+  // Barcode canvas
+  useEffect(() => {
+    if (!showForm || !formData.barcode || !barcodeCanvasRef.current) return;
+    try {
+      JsBarcode(barcodeCanvasRef.current, String(formData.barcode).replace(/\D/g, '').slice(0, 13) || '0', { format: 'CODE128', displayValue: true, width: 2, height: 56, margin: 6 });
+    } catch { try { JsBarcode(barcodeCanvasRef.current, String(formData.barcode), { format: 'CODE128', displayValue: true, width: 2, height: 56, margin: 6 }); } catch (_) {} }
+  }, [showForm, formData.barcode]);
+
+  const {
+    data: productsPages,
+    isLoading,
+    isError,
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+  } = useInfiniteQuery({
+    queryKey: ['products', search, selectedCategory],
+    queryFn: async ({ pageParam = 0 }) => {
+      try {
+        const r = await productApi.getAll({
+          search: search || undefined,
+          category: selectedCategory || undefined,
+          skip: pageParam,
+          limit: PRODUCTS_PAGE_SIZE,
+        });
+        return r.data || [];
+      }
+      catch (err) { console.error('Error fetching products:', err); toast.error('✕ Не удалось загрузить товары'); return []; }
+    },
+    getNextPageParam: (lastPage, allPages) => {
+      if (!lastPage || lastPage.length < PRODUCTS_PAGE_SIZE) return undefined;
+      return allPages.length * PRODUCTS_PAGE_SIZE;
+    },
+    initialPageParam: 0,
+    staleTime: 30000,
+  });
+  const products = useMemo(() => (productsPages?.pages || []).flat(), [productsPages]);
+
+  useEffect(() => { productsRef.current = products; }, [products]);
+
+  const { data: categories = [] } = useQuery({
+    queryKey: ['categories'],
+    queryFn: async () => {
+      try {
+        const r = await productApi.getCategories({ limit: 30 });
+        return r.data || [];
+      } catch {
+        return [];
+      }
+    },
+  });
+
+  // Stale filter from URL params (from Dashboard)
+  const stockFilter = searchParams.get('stock');
+  useEffect(() => {
+    if (stockFilter === 'stale') { setShowStale(true); setSearchParams((p) => { const n = new URLSearchParams(p); n.delete('stock'); return n; }, { replace: true }); }
+    else if (stockFilter === 'out') { setSearchParams((p) => { const n = new URLSearchParams(p); n.delete('stock'); return n; }, { replace: true }); }
+    else if (stockFilter === 'low') { setSearchParams((p) => { const n = new URLSearchParams(p); n.delete('stock'); return n; }, { replace: true }); }
+  }, [stockFilter]);
+
+  useEffect(() => {
+    const pid = searchParams.get('product');
+    if (!pid || !products.length) return;
+    const p = products.find((x) => String(x.id) === pid);
+    if (p) { setSideProduct(p); setSearchParams((prev) => { const n = new URLSearchParams(prev); n.delete('product'); return n; }, { replace: true }); }
+  }, [products, searchParams, setSearchParams]);
+
+  const displayProducts = useMemo(() => {
+    if (showStale) return products.filter(isStale);
+    return products;
+  }, [products, showStale]);
+
+  /* mutations */
+  const saveMutation = useMutation({
+    mutationFn: (payload) => { const id = formRef.current?.id; return id ? productApi.update(id, payload) : productApi.create(payload); },
+    onSuccess: (res) => {
+      const wasEdit = Boolean(formRef.current?.id);
+      toast.success(wasEdit ? '✓ Товар обновлён' : '✓ Товар создан');
+      queryClient.invalidateQueries({ queryKey: ['products'] });
+      queryClient.invalidateQueries({ queryKey: ['categories'] });
+      if (!wasEdit && res.data) { setSavedProduct(res.data); setShowPrintSuggest(true); }
+      resetForm();
+    },
+    onError: (err) => {
+      const message = err.response?.data?.detail || 'Ошибка при сохранении товара';
+      toast.error(`✕ ${message}`);
+      setFormError(typeof message === 'string' ? message : 'Ошибка при сохранении');
+    },
+  });
+
+  const importMutation = useMutation({
+    mutationFn: (file) => {
+      const controller = new AbortController();
+      importAbortRef.current = controller;
+      return importExcelStream(file, {
+        signal: controller.signal,
+        onUploadProgress: (ev) => {
+          const { loaded, total } = ev;
+          setImportOverlay((prev) => {
+            if (!prev) return prev;
+            if (total != null && total > 0) { const pct = Math.min(100, Math.round((loaded * 100) / total)); return { ...prev, uploadPct: pct, phase: loaded >= total ? 'processing' : 'upload' }; }
+            return { ...prev, uploadPct: null, phase: 'upload' };
+          });
+        },
+        onServerProgress: (current, total) => {
+          setImportOverlay((prev) => {
+            if (!prev) return prev;
+            const serverPct = total > 0 ? Math.min(100, Math.round((current * 100) / total)) : null;
+            return { ...prev, phase: 'processing', serverCurrent: current, serverTotal: total, serverPct };
+          });
+        },
+      });
+    },
+    onMutate: (file) => { setImportError(''); setImportOverlay({ fileName: file.name, uploadPct: 0, phase: 'upload', serverCurrent: null, serverTotal: null, serverPct: null }); },
+    onSuccess: (res) => {
+      setImportError('');
+      queryClient.invalidateQueries({ queryKey: ['products'] });
+      queryClient.invalidateQueries({ queryKey: ['categories'] });
+      const { created, skipped } = res.data || {};
+      const n = skipped?.length ?? 0;
+      toast.success(n > 0 ? `Импорт: добавлено ${created ?? 0}, пропущено ${n}` : `Импорт: добавлено ${created ?? 0}`);
+      setImportReport({ created: created ?? 0, skipped: skipped || [] });
+    },
+    onError: (err) => {
+      if (err?.code === 'ERR_CANCELED') { toast('Импорт отменён', { icon: '⏹️' }); return; }
+      const msg = formatImportError(err) || err?.message || 'Ошибка импорта';
+      setImportError(msg); toast.error(`Импорт: ${msg}`);
+    },
+    onSettled: () => { importAbortRef.current = null; setImportOverlay(null); },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: async (rawId) => { const id = Number(rawId); if (!Number.isInteger(id) || id <= 0) throw new Error('Некорректный ID'); return productApi.delete(id); },
+    onSuccess: async (_r, deletedId) => {
+      toast.success('✓ Товар удалён');
+      setSideProduct((p) => (p && Number(p.id) === Number(deletedId) ? null : p));
+      await queryClient.invalidateQueries({ queryKey: ['products'], refetchType: 'all' });
+      setDeleteModal(null);
+    },
+    onError: (err) => {
+      const d = err.response?.data?.detail;
+      let msg = 'Ошибка при удалении';
+      if (typeof d === 'string') msg = d;
+      else if (Array.isArray(d)) msg = d.map((x) => x?.msg || JSON.stringify(x)).join('; ');
+      else if (err.message) msg = err.message;
+      toast.error(`✕ ${msg}`);
+    },
+  });
+
+  /* form helpers */
+  const resetForm = () => { stopVoice(); setFormData(emptyForm()); setShowForm(false); setFormError(''); setBarcodeLocked(false); setShowQrPanel(false); setVoiceLastText(''); };
+  const stopVoice = () => { voiceCtlRef.current?.stop?.(); voiceCtlRef.current?.abort?.(); voiceCtlRef.current = null; setVoiceListening(false); };
+
+  const applyVoiceResult = (text) => {
+    setVoiceLastText(text);
+    if (isAddProductCommand(text) && !showForm) { setFormData({ ...emptyForm(), barcode: generateEAN13() }); setBarcodeLocked(false); setShowForm(true); return; }
+    if (!showForm) return;
+    const parsed = parseVoiceSmart(text);
+    if (parsed.command === 'stop') { toast.success('Микрофон выключен'); return; }
+    if (parsed.command === 'save') {
+      const fd = formRef.current;
+      if (!fd.name?.trim()) { toast.error('Укажите название'); return; }
+      if (num(fd.sale_price) <= 0) { toast.error('Укажите цену продажи'); return; }
+      saveMutation.mutate(buildPayload(fd, cnyRate)); return;
+    }
+    if (parsed.updates && Object.keys(parsed.updates).length) { setFormData((prev) => mergeVoiceIntoForm(prev, parsed.updates)); toast.success('Готово'); return; }
+    toast('Не распознано', { icon: '🎤' });
+  };
+
+  const toggleVoiceFill = () => {
+    if (voiceListening) { stopVoice(); return; }
+    if (!isSpeechRecognitionSupported()) { toast.error('Голос не поддерживается'); return; }
+    setVoiceListening(true); setVoiceLastText('');
+    voiceCtlRef.current = startListening({
+      continuous: false,
+      onInterim: (t) => setVoiceLastText(t),
+      onResult: (finalText) => { stopVoice(); applyVoiceResult(finalText); },
+      onError: (msg) => { toast.error(msg); stopVoice(); },
+    });
+  };
+
+  const listenForAddProductPhrase = () => {
+    if (!isSpeechRecognitionSupported()) { toast.error('Голос не поддерживается'); return; }
+    stopVoice(); setVoiceListening(true); setVoiceLastText('');
+    voiceCtlRef.current = startListening({
+      continuous: false,
+      onInterim: (t) => setVoiceLastText(t),
+      onResult: (finalText) => {
+        stopVoice();
+        if (isAddProductCommand(finalText)) { setFormData({ ...emptyForm(), barcode: generateEAN13() }); setFormError(''); setBarcodeLocked(false); setShowForm(true); toast.success('Форма открыта'); }
+        else { toast('Скажите: «добавить товар»', { icon: '🎤' }); }
+      },
+      onError: (msg) => { toast.error(msg); stopVoice(); },
+    });
+  };
+
+  useEffect(() => () => stopVoice(), []);
+
+  /* ── Global barcode scanner (hardware) ── */
+  useEffect(() => {
+    const handleKey = (e) => {
+      // Skip if a real input / textarea / select is focused (user is typing)
+      const active = document.activeElement;
+      const tag = active?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+
+      const now = Date.now();
+      const gap = now - scanLastRef.current;
+
+      if (e.key === 'Enter') {
+        const buf = scanBufRef.current.trim();
+        scanBufRef.current = '';
+        scanLastRef.current = 0;
+        if (buf.length < 3) return;
+        // Search product
+        const found = productsRef.current.find(
+          (p) => p.barcode === buf || p.sku === buf
+        );
+        if (found) {
+          setSideProduct(found);
+        } else {
+          setScanNotFound(buf);
+        }
+        return;
+      }
+
+      // Reset buffer if gap is too long (not a scanner)
+      if (gap > 120) scanBufRef.current = '';
+      scanLastRef.current = now;
+
+      if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        scanBufRef.current += e.key;
+      }
+    };
+
+    document.addEventListener('keydown', handleKey);
+    return () => document.removeEventListener('keydown', handleKey);
+  }, []);
+
+  const handleEdit = (product) => {
+    setFormData({ ...emptyForm(), ...product, sku: product.sku || '', cny_price: product.cny_price != null ? String(product.cny_price) : '', delivery_cost_kzt: product.delivery_cost_kzt != null ? String(product.delivery_cost_kzt) : '', supplier: product.supplier || '', storage_location: product.location_zone || '' });
+    setShowForm(true); setBarcodeLocked(true); setShowQrPanel(false); setFormError('');
+    setSideProduct(null);
+  };
+
+  const handleSubmit = (e) => {
+    e?.preventDefault?.(); setFormError('');
+    if (!formData.name?.trim()) { setFormError('Название товара обязательно'); return; }
+    if (num(formData.sale_price) <= 0) { setFormError('Цена продажи должна быть больше 0'); return; }
+    stopVoice(); saveMutation.mutate(buildPayload(formData, cnyRate));
+  };
+
+  const openNew = () => { setFormData({ ...emptyForm(), barcode: generateEAN13() }); setFormError(''); setBarcodeLocked(false); setShowQrPanel(false); setShowForm(true); };
+
+  const openDeleteConfirm = (product, e) => {
+    e?.stopPropagation?.();
+    const { problem, answer } = genMathProblem();
+    setDeleteModal({ product, problem, answer, input: '' });
+  };
+
+  const openPrintForRow = (product, e) => {
+    e?.stopPropagation?.();
+    setPrintProduct(product); setPrintType('barcode'); setShowPrint(true);
+  };
+
+  const handleExportExcel = async () => {
+    try {
+      const r = await productApi.exportExcel();
+      const blob = new Blob([r.data], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      let name = `skladpro_${new Date().toISOString().slice(0, 16).replace(/[T:]/g, '-')}.xlsx`;
+      const cd = r.headers['content-disposition'];
+      if (cd) { const utf = cd.match(/filename\*=UTF-8''([^;\s]+)/i); if (utf) { try { name = decodeURIComponent(utf[1]); } catch (_) {} } else { const m = cd.match(/filename="([^"]+)"/i); if (m) name = m[1]; } }
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a'); a.href = url; a.download = name; a.click(); URL.revokeObjectURL(url);
+      toast.success('Файл Excel скачан');
+    } catch { toast.error('Не удалось выгрузить каталог'); }
+  };
+
+  /* computed */
+  const profitPct = (row) => {
+    const pp = Number(row.purchase_price) || 0;
+    const sp = Number(row.sale_price) || 0;
+    if (row.profit_percent != null && row.profit_percent !== '') return Number(row.profit_percent).toFixed(1);
+    if (pp <= 0) return null;
+    return (((sp - pp) / pp) * 100).toFixed(1);
+  };
+
+  const estPurchaseKzt = (optionalNum(formData.cny_price) || 0) * cnyRate + (optionalNum(formData.delivery_cost_kzt) || 0);
+  const profitPreview = estPurchaseKzt > 0 && num(formData.sale_price) > 0
+    ? (((num(formData.sale_price) - estPurchaseKzt) / estPurchaseKzt) * 100).toFixed(1)
+    : num(formData.purchase_price) > 0 && num(formData.sale_price) > 0
+      ? (((num(formData.sale_price) - num(formData.purchase_price)) / num(formData.purchase_price)) * 100).toFixed(1)
+      : '0';
+
+  const staleCount = useMemo(() => products.filter(isStale).length, [products]);
+  const totalPurchaseValue = useMemo(() => products.reduce((s, p) => s + (parseFloat(p.purchase_price || 0) * (p.quantity || 0)), 0), [products]);
+
+  const listId = 'product-category-suggestions';
+
+  if (isLoading) return <LoadingSpinner message="Загружаем товары..." />;
+
+  /* ─────────── RENDER ─────────── */
+  return (
+    <div className="products-page-shell"
+      style={{ padding: '10px 14px 0', maxWidth: '1440px', margin: '0 auto' }}
+    >
+
+      {/* Import progress overlay */}
+      {importOverlay && (
+        <div className="import-progress-overlay" role="alertdialog" aria-busy="true">
+          <div className="import-progress-card">
+            <div style={{ fontSize: 15, fontWeight: 700, wordBreak: 'break-word' }}>{importOverlay.fileName}</div>
+            <div style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 8, display: 'flex', alignItems: 'center', gap: 8, minHeight: 22 }}>
+              {(importOverlay.phase === 'processing' && (importOverlay.serverTotal == null || importOverlay.serverPct == null)) || (importOverlay.phase === 'upload' && importOverlay.uploadPct == null)
+                ? <FiLoader size={18} style={{ animation: 'spin 1s linear infinite', flexShrink: 0 }} /> : null}
+              <span>
+                {importOverlay.phase === 'processing' && importOverlay.serverTotal != null && importOverlay.serverTotal > 0 && importOverlay.serverCurrent != null
+                  ? `Строки: ${importOverlay.serverCurrent} / ${importOverlay.serverTotal} (${importOverlay.serverPct ?? 0}%)`
+                  : importOverlay.phase === 'processing' ? 'Обработка на сервере…'
+                  : importOverlay.uploadPct == null ? 'Отправка файла…'
+                  : `Загрузка: ${importOverlay.uploadPct}%`}
+              </span>
+            </div>
+            <div className={`import-progress-track ${importOverlay.phase === 'upload' && importOverlay.uploadPct == null ? 'import-progress-indeterminate' : importOverlay.phase === 'processing' && (importOverlay.serverTotal === 0 || importOverlay.serverPct == null || importOverlay.serverTotal == null) ? 'import-progress-indeterminate' : ''}`}>
+              <div className="import-progress-fill" style={{ width: importOverlay.phase === 'upload' && importOverlay.uploadPct == null ? undefined : importOverlay.phase === 'processing' && importOverlay.serverTotal != null && importOverlay.serverTotal > 0 && importOverlay.serverPct != null ? `${importOverlay.serverPct}%` : importOverlay.phase === 'processing' ? undefined : `${importOverlay.uploadPct ?? 0}%` }} />
+            </div>
+            <div style={{ marginTop: 18, display: 'flex', justifyContent: 'flex-end' }}>
+              <Button variant="secondary" type="button" icon={FiX} onClick={() => importAbortRef.current?.abort()}>Отменить</Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Page header ── */}
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', marginBottom: 16 }}>
+        <div>
+          <h1 className="ios-mega-title">Каталог</h1>
+          <p style={{ margin: '5px 0 0', fontSize: 13, color: 'var(--text-muted)', fontWeight: 500 }}>
+            {displayProducts.length} из {products.length} позиций · {Math.round(totalPurchaseValue).toLocaleString('ru-RU')} ₸
+          </p>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          <button type="button" className="btn-ios-secondary" onClick={() => importFileRef.current?.click()} disabled={importMutation.isPending} style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '9px 14px', borderRadius: 12, border: '1px solid var(--border)', background: 'var(--surface)', fontWeight: 600, fontSize: 13, cursor: 'pointer', color: 'var(--text)', transition: 'var(--transition)' }}>
+            <FiUpload size={15} /> Импорт Excel
+          </button>
+          <button type="button" onClick={handleExportExcel} style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '9px 14px', borderRadius: 12, border: '1px solid var(--border)', background: 'var(--surface)', fontWeight: 600, fontSize: 13, cursor: 'pointer', color: 'var(--text)', transition: 'var(--transition)' }}>
+            <FiDownload size={15} /> Экспорт
+          </button>
+          <input ref={importFileRef} type="file" accept=".xlsx,.xlsm,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" style={{ display: 'none' }} onChange={(e) => { const f = e.target.files?.[0]; if (f) importMutation.mutate(f); e.target.value = ''; }} />
+          {isSpeechRecognitionSupported() && (
+            <button type="button" onClick={voiceListening ? stopVoice : listenForAddProductPhrase} style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '9px 14px', borderRadius: 12, border: '1px solid var(--border)', background: voiceListening ? 'rgba(239,68,68,0.1)' : 'var(--surface)', fontWeight: 600, fontSize: 13, cursor: 'pointer', color: voiceListening ? 'var(--danger)' : 'var(--text)', transition: 'var(--transition)' }}>
+              {voiceListening ? <FiMicOff size={15} /> : <FiMic size={15} />}
+              Голос
+            </button>
+          )}
+          <button type="button" onClick={openNew} style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '9px 16px', borderRadius: 12, border: 'none', background: 'linear-gradient(135deg, #6366f1, #7c3aed)', color: '#fff', fontWeight: 600, fontSize: 13, cursor: 'pointer', boxShadow: '0 6px 20px rgba(99,102,241,0.35)' }}>
+            <FiPlus size={16} strokeWidth={2.5} /> Добавить товар
+          </button>
+        </div>
+      </div>
+
+      {/* ── Errors ── */}
+      {isError && <Alert type="danger" title="Ошибка загрузки" message="Не удалось загрузить список товаров." icon={FiAlertTriangle} />}
+      {importError && <div style={{ marginBottom: 12 }}><Alert type="danger" title="Ошибка импорта Excel" message={importError} icon={FiAlertTriangle} onClose={() => setImportError('')} /></div>}
+
+      {/* ── Search + categories ── */}
+      <div className="ios-glass-panel" style={{ padding: '14px 16px', marginBottom: 12 }}>
+        <div className="catalog-search-wrap" style={{ marginBottom: 10 }}>
+          <FiSearch className="catalog-search-icon" size={17} />
+          <input
+            className="catalog-search-input"
+            placeholder="Поиск по названию, марке, штрих-коду…"
+            value={searchInput}
+            onChange={(e) => setSearchInput(e.target.value)}
+            aria-label="Поиск"
+          />
+        </div>
+        <div className="catalog-chips-scroll">
+          <button type="button" className={`catalog-chip ${selectedCategory === '' && !showStale ? 'catalog-chip-active' : ''}`} onClick={() => { setSelectedCategory(''); setShowStale(false); }}>Все</button>
+          {categories.map((cat) => (
+            <button key={cat} type="button" className={`catalog-chip ${selectedCategory === cat && !showStale ? 'catalog-chip-active' : ''}`} onClick={() => { setSelectedCategory(cat); setShowStale(false); }}>{cat}</button>
+          ))}
+          <button type="button" className={`catalog-chip ${showStale ? 'catalog-chip-stale' : 'catalog-chip-stale-off'}`} onClick={() => { setShowStale((s) => !s); setSelectedCategory(''); }}>
+            <FiClock size={13} style={{ marginRight: 5 }} />Залежалось {staleCount > 0 && <span style={{ marginLeft: 4, background: showStale ? 'rgba(255,255,255,0.28)' : 'rgba(251,191,36,0.35)', borderRadius: 8, padding: '1px 6px', fontSize: 11 }}>{staleCount}</span>}
+          </button>
+        </div>
+      </div>
+
+      {/* ── Table ── */}
+      <div className="products-table-scroll" style={{ marginBottom: 0 }}>
+        {displayProducts.length === 0 ? (
+          <div style={{ padding: '48px 16px', textAlign: 'center', color: 'var(--text-muted)' }}>
+            <FiPackage size={36} style={{ marginBottom: 12, opacity: 0.4 }} />
+            <div style={{ fontSize: 15, fontWeight: 600 }}>{search || selectedCategory || showStale ? 'Ничего не найдено по фильтрам' : 'Добавьте первый товар'}</div>
+          </div>
+        ) : (
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
+            <thead>
+              <tr style={{ background: 'var(--bg-secondary)' }}>
+                {['Штрих-код', 'Название', 'Марка', 'Категория', 'Закуп', 'Продажа', 'Прибыль', 'Место', 'Остаток', ''].map((h) => (
+                  <th key={h} style={{ padding: '11px 14px', textAlign: 'left', fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', whiteSpace: 'nowrap', boxShadow: '0 1px 0 var(--border)' }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {displayProducts.map((row) => {
+                const qty = Number(row.quantity) || 0;
+                const stale = isStale(row);
+                const pp = profitPct(row);
+                const ppNum = pp ? parseFloat(pp) : null;
+                const catColor = getCatColor(row.category);
+                const isHovered = hoveredRowId === row.id;
+                return (
+                  <tr
+                    key={row.id}
+                    onClick={() => setSideProduct(row)}
+                    onMouseEnter={() => setHoveredRowId(row.id)}
+                    onMouseLeave={() => setHoveredRowId(null)}
+                    style={{
+                      cursor: 'pointer',
+                      borderBottom: '1px solid var(--border-light)',
+                      background: stale && showStale ? 'rgba(251,191,36,0.08)' : isHovered ? 'rgba(99,102,241,0.05)' : 'transparent',
+                      transition: 'background 0.18s',
+                    }}
+                  >
+                    <td style={{ padding: '12px 14px', fontFamily: 'ui-monospace,monospace', fontSize: 12, color: 'var(--text-muted)', fontWeight: 600, whiteSpace: 'nowrap' }}>{row.barcode || row.sku || '—'}</td>
+                    <td style={{ padding: '12px 14px', fontWeight: 700, color: 'var(--text)', minWidth: 140, maxWidth: 220 }}>
+                      <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.name}</div>
+                    </td>
+                    <td style={{ padding: '12px 14px', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>{row.brand || <span style={{ color: 'var(--text-muted)' }}>—</span>}</td>
+                    <td style={{ padding: '12px 14px' }}>
+                      {row.category
+                        ? <span style={{ display: 'inline-flex', alignItems: 'center', borderRadius: 999, padding: '3px 10px', fontSize: 12, fontWeight: 600, background: catColor.bg, color: catColor.color, whiteSpace: 'nowrap' }}>{row.category}</span>
+                        : <span style={{ color: 'var(--text-muted)' }}>—</span>}
+                    </td>
+                    <td style={{ padding: '12px 14px', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>{Number(row.purchase_price || 0).toLocaleString('ru-RU')} ₸</td>
+                    <td style={{ padding: '12px 14px', fontWeight: 700, color: 'var(--text)', whiteSpace: 'nowrap' }}>{Number(row.sale_price || 0).toLocaleString('ru-RU')} ₸</td>
+                    <td style={{ padding: '12px 14px' }}>
+                      {ppNum != null
+                        ? <span style={{ display: 'inline-flex', alignItems: 'center', borderRadius: 999, padding: '3px 10px', fontSize: 12, fontWeight: 700, background: ppNum >= 50 ? 'rgba(16,185,129,0.14)' : 'rgba(245,158,11,0.14)', color: ppNum >= 50 ? '#047857' : '#b45309', whiteSpace: 'nowrap' }}>{pp}%</span>
+                        : <span style={{ color: 'var(--text-muted)' }}>—</span>}
+                    </td>
+                    <td style={{ padding: '12px 14px', fontFamily: 'ui-monospace,monospace', fontWeight: 600, fontSize: 12, color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>{row.location_zone || '—'}</td>
+                    <td style={{ padding: '12px 14px', fontWeight: 700, color: qty === 0 ? 'var(--danger)' : qty <= 5 ? '#d97706' : 'var(--success)', whiteSpace: 'nowrap' }}>{qty} шт</td>
+                    <td style={{ padding: '12px 10px', textAlign: 'right' }}>
+                      <div style={{ display: 'flex', gap: 4, justifyContent: 'flex-end', alignItems: 'center', opacity: isHovered ? 1 : 0, transition: 'opacity 0.15s', pointerEvents: isHovered ? 'auto' : 'none' }}>
+                        <button type="button" onClick={(e) => { e.stopPropagation(); handleEdit(row); }} title="Редактировать" style={{ width: 32, height: 32, borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--primary)', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}><FiEdit2 size={14} /></button>
+                        <button type="button" onClick={(e) => openPrintForRow(row, e)} title="Этикетка" style={{ width: 32, height: 32, borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-secondary)', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}><FiTag size={14} /></button>
+                        <button type="button" onClick={(e) => openDeleteConfirm(row, e)} title="Удалить" style={{ width: 32, height: 32, borderRadius: 10, border: '1px solid rgba(239,68,68,0.3)', background: 'rgba(239,68,68,0.08)', color: 'var(--danger)', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}><FiTrash2 size={14} /></button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
+      </div>
+      {hasNextPage && (
+        <div style={{ display: 'flex', justifyContent: 'center', marginTop: 10, marginBottom: 8 }}>
+          <button
+            type="button"
+            onClick={() => fetchNextPage()}
+            disabled={isFetchingNextPage}
+            className="btn-ios-primary"
+          >
+            {isFetchingNextPage ? 'Загрузка...' : `Показать еще ${PRODUCTS_PAGE_SIZE}`}
+          </button>
+        </div>
+      )}
+
+      {/* ── Bottom dock ── */}
+      <nav className="catalog-dock" aria-label="Навигация">
+        <div style={{ fontSize: 12, color: 'var(--text-muted)', fontWeight: 600 }}>
+          <div>Показано: {displayProducts.length} из {products.length}</div>
+          <div style={{ color: 'var(--text)', marginTop: 3 }}>{Math.round(totalPurchaseValue).toLocaleString('ru-RU')} ₸</div>
+        </div>
+        <div className="catalog-dock-center">
+          <button type="button" className="catalog-dock-nav catalog-dock-nav-active" onClick={() => navigate('/products')}><FiGrid size={22} strokeWidth={2} /><span>Каталог</span></button>
+          <button type="button" className="catalog-dock-nav" onClick={() => navigate('/sales')}><FiShoppingCart size={22} strokeWidth={2} /><span>Продажа</span></button>
+        </div>
+        <div style={{ width: 100 }} />
+      </nav>
+
+      {/* ── Scanner: not found modal ── */}
+      {scanNotFound && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.48)', backdropFilter: 'blur(6px)', zIndex: 500, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
+          <div style={{ width: '100%', maxWidth: 360, background: 'var(--surface)', borderRadius: 24, boxShadow: 'var(--shadow-xl)', overflow: 'hidden', animation: 'sheetUp 0.22s ease-out' }}>
+            <div style={{ padding: '28px 24px 20px', textAlign: 'center' }}>
+              <div style={{ fontSize: 40, marginBottom: 12 }}>🔍</div>
+              <div style={{ fontSize: 18, fontWeight: 800, color: 'var(--text)', marginBottom: 8 }}>Товар не найден</div>
+              <div style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 6, fontWeight: 500 }}>Штрих-код / код:</div>
+              <div style={{ padding: '8px 14px', borderRadius: 12, background: 'var(--ios-grouped-bg)', border: '1px solid var(--border)', fontFamily: 'ui-monospace,monospace', fontSize: 15, fontWeight: 700, color: 'var(--primary)', marginBottom: 20, wordBreak: 'break-all' }}>
+                {scanNotFound}
+              </div>
+              <div style={{ fontSize: 13, color: 'var(--text-muted)', fontWeight: 500, marginBottom: 20 }}>
+                Хотите добавить этот товар в каталог?
+              </div>
+            </div>
+            <div style={{ padding: '0 20px 22px', display: 'flex', gap: 10 }}>
+              <button type="button" onClick={() => setScanNotFound(null)} style={{ flex: 1, padding: '13px', borderRadius: 14, border: '1px solid var(--border)', background: 'var(--surface)', fontWeight: 600, fontSize: 14, cursor: 'pointer', color: 'var(--text-secondary)' }}>
+                Отменить
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setFormData({ ...emptyForm(), barcode: scanNotFound });
+                  setBarcodeLocked(true);
+                  setFormError('');
+                  setShowForm(true);
+                  setScanNotFound(null);
+                }}
+                style={{ flex: 2, padding: '13px', borderRadius: 14, border: 'none', background: 'linear-gradient(135deg, #6366f1, #7c3aed)', color: '#fff', fontWeight: 700, fontSize: 14, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}
+              >
+                <FiPlus size={16} /> Добавить товар
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Side Sheet ── */}
+      {sideProduct && (
+        <>
+          <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.38)', backdropFilter: 'blur(3px)', zIndex: 300 }} onClick={() => setSideProduct(null)} />
+          <div style={{ position: 'fixed', right: 0, top: 0, bottom: 0, width: 'min(420px, 100vw)', background: 'var(--surface)', backdropFilter: 'saturate(180%) blur(24px)', boxShadow: '-20px 0 60px rgba(0,0,0,0.15)', zIndex: 301, overflow: 'auto', display: 'flex', flexDirection: 'column', animation: 'slideInRight 0.25s ease-out' }}>
+            {/* Header */}
+            <div style={{ padding: '20px 22px 16px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, background: 'var(--surface)', position: 'sticky', top: 0, zIndex: 10 }}>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontSize: 20, fontWeight: 800, letterSpacing: '-0.03em', color: 'var(--text)', lineHeight: 1.2, wordBreak: 'break-word' }}>{sideProduct.name}</div>
+                <div style={{ marginTop: 8, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+                  {sideProduct.brand && <span style={{ fontSize: 13, color: 'var(--text-secondary)', fontWeight: 600 }}>{sideProduct.brand}</span>}
+                  {sideProduct.category && (() => { const cc = getCatColor(sideProduct.category); return <span style={{ padding: '2px 10px', borderRadius: 999, fontSize: 12, fontWeight: 600, background: cc.bg, color: cc.color }}>{sideProduct.category}</span>; })()}
+                </div>
+              </div>
+              <button type="button" onClick={() => setSideProduct(null)} style={{ width: 36, height: 36, borderRadius: 12, border: '1px solid var(--border)', background: 'var(--bg-secondary)', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', flexShrink: 0 }}><FiX size={18} /></button>
+            </div>
+            {/* Specs grid */}
+            <div style={{ padding: '18px 22px', flex: 1 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 18 }}>
+                {[
+                  ['Штрих-код', sideProduct.barcode || sideProduct.sku || '—', true],
+                  ['Поставщик', sideProduct.supplier || '—'],
+                  ['Закуп (₸)', `${Number(sideProduct.purchase_price || 0).toLocaleString('ru-RU')} ₸`],
+                  ['Доставка', sideProduct.delivery_cost_kzt ? `${Number(sideProduct.delivery_cost_kzt).toLocaleString('ru-RU')} ₸` : '—'],
+                  ['Продажа (₸)', `${Number(sideProduct.sale_price || 0).toLocaleString('ru-RU')} ₸`],
+                  ['Прибыль', profitPct(sideProduct) ? `${profitPct(sideProduct)}%` : '—'],
+                  ['Место', sideProduct.location_zone || '—', true],
+                  ['Мин. остаток', String(sideProduct.min_quantity ?? 0)],
+                ].map(([label, val, mono]) => (
+                  <div key={label} style={{ padding: '12px 14px', borderRadius: 16, background: 'var(--ios-grouped-bg)', border: '1px solid var(--border)' }}>
+                    <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>{label}</div>
+                    <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text)', fontFamily: mono ? 'ui-monospace,monospace' : undefined, wordBreak: 'break-word' }}>{val}</div>
+                  </div>
+                ))}
+              </div>
+              {/* Stock big number */}
+              <div style={{ padding: '16px 18px', borderRadius: 18, background: 'var(--ios-grouped-bg)', border: '1px solid var(--border)', textAlign: 'center', marginBottom: 18 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 8 }}>Остаток</div>
+                <div style={{ fontSize: 48, fontWeight: 800, letterSpacing: '-0.04em', color: Number(sideProduct.quantity) === 0 ? 'var(--danger)' : Number(sideProduct.quantity) <= 5 ? '#d97706' : 'var(--success)', lineHeight: 1 }}>{sideProduct.quantity ?? 0}</div>
+                <div style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 4, fontWeight: 600 }}>штук</div>
+              </div>
+              {sideProduct.description && <div style={{ padding: '14px 16px', borderRadius: 16, background: 'var(--ios-grouped-bg)', border: '1px solid var(--border)', fontSize: 14, lineHeight: 1.55, color: 'var(--text)', whiteSpace: 'pre-wrap', marginBottom: 18 }}>{sideProduct.description}</div>}
+            </div>
+            {/* Actions */}
+            <div style={{ padding: '14px 22px 22px', borderTop: '1px solid var(--border)', display: 'flex', gap: 10, background: 'var(--surface)', position: 'sticky', bottom: 0 }}>
+              <button type="button" onClick={() => handleEdit(sideProduct)} style={{ flex: 1, padding: '13px', borderRadius: 14, border: 'none', background: 'linear-gradient(135deg, #6366f1, #7c3aed)', color: '#fff', fontWeight: 700, fontSize: 14, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}><FiEdit2 size={16} />Редактировать</button>
+              <button type="button" onClick={() => openPrintForRow(sideProduct)} style={{ padding: '13px 16px', borderRadius: 14, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-secondary)', fontWeight: 600, fontSize: 14, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8 }}><FiTag size={16} /></button>
+              <button type="button" onClick={(e) => openDeleteConfirm(sideProduct, e)} style={{ padding: '13px 16px', borderRadius: 14, border: '1px solid rgba(239,68,68,0.3)', background: 'rgba(239,68,68,0.1)', color: 'var(--danger)', fontWeight: 600, fontSize: 14, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8 }}><FiTrash2 size={16} /></button>
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* ── Delete Math Confirm ── */}
+      {deleteModal && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(6px)', zIndex: 500, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
+          <div style={{ width: '100%', maxWidth: 380, background: 'var(--surface)', borderRadius: 24, boxShadow: 'var(--shadow-xl)', overflow: 'hidden', animation: 'sheetUp 0.22s ease-out' }}>
+            <div style={{ padding: '22px 22px 0' }}>
+              <div style={{ fontSize: 17, fontWeight: 800, color: 'var(--text)', marginBottom: 8 }}>Удалить товар?</div>
+              <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 10, wordBreak: 'break-word' }}>«{deleteModal.product.name}»</div>
+              <div style={{ padding: '10px 14px', borderRadius: 12, background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.2)', fontSize: 13, color: 'var(--danger)', fontWeight: 600, marginBottom: 16 }}>⚠️ Операция необратима</div>
+              <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 10 }}>
+                Введите ответ: <strong style={{ color: 'var(--text)', fontSize: 15 }}>{deleteModal.problem} = ?</strong>
+              </div>
+              <input
+                autoFocus
+                className="ios-input"
+                type="number"
+                inputMode="numeric"
+                placeholder="Ваш ответ"
+                value={deleteModal.input}
+                onChange={(e) => setDeleteModal((m) => ({ ...m, input: e.target.value }))}
+                onKeyDown={(e) => { if (e.key === 'Enter' && deleteModal.input === deleteModal.answer) deleteMutation.mutate(deleteModal.product.id); }}
+                style={{ marginBottom: 16 }}
+              />
+            </div>
+            <div style={{ padding: '0 22px 22px', display: 'flex', gap: 10 }}>
+              <button type="button" onClick={() => setDeleteModal(null)} style={{ flex: 1, padding: '13px', borderRadius: 14, border: '1px solid var(--border)', background: 'var(--surface)', fontWeight: 600, fontSize: 14, cursor: 'pointer', color: 'var(--text-secondary)' }}>Отмена</button>
+              <button type="button" disabled={deleteModal.input !== deleteModal.answer || deleteMutation.isPending} onClick={() => deleteMutation.mutate(deleteModal.product.id)}
+                style={{ flex: 1, padding: '13px', borderRadius: 14, border: 'none', background: deleteModal.input === deleteModal.answer ? 'var(--danger)' : 'rgba(239,68,68,0.3)', color: '#fff', fontWeight: 700, fontSize: 14, cursor: deleteModal.input === deleteModal.answer ? 'pointer' : 'not-allowed', transition: 'background 0.2s' }}>
+                {deleteMutation.isPending ? '…' : 'Удалить'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Print suggest after create ── */}
+      {showPrintSuggest && savedProduct && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', backdropFilter: 'blur(5px)', zIndex: 400, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
+          <div style={{ width: '100%', maxWidth: 340, background: 'var(--surface)', borderRadius: 24, boxShadow: 'var(--shadow-xl)', overflow: 'hidden', animation: 'sheetUp 0.22s ease-out' }}>
+            <div style={{ padding: '24px 22px 8px', textAlign: 'center' }}>
+              <div style={{ fontSize: 32, marginBottom: 10 }}>🏷️</div>
+              <div style={{ fontSize: 17, fontWeight: 800, color: 'var(--text)', marginBottom: 8 }}>Распечатать этикетку?</div>
+              <div style={{ fontSize: 14, color: 'var(--text-muted)', marginBottom: 16 }}>Товар «{savedProduct.name}» создан</div>
+              <div style={{ display: 'flex', gap: 10, justifyContent: 'center', marginBottom: 20 }}>
+                {[{ val: 'barcode', label: '■ Штрих-код' }, { val: 'qrcode', label: '⬛ QR-код' }].map((t) => (
+                  <button key={t.val} type="button" onClick={() => setPrintType(t.val)} style={{ padding: '8px 16px', borderRadius: 12, border: `2px solid ${printType === t.val ? 'var(--primary)' : 'var(--border)'}`, background: printType === t.val ? 'var(--primary-light)' : 'var(--surface)', color: printType === t.val ? 'var(--primary)' : 'var(--text-secondary)', fontWeight: 600, fontSize: 13, cursor: 'pointer' }}>{t.label}</button>
+                ))}
+              </div>
+            </div>
+            <div style={{ padding: '0 22px 22px', display: 'flex', gap: 10 }}>
+              <button type="button" onClick={() => setShowPrintSuggest(false)} style={{ flex: 1, padding: '13px', borderRadius: 14, border: '1px solid var(--border)', background: 'var(--surface)', fontWeight: 600, fontSize: 14, cursor: 'pointer', color: 'var(--text-secondary)' }}>Пропустить</button>
+              <button type="button" onClick={() => { setPrintProduct(savedProduct); setShowPrint(true); setShowPrintSuggest(false); }} style={{ flex: 1, padding: '13px', borderRadius: 14, border: 'none', background: 'linear-gradient(135deg, #6366f1, #7c3aed)', color: '#fff', fontWeight: 700, fontSize: 14, cursor: 'pointer' }}>Печатать</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Import report modal ── */}
+      <Modal isOpen={importReport != null} title="Результат импорта" icon={FiUpload} onClose={() => setImportReport(null)} size="lg" actions={<Button variant="primary" onClick={() => setImportReport(null)}>Понятно</Button>}>
+        {importReport && (
+          <div>
+            <p style={{ margin: '0 0 14px', fontSize: 15, fontWeight: 600 }}>Добавлено товаров: {importReport.created}</p>
+            {importReport.skipped?.length > 0 ? (
+              <>
+                <p style={{ margin: '0 0 10px', fontSize: 13, color: 'var(--text-muted)', fontWeight: 600 }}>Пропущенные строки ({importReport.skipped.length})</p>
+                <div style={{ maxHeight: 320, overflow: 'auto', border: '1px solid var(--border)', borderRadius: 12, fontSize: 13 }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                    <thead><tr style={{ background: 'var(--bg-secondary)', textAlign: 'left' }}><th style={{ padding: 10 }}>Строка</th><th style={{ padding: 10 }}>Причина</th><th style={{ padding: 10 }}>Данные</th></tr></thead>
+                    <tbody>{importReport.skipped.map((s, i) => (<tr key={`${s.row}-${i}`} style={{ borderTop: '1px solid var(--border)' }}><td style={{ padding: 10, fontWeight: 700 }}>{s.row}</td><td style={{ padding: 10 }}>{s.reason}</td><td style={{ padding: 10, color: 'var(--text-muted)', wordBreak: 'break-word' }}>{s.raw || '—'}</td></tr>))}</tbody>
+                  </table>
+                </div>
+              </>
+            ) : <p style={{ color: 'var(--text-muted)', fontSize: 14 }}>Все строки обработаны без пропусков.</p>}
+          </div>
+        )}
+      </Modal>
+
+      {/* ── Add / Edit product modal ── */}
+      <Modal isOpen={showForm} title={formData.id ? 'Редактировать товар' : 'Новый товар'} onClose={resetForm} size="xl" icon={formData.id ? FiEdit2 : FiPlus}
+        actions={<>
+          <Button variant="secondary" onClick={resetForm}>Отмена</Button>
+          <Button variant="primary" icon={formData.id ? FiEdit2 : FiPlus} onClick={handleSubmit} loading={saveMutation.isPending}>{formData.id ? 'Сохранить изменения' : 'Сохранить товар'}</Button>
+        </>}
+      >
+        {formError && <Alert type="danger" message={formError} onClose={() => setFormError('')} style={{ marginBottom: 16 }} />}
+
+        {isSpeechRecognitionSupported() && showForm && (
+          <div style={{ marginBottom: 18, padding: '12px 16px', borderRadius: 'var(--radius-ios)', background: 'var(--ios-grouped-bg)', border: '1px solid var(--border)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+              <div>
+                <div style={{ fontWeight: 600, fontSize: 14 }}>Голосовое заполнение</div>
+                <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>«название мотор», «место A25», «продажа 4500», «сохранить»</div>
+              </div>
+              <Button variant={voiceListening ? 'danger' : 'secondary'} icon={voiceListening ? FiMicOff : FiMic} onClick={toggleVoiceFill}>{voiceListening ? 'Стоп' : 'Слушать'}</Button>
+            </div>
+            {(voiceListening || voiceLastText) && <div style={{ marginTop: 10, fontSize: 13, color: 'var(--text-secondary)', fontStyle: voiceListening ? 'italic' : 'normal' }}>{voiceListening ? 'Слушаю… ' : ''}{voiceLastText || '—'}</div>}
+          </div>
+        )}
+
+        <form className="ios-form-stack" onSubmit={handleSubmit}>
+          <div>
+            <span style={{ display: 'block', marginBottom: 8, fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>Штрих-код</span>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'stretch', flexWrap: 'wrap' }}>
+              <input className="ios-input" style={{ flex: 1, minWidth: 160, border: formData.id ? '1px solid var(--primary)' : '1px solid var(--border)' }} value={formData.barcode || ''} readOnly={barcodeLocked} onChange={(e) => !barcodeLocked && setFormData({ ...formData, barcode: e.target.value.replace(/\D/g, '').slice(0, 13) })} inputMode="numeric" placeholder="Генерируется автоматически" />
+              <button type="button" className="topbar-theme-toggle" title={barcodeLocked ? 'Разблокировать' : 'Замкнуть'} onClick={() => setBarcodeLocked((v) => !v)} style={{ padding: '0 12px', display: 'inline-flex', alignItems: 'center', gap: 6 }}>{barcodeLocked ? <FiUnlock size={17} /> : <FiLock size={17} />}<span style={{ fontSize: 12, fontWeight: 600 }}>{barcodeLocked ? 'Разблок.' : 'Замкнуть'}</span></button>
+              <button type="button" className="topbar-theme-toggle" title="Новый EAN-13" disabled={barcodeLocked} onClick={() => setFormData({ ...formData, barcode: generateEAN13() })} style={{ padding: '0 10px', opacity: barcodeLocked ? 0.4 : 1 }}><FiRefreshCw size={17} /></button>
+              <button type="button" className="topbar-theme-toggle" title="Показать QR" onClick={() => setShowQrPanel((s) => !s)} style={{ padding: '0 10px', background: showQrPanel ? 'var(--primary-light)' : undefined }}><FiMaximize2 size={17} /></button>
+            </div>
+            {formData.barcode && <div style={{ marginTop: 10, padding: 10, borderRadius: 'var(--radius-ios)', background: 'var(--ios-grouped-bg)', border: '1px solid var(--border)', overflow: 'auto' }}><canvas ref={barcodeCanvasRef} style={{ display: 'block', maxWidth: '100%', height: 'auto' }} /></div>}
+            {showQrPanel && formData.barcode && <div style={{ marginTop: 10, display: 'flex', justifyContent: 'center', padding: 14, borderRadius: 'var(--radius-ios)', background: '#fff', border: '1px solid var(--border)' }}><QRCode value={String(formData.barcode)} size={156} level="M" /></div>}
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <Input label="Название *" placeholder="Например: Мотор" value={formData.name} onChange={(e) => setFormData({ ...formData, name: e.target.value })} style={formData.id ? { border: '1px solid var(--primary)' } : {}} />
+            <Input label="Марка" placeholder="Bosch, Changan…" value={formData.brand || ''} onChange={(e) => setFormData({ ...formData, brand: e.target.value })} style={formData.id ? { border: '1px solid var(--primary)' } : {}} />
+          </div>
+
+          <div>
+            <span style={{ display: 'block', marginBottom: 8, fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>Категория</span>
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 8 }}>
+              {categories.slice(0, 8).map((cat) => (<button key={cat} type="button" className={`catalog-chip ${formData.category === cat ? 'catalog-chip-active' : ''}`} style={{ padding: '7px 14px', fontSize: 13 }} onClick={() => setFormData({ ...formData, category: cat })}>{cat}</button>))}
+            </div>
+            <input className="ios-input" list={listId} placeholder="Введите или выберите" value={formData.category || ''} onChange={(e) => setFormData({ ...formData, category: e.target.value })} style={formData.id ? { border: '1px solid var(--primary)' } : {}} />
+            <datalist id={listId}>{categories.map((c) => <option key={c} value={c} />)}</datalist>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <Input label="Закуп (¥ юань)" type="number" step="0.01" min="0" placeholder="0" value={formData.cny_price} onChange={(e) => setFormData({ ...formData, cny_price: e.target.value })} style={formData.id ? { border: '1px solid var(--primary)' } : {}} />
+            <Input label="Доставка (₸)" type="number" step="0.01" min="0" placeholder="0" value={formData.delivery_cost_kzt} onChange={(e) => setFormData({ ...formData, delivery_cost_kzt: e.target.value })} style={formData.id ? { border: '1px solid var(--primary)' } : {}} />
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <Input label="Продажа (₸) *" type="number" step="0.01" min="0" value={formData.sale_price || 0} onChange={(e) => setFormData({ ...formData, sale_price: parseFloat(e.target.value) || 0 })} style={formData.id ? { border: '1px solid var(--primary)' } : {}} />
+            <Input label="Поставщик" placeholder="По желанию" value={formData.supplier || ''} onChange={(e) => setFormData({ ...formData, supplier: e.target.value })} style={formData.id ? { border: '1px solid var(--primary)' } : {}} />
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <Input label="Количество" type="number" min="0" value={formData.quantity || 0} onChange={(e) => setFormData({ ...formData, quantity: parseInt(e.target.value, 10) || 0 })} style={formData.id ? { border: '1px solid var(--primary)' } : {}} />
+            <Input label="Место на складе" placeholder="А25, B87…" value={formData.storage_location || ''} onChange={(e) => setFormData({ ...formData, storage_location: e.target.value.toUpperCase() })} style={formData.id ? { border: '1px solid var(--primary)' } : {}} />
+          </div>
+
+          <TextArea label="Доп. информация" placeholder="По желанию" value={formData.description || ''} onChange={(e) => setFormData({ ...formData, description: e.target.value })} />
+
+          <div style={{ padding: '12px 14px', borderRadius: 'var(--radius-ios)', background: 'var(--ios-grouped-bg)', border: '1px solid var(--border)', fontSize: 14, fontWeight: 600, color: 'var(--text-secondary)' }}>
+            Прибыль: <span style={{ color: parseFloat(profitPreview) >= 50 ? 'var(--success)' : '#d97706', fontSize: 16 }}>{profitPreview}%</span>
+            <span style={{ fontWeight: 500, fontSize: 12, marginLeft: 8, color: 'var(--text-muted)' }}>· закуп ≈ {Math.round(estPurchaseKzt).toLocaleString('ru-RU')} ₸ по курсу {cnyRate}</span>
+          </div>
+        </form>
+      </Modal>
+
+      {/* ── Label Print ── */}
+      <LabelPrint isOpen={showPrint} onClose={() => { setShowPrint(false); setPrintProduct(null); }} product={printProduct} settings={settingsRow} initialLabelType={printType} />
+    </div>
+  );
+};
+
+export default Products;
