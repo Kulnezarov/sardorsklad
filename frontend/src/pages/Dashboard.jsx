@@ -73,7 +73,14 @@ const Dashboard = () => {
     queryKey: ['dashboard'],
     queryFn: async () => {
       const response = await settingsApi.getDashboard();
-      return response.data;
+      const data = response.data || {};
+      return {
+        ...data,
+        alert_out_of_stock: Array.isArray(data.alert_out_of_stock) ? data.alert_out_of_stock : [],
+        alert_low_stock: Array.isArray(data.alert_low_stock) ? data.alert_low_stock : [],
+        alert_stale: Array.isArray(data.alert_stale) ? data.alert_stale : [],
+        recent_sales: Array.isArray(data.recent_sales) ? data.recent_sales : [],
+      };
     },
     refetchInterval: 15000,
     refetchIntervalInBackground: true,
