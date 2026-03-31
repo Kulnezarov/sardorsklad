@@ -218,7 +218,10 @@ const Products = () => {
           skip: pageParam,
           limit: PRODUCTS_PAGE_SIZE,
         });
-        return r.data || [];
+        const data = r.data;
+        if (Array.isArray(data)) return data;
+        if (Array.isArray(data?.items)) return data.items;
+        return [];
       }
       catch (err) { console.error('Error fetching products:', err); toast.error('✕ Не удалось загрузить товары'); return []; }
     },
@@ -238,12 +241,17 @@ const Products = () => {
     queryFn: async () => {
       try {
         const r = await productApi.getCategories({ limit: 30 });
-        return r.data || [];
+        const data = r.data;
+        if (Array.isArray(data)) return data;
+        if (Array.isArray(data?.items)) return data.items;
+        if (Array.isArray(data?.categories)) return data.categories;
+        return [];
       } catch {
         return [];
       }
     },
   });
+  const safeCategories = Array.isArray(categories) ? categories : [];
 
   // Stale filter from URL params (from Dashboard)
   const stockFilter = searchParams.get('stock');
@@ -572,7 +580,7 @@ const Products = () => {
         </div>
         <div className="catalog-chips-scroll">
           <button type="button" className={`catalog-chip ${selectedCategory === '' && !showStale ? 'catalog-chip-active' : ''}`} onClick={() => { setSelectedCategory(''); setShowStale(false); }}>Все</button>
-          {categories.map((cat) => (
+          {safeCategories.map((cat) => (
             <button key={cat} type="button" className={`catalog-chip ${selectedCategory === cat && !showStale ? 'catalog-chip-active' : ''}`} onClick={() => { setSelectedCategory(cat); setShowStale(false); }}>{cat}</button>
           ))}
           <button type="button" className={`catalog-chip ${showStale ? 'catalog-chip-stale' : 'catalog-chip-stale-off'}`} onClick={() => { setShowStale((s) => !s); setSelectedCategory(''); }}>
@@ -886,10 +894,10 @@ const Products = () => {
           <div>
             <span style={{ display: 'block', marginBottom: 8, fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>Категория</span>
             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 8 }}>
-              {categories.slice(0, 8).map((cat) => (<button key={cat} type="button" className={`catalog-chip ${formData.category === cat ? 'catalog-chip-active' : ''}`} style={{ padding: '7px 14px', fontSize: 13 }} onClick={() => setFormData({ ...formData, category: cat })}>{cat}</button>))}
+              {safeCategories.slice(0, 8).map((cat) => (<button key={cat} type="button" className={`catalog-chip ${formData.category === cat ? 'catalog-chip-active' : ''}`} style={{ padding: '7px 14px', fontSize: 13 }} onClick={() => setFormData({ ...formData, category: cat })}>{cat}</button>))}
             </div>
             <input className="ios-input" list={listId} placeholder="Введите или выберите" value={formData.category || ''} onChange={(e) => setFormData({ ...formData, category: e.target.value })} style={formData.id ? { border: '1px solid var(--primary)' } : {}} />
-            <datalist id={listId}>{categories.map((c) => <option key={c} value={c} />)}</datalist>
+            <datalist id={listId}>{safeCategories.map((c) => <option key={c} value={c} />)}</datalist>
           </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
