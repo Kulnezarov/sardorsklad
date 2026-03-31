@@ -19,7 +19,7 @@ import {
 } from '../voice/productVoiceFill';
 import { generateEAN13 } from '../utils/barcodeGen';
 import LabelPrint from '../components/LabelPrint';
-import QRCode from 'qrcode.react';
+import { QRCodeSVG } from 'qrcode.react';
 import JsBarcode from 'jsbarcode';
 
 /* ── helpers ── */
@@ -875,7 +875,7 @@ const Products = () => {
               <button type="button" className="topbar-theme-toggle" title="Показать QR" onClick={() => setShowQrPanel((s) => !s)} style={{ padding: '0 10px', background: showQrPanel ? 'var(--primary-light)' : undefined }}><FiMaximize2 size={17} /></button>
             </div>
             {formData.barcode && <div style={{ marginTop: 10, padding: 10, borderRadius: 'var(--radius-ios)', background: 'var(--ios-grouped-bg)', border: '1px solid var(--border)', overflow: 'auto' }}><canvas ref={barcodeCanvasRef} style={{ display: 'block', maxWidth: '100%', height: 'auto' }} /></div>}
-            {showQrPanel && formData.barcode && <div style={{ marginTop: 10, display: 'flex', justifyContent: 'center', padding: 14, borderRadius: 'var(--radius-ios)', background: '#fff', border: '1px solid var(--border)' }}><QRCode value={String(formData.barcode)} size={156} level="M" /></div>}
+            {showQrPanel && formData.barcode && <div style={{ marginTop: 10, display: 'flex', justifyContent: 'center', padding: 14, borderRadius: 'var(--radius-ios)', background: '#fff', border: '1px solid var(--border)' }}><QRCodeSVG value={String(formData.barcode)} size={156} level="M" /></div>}
           </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>

@@ -3,7 +3,6 @@ import os
 from sqlalchemy import create_engine, event, pool, text
 from sqlalchemy.orm import sessionmaker, declarative_base, Session
 from contextlib import asynccontextmanager
-import asyncpg
 from dotenv import load_dotenv
 
 logger = logging.getLogger(__name__)
