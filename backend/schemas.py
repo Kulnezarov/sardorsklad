@@ -3,7 +3,7 @@ from decimal import Decimal
 from enum import Enum
 from typing import Any, List, Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, condecimal, field_validator
 
 
 class OperationType(str, Enum):
@@ -26,6 +26,10 @@ class ReserveStatus(str, Enum):
     CANCELLED = "cancelled"
 
 
+Money10_2 = condecimal(max_digits=10, decimal_places=2)
+Percent5_2 = condecimal(max_digits=5, decimal_places=2)
+
+
 class ProductBase(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
     sku: Optional[str] = Field(None, max_length=100)
@@ -33,11 +37,11 @@ class ProductBase(BaseModel):
     brand: Optional[str] = Field(None, max_length=100)
     category: Optional[str] = Field(None, max_length=100)
     description: Optional[str] = None
-    purchase_price: Decimal = Field(..., decimal_places=2, max_digits=10)
-    sale_price: Decimal = Field(..., decimal_places=2, max_digits=10)
-    cny_price: Optional[Decimal] = Field(None, decimal_places=2, max_digits=10)
-    delivery_cost_kzt: Optional[Decimal] = Field(None, decimal_places=2, max_digits=10)
-    profit_percent: Optional[Decimal] = Field(None, decimal_places=2, max_digits=5)
+    purchase_price: Money10_2
+    sale_price: Money10_2
+    cny_price: Optional[Money10_2] = None
+    delivery_cost_kzt: Optional[Money10_2] = None
+    profit_percent: Optional[Percent5_2] = None
     quantity: int = Field(0, ge=0)
     min_quantity: Optional[int] = Field(0, ge=0)
     max_quantity: Optional[int] = Field(None, ge=0)
@@ -66,11 +70,11 @@ class ProductUpdate(BaseModel):
     brand: Optional[str] = Field(None, max_length=100)
     category: Optional[str] = Field(None, max_length=100)
     description: Optional[str] = None
-    purchase_price: Optional[Decimal] = Field(None, decimal_places=2, max_digits=10)
-    sale_price: Optional[Decimal] = Field(None, decimal_places=2, max_digits=10)
-    cny_price: Optional[Decimal] = Field(None, decimal_places=2, max_digits=10)
-    delivery_cost_kzt: Optional[Decimal] = Field(None, decimal_places=2, max_digits=10)
-    profit_percent: Optional[Decimal] = Field(None, decimal_places=2, max_digits=5)
+    purchase_price: Optional[Money10_2] = None
+    sale_price: Optional[Money10_2] = None
+    cny_price: Optional[Money10_2] = None
+    delivery_cost_kzt: Optional[Money10_2] = None
+    profit_percent: Optional[Percent5_2] = None
     quantity: Optional[int] = Field(None, ge=0)
     min_quantity: Optional[int] = Field(None, ge=0)
     max_quantity: Optional[int] = Field(None, ge=0)
@@ -113,7 +117,7 @@ class ImportExcelResponse(BaseModel):
 class SaleItemCreate(BaseModel):
     product_id: int
     quantity: int = Field(..., gt=0)
-    unit_price: Decimal = Field(..., decimal_places=2, max_digits=10)
+    unit_price: Money10_2
 
     @field_validator('unit_price', mode='before')
     @classmethod
@@ -157,7 +161,7 @@ class ReserveItemCreate(BaseModel):
     product_id: Optional[int] = None
     product_name: str
     quantity_ordered: int = Field(..., gt=0)
-    price_cny: Decimal = Field(..., decimal_places=2, max_digits=10)
+    price_cny: Money10_2
 
     @field_validator('price_cny', mode='before')
     @classmethod
