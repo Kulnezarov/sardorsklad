@@ -147,7 +147,12 @@ ENVIRONMENT=development
 ### Frontend (.env)
 ```bash
 # API Configuration
-VITE_API_URL=http://localhost:8000/api/v1
+# Use fixed backend URL:
+# VITE_API_URL=http://localhost:8000/api/v1
+#
+# Or use current hostname automatically (best for access by link/IP):
+# VITE_API_URL=auto
+# VITE_API_PORT=8000
 
 # Supabase Configuration
 VITE_SUPABASE_URL=https://your-project.supabase.co
@@ -195,10 +200,11 @@ docker build -t skladpro-frontend .
 - `DELETE /products/{id}` - Delete product
 - `GET /products/barcode/{barcode}` - Find by barcode
 - `POST /products/{id}/discount` - Apply discount
-- `POST /products/import-excel` - Import from Excel
-- `GET /products/export-excel` - Export to Excel
+- `POST /products/import/excel` - Import from Excel
+- `POST /products/import/excel/stream` - Streaming import with progress
+- `GET /products/export/excel` - Export to Excel
 - `GET /products/stale` - Get stale products (30+ days)
-- `GET /products/categories` - Get all categories
+- `GET /products/categories/list` - Get all categories
 
 ### Sales
 - `GET /sales` - List sales with date filtering
@@ -327,6 +333,27 @@ npm run type-check
 
 ## Production Deployment
 
+### Vercel (frontend) + Railway (backend)
+
+Такой вариант не требует менять код приложения: достаточно переменных окружения и CORS.
+
+1. **Railway (backend)**  
+   - В сервисе открой **Settings → Networking / Domains** и скопируй публичный URL, например `https://your-app.up.railway.app`.  
+   - База API для этого проекта: `https://your-app.up.railway.app/api/v1`.  
+   - В **Variables** задай `ALLOWED_ORIGINS` со списком разрешённых фронтов (через запятую, без пробелов после запятой по желанию):  
+     `https://your-project.vercel.app`  
+     Если добавишь свой домен — допиши и его.
+
+2. **Vercel (frontend)**  
+   - **Settings → Environment Variables** → добавь:  
+     - `VITE_API_URL` = `https://your-app.up.railway.app/api/v1`  
+   - Сохрани и сделай **Redeploy**, иначе сборка не подхватит переменную.
+
+3. **С телефона**  
+   - Открывай обычную ссылку Vercel: `https://your-project.vercel.app` — отдельный «режим для телефона» не нужен, это тот же сайт по HTTPS.
+
+Если данные не грузятся: в DevTools на ПК проверь, что запросы идут на Railway, а не на `localhost`, и что в ответе нет ошибки CORS.
+
 ### Environment Setup
 1. Set up production Supabase project
 2. Configure environment variables
@@ -387,6 +414,11 @@ npm run build
 - Check `VITE_API_URL` in frontend `.env`
 - Clear browser cache and localStorage
 - Check network tab in DevTools for CORS errors
+
+**Excel Import Error 405**
+- Usually means backend/proxy does not support `POST /products/import/excel/stream`
+- Frontend now falls back automatically to `POST /products/import/excel`
+- If you still see 405, verify backend version and reverse-proxy method rules for `POST`
 
 **Authentication Issues**
 - Verify Supabase URL and keys

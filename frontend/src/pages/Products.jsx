@@ -34,6 +34,10 @@ function formatImportError(err) {
   if (status === 413) return 'Файл слишком большой.';
   return err.message || (status ? `Ошибка сервера (${status})` : 'Неизвестная ошибка импорта');
 }
+function shouldFallbackImport(err) {
+  const status = err?.response?.status;
+  return status === 404 || status === 405 || status === 501;
+}
 
 const CAT_COLORS = [
   { bg: 'rgba(99,102,241,0.14)', color: '#4338ca' },
@@ -208,6 +212,7 @@ const Products = () => {
     fetchNextPage,
     hasNextPage,
     isFetchingNextPage,
+    isFetching,
   } = useInfiniteQuery({
     queryKey: ['products', search, selectedCategory],
     queryFn: async ({ pageParam = 0 }) => {
@@ -253,6 +258,19 @@ const Products = () => {
   });
   const safeCategories = Array.isArray(categories) ? categories : [];
 
+  const { data: productsStats } = useQuery({
+    queryKey: ['products-stats'],
+    queryFn: async () => {
+      try {
+        const r = await productApi.getStats();
+        return r.data || null;
+      } catch {
+        return null;
+      }
+    },
+    staleTime: 30000,
+  });
+
   // Stale filter from URL params (from Dashboard)
   const stockFilter = searchParams.get('stock');
   useEffect(() => {
@@ -292,27 +310,46 @@ const Products = () => {
   });
 
   const importMutation = useMutation({
-    mutationFn: (file) => {
+    mutationFn: async (file) => {
       const controller = new AbortController();
       importAbortRef.current = controller;
-      return importExcelStream(file, {
-        signal: controller.signal,
-        onUploadProgress: (ev) => {
-          const { loaded, total } = ev;
-          setImportOverlay((prev) => {
-            if (!prev) return prev;
-            if (total != null && total > 0) { const pct = Math.min(100, Math.round((loaded * 100) / total)); return { ...prev, uploadPct: pct, phase: loaded >= total ? 'processing' : 'upload' }; }
-            return { ...prev, uploadPct: null, phase: 'upload' };
-          });
-        },
-        onServerProgress: (current, total) => {
-          setImportOverlay((prev) => {
-            if (!prev) return prev;
-            const serverPct = total > 0 ? Math.min(100, Math.round((current * 100) / total)) : null;
-            return { ...prev, phase: 'processing', serverCurrent: current, serverTotal: total, serverPct };
-          });
-        },
-      });
+      try {
+        return await importExcelStream(file, {
+          signal: controller.signal,
+          onUploadProgress: (ev) => {
+            const { loaded, total } = ev;
+            setImportOverlay((prev) => {
+              if (!prev) return prev;
+              if (total != null && total > 0) { const pct = Math.min(100, Math.round((loaded * 100) / total)); return { ...prev, uploadPct: pct, phase: loaded >= total ? 'processing' : 'upload' }; }
+              return { ...prev, uploadPct: null, phase: 'upload' };
+            });
+          },
+          onServerProgress: (current, total) => {
+            setImportOverlay((prev) => {
+              if (!prev) return prev;
+              const serverPct = total > 0 ? Math.min(100, Math.round((current * 100) / total)) : null;
+              return { ...prev, phase: 'processing', serverCurrent: current, serverTotal: total, serverPct };
+            });
+          },
+        });
+      } catch (err) {
+        if (!shouldFallbackImport(err)) throw err;
+        // Legacy/non-stream backend compatibility: fallback to regular import endpoint.
+        return productApi.importExcel(file, {
+          signal: controller.signal,
+          onUploadProgress: (ev) => {
+            const { loaded, total } = ev;
+            setImportOverlay((prev) => {
+              if (!prev) return prev;
+              if (total != null && total > 0) {
+                const pct = Math.min(100, Math.round((loaded * 100) / total));
+                return { ...prev, uploadPct: pct, phase: loaded >= total ? 'processing' : 'upload', serverCurrent: null, serverTotal: null, serverPct: null };
+              }
+              return { ...prev, uploadPct: null, phase: 'upload', serverCurrent: null, serverTotal: null, serverPct: null };
+            });
+          },
+        });
+      }
     },
     onMutate: (file) => { setImportError(''); setImportOverlay({ fileName: file.name, uploadPct: 0, phase: 'upload', serverCurrent: null, serverTotal: null, serverPct: null }); },
     onSuccess: (res) => {
@@ -496,7 +533,21 @@ const Products = () => {
       : '0';
 
   const staleCount = useMemo(() => products.filter(isStale).length, [products]);
-  const totalPurchaseValue = useMemo(() => products.reduce((s, p) => s + (parseFloat(p.purchase_price || 0) * (p.quantity || 0)), 0), [products]);
+  const pagedPurchaseValue = useMemo(
+    () => products.reduce((s, p) => s + (parseFloat(p.purchase_price || 0) * (p.quantity || 0)), 0),
+    [products],
+  );
+  const totalPurchaseValue = Number(productsStats?.warehouse_value ?? pagedPurchaseValue);
+  const totalCatalog = productsStats?.total_products != null ? Number(productsStats.total_products) : null;
+
+  const handleRefreshCatalog = useCallback(async () => {
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ['products'] }),
+      queryClient.invalidateQueries({ queryKey: ['products-stats'] }),
+      queryClient.invalidateQueries({ queryKey: ['categories'] }),
+    ]);
+    toast.success('Список обновлён');
+  }, [queryClient]);
 
   const listId = 'product-category-suggestions';
 
@@ -505,7 +556,7 @@ const Products = () => {
   /* ─────────── RENDER ─────────── */
   return (
     <div className="products-page-shell"
-      style={{ padding: '10px 14px 0', maxWidth: '1440px', margin: '0 auto' }}
+      style={{ padding: '10px 14px 0', maxWidth: '1440px', margin: '0 auto', paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}
     >
 
       {/* Import progress overlay */}
@@ -539,10 +590,24 @@ const Products = () => {
         <div>
           <h1 className="ios-mega-title">Каталог</h1>
           <p style={{ margin: '5px 0 0', fontSize: 13, color: 'var(--text-muted)', fontWeight: 500 }}>
-            {displayProducts.length} из {products.length} позиций · {Math.round(totalPurchaseValue).toLocaleString('ru-RU')} ₸
+            {products.length} из {totalCatalog != null ? totalCatalog : '…'} в каталоге
+            {showStale && displayProducts.length !== products.length ? ` · показано ${displayProducts.length}` : ''}
+            {' · '}
+            {Math.round(totalPurchaseValue).toLocaleString('ru-RU')} ₸
           </p>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          <button
+            type="button"
+            className="btn-ios-secondary"
+            onClick={() => handleRefreshCatalog()}
+            disabled={Boolean(isFetching && !isFetchingNextPage && !isLoading)}
+            title="Обновить список с сервера"
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '9px 14px', borderRadius: 12, border: '1px solid var(--border)', background: 'var(--surface)', fontWeight: 600, fontSize: 13, cursor: isFetching && !isFetchingNextPage && !isLoading ? 'wait' : 'pointer', color: 'var(--text)', transition: 'var(--transition)' }}
+          >
+            <FiRefreshCw size={15} style={isFetching && !isFetchingNextPage && !isLoading ? { animation: 'spin 1s linear infinite' } : undefined} />
+            Обновить
+          </button>
           <button type="button" className="btn-ios-secondary" onClick={() => importFileRef.current?.click()} disabled={importMutation.isPending} style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '9px 14px', borderRadius: 12, border: '1px solid var(--border)', background: 'var(--surface)', fontWeight: 600, fontSize: 13, cursor: 'pointer', color: 'var(--text)', transition: 'var(--transition)' }}>
             <FiUpload size={15} /> Импорт Excel
           </button>
@@ -660,14 +725,14 @@ const Products = () => {
         )}
       </div>
       {hasNextPage && (
-        <div style={{ display: 'flex', justifyContent: 'center', marginTop: 10, marginBottom: 8 }}>
+        <div className="products-load-more-bar">
           <button
             type="button"
             onClick={() => fetchNextPage()}
             disabled={isFetchingNextPage}
-            className="btn-ios-primary"
+            className="btn-ios-primary products-load-more-btn"
           >
-            {isFetchingNextPage ? 'Загрузка...' : `Показать еще ${PRODUCTS_PAGE_SIZE}`}
+            {isFetchingNextPage ? 'Загрузка...' : `Ещё ${PRODUCTS_PAGE_SIZE}`}
           </button>
         </div>
       )}
@@ -675,7 +740,10 @@ const Products = () => {
       {/* ── Bottom dock ── */}
       <nav className="catalog-dock" aria-label="Навигация">
         <div style={{ fontSize: 12, color: 'var(--text-muted)', fontWeight: 600 }}>
-          <div>Показано: {displayProducts.length} из {products.length}</div>
+          <div>
+            {products.length} из {totalCatalog != null ? totalCatalog : '…'}
+            {showStale && displayProducts.length !== products.length ? ` · ${displayProducts.length} в фильтре` : ''}
+          </div>
           <div style={{ color: 'var(--text)', marginTop: 3 }}>{Math.round(totalPurchaseValue).toLocaleString('ru-RU')} ₸</div>
         </div>
         <div className="catalog-dock-center">

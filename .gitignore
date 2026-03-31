@@ -29,6 +29,8 @@ wheels/
 venv/
 env/
 ENV/
+.venv/
+backend/.venv/
 
 # Database
 *.db

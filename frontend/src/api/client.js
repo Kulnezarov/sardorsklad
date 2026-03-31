@@ -34,10 +34,39 @@ export async function fetchAllProducts(filters = {}) {
   return acc
 }
 
+/**
+ * Non-local HTTP backends break HTTPS sites (Mixed Content).
+ * For any remote host (Railway, etc.) always use HTTPS — Railway serves TLS on the public domain.
+ * Keep HTTP only for localhost / private LAN IPs (local dev).
+ */
+function isLocalOrPrivateHost(hostname) {
+  if (['localhost', '127.0.0.1', '0.0.0.0'].includes(hostname)) return true
+  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(hostname)
+  if (!m) return false
+  const a = Number(m[1])
+  const b = Number(m[2])
+  if (a === 10) return true
+  if (a === 192 && b === 168) return true
+  if (a === 172 && b >= 16 && b <= 31) return true
+  return false
+}
+
+function upgradeHttpToHttpsIfNeeded(url) {
+  if (!url.startsWith('http://')) return url
+  try {
+    const u = new URL(url)
+    if (isLocalOrPrivateHost(u.hostname)) return url
+    u.protocol = 'https:'
+    return u.toString().replace(/\/$/, '')
+  } catch {
+    return url
+  }
+}
+
 export function getResolvedApiBaseUrl() {
   const raw = (import.meta.env.VITE_API_URL || '').trim()
   if (raw && raw !== 'auto') {
-    return raw.replace(/\/$/, '')
+    return upgradeHttpToHttpsIfNeeded(raw.replace(/\/$/, ''))
   }
   if (typeof window !== 'undefined' && window.location?.hostname) {
     const port = String(import.meta.env.VITE_API_PORT || '8000').trim()
@@ -47,10 +76,8 @@ export function getResolvedApiBaseUrl() {
   return 'http://localhost:8000/api/v1'
 }
 
-const API_BASE_URL = getResolvedApiBaseUrl()
-
 const apiClient = axios.create({
-  baseURL: API_BASE_URL,
+  baseURL: '',
   headers: {
     'Content-Type': 'application/json',
   },
@@ -73,7 +100,9 @@ const apiClient = axios.create({
 // Request interceptor for auth token
 apiClient.interceptors.request.use(
   (config) => {
-    if (config.url && API_BASE_URL.endsWith('/api/v1') && config.url.startsWith('/api/v1/')) {
+    const base = getResolvedApiBaseUrl()
+    config.baseURL = base
+    if (config.url && base.endsWith('/api/v1') && config.url.startsWith('/api/v1/')) {
       config.url = config.url.replace('/api/v1', '')
     }
 
@@ -207,7 +236,11 @@ export const settingsApi = {
   update: (data) => apiClient.put('/api/v1/settings', data),
   getDashboard: () => apiClient.get('/api/v1/settings/dashboard'),
   getCnyRate: () => apiClient.get('/api/v1/settings/exchange/cny-rate'),
-  setCnyRate: (rate) => apiClient.put('/api/v1/settings/exchange/cny-rate', { rate }),
+  // Backend expects "rate" as query param, not JSON body.
+  setCnyRate: (rate) =>
+    apiClient.put('/api/v1/settings/exchange/cny-rate', null, {
+      params: { rate },
+    }),
   testNotification: () => apiClient.post('/api/v1/settings/notifications/test'),
   getNotifications: (unreadOnly = false) =>
     apiClient.get('/api/v1/settings/notifications', { params: { unread_only: unreadOnly } }),

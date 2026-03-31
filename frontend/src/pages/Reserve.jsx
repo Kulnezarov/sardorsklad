@@ -26,6 +26,13 @@ const daysLabel = (n) => {
   if (n <= 4) return `${n} дня`;
   return `${n} дней`;
 };
+const asArray = (data) => {
+  if (Array.isArray(data)) return data;
+  if (Array.isArray(data?.items)) return data.items;
+  if (Array.isArray(data?.results)) return data.results;
+  if (Array.isArray(data?.data)) return data.data;
+  return [];
+};
 
 /* Resize image to max 700px wide, JPEG 70% */
 async function resizePhoto(file) {
@@ -224,13 +231,13 @@ const Reserve = () => {
   // ── Data queries ──
   const { data: wishItems = [], isLoading: wishLoading } = useQuery({
     queryKey: ['wish-items'],
-    queryFn: () => wishApi.list().then((r) => r.data),
+    queryFn: () => wishApi.list().then((r) => asArray(r.data)),
     staleTime: 30_000,
   });
 
   const { data: purchaseOrders = [], isLoading: poLoading } = useQuery({
     queryKey: ['purchase-orders'],
-    queryFn: () => poApi.list().then((r) => r.data),
+    queryFn: () => poApi.list().then((r) => asArray(r.data)),
     staleTime: 30_000,
   });
 

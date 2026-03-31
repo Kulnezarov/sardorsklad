@@ -1,10 +1,9 @@
 import { create } from 'zustand'
 import axios from 'axios'
-
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+import { getResolvedApiBaseUrl } from '../api/client'
 
 const api = axios.create({
-  baseURL: API_BASE_URL,
+  baseURL: '',
   headers: {
     'Content-Type': 'application/json',
   },
@@ -13,6 +12,11 @@ const api = axios.create({
 // Request interceptor to add auth token if exists
 api.interceptors.request.use(
   (config) => {
+    const base = getResolvedApiBaseUrl()
+    config.baseURL = base
+    if (config.url && base.endsWith('/api/v1') && config.url.startsWith('/api/v1/')) {
+      config.url = config.url.replace('/api/v1', '')
+    }
     const token = localStorage.getItem('authToken')
     if (token) {
       config.headers.Authorization = `Bearer ${token}`
