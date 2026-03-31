@@ -206,12 +206,12 @@ const Dashboard = () => {
                       </span>
                     </div>
                   ) : (
-                    <div className="dash-alerts-stack">
-                      {dash.alert_out_of_stock?.length > 0 && (
+                  <div className="dash-alerts-stack">
+                  {Array.isArray(dash.alert_out_of_stock) && dash.alert_out_of_stock.length > 0 && (
                         <div className="dash-alert-group dash-alert-group--danger">
                           <div className="dash-alert-group-title">Товар закончился (0 шт)</div>
                           <ul className="dash-alert-list">
-                            {dash.alert_out_of_stock.map((a) => (
+                            {dash.alert_out_of_stock?.map((a) => (
                               <li key={`o-${a.id}`} className="dash-alert-row">
                                 <span className="dash-alert-name">{a.name}</span>
                                 <span className="dash-alert-qty">{a.quantity} шт</span>
@@ -227,11 +227,11 @@ const Dashboard = () => {
                           </ul>
                         </div>
                       )}
-                      {dash.alert_low_stock?.length > 0 && (
+                      {Array.isArray(dash.alert_low_stock) && dash.alert_low_stock.length > 0 && (
                         <div className="dash-alert-group dash-alert-group--warn">
                           <div className="dash-alert-group-title">Товар заканчивается (1–5 шт)</div>
                           <ul className="dash-alert-list">
-                            {dash.alert_low_stock.map((a) => (
+                            {dash.alert_low_stock?.map((a) => (
                               <li key={`l-${a.id}`} className="dash-alert-row">
                                 <span className="dash-alert-name">{a.name}</span>
                                 <span className="dash-alert-qty">{a.quantity} шт</span>
@@ -247,11 +247,11 @@ const Dashboard = () => {
                           </ul>
                         </div>
                       )}
-                      {dash.alert_stale?.length > 0 && (
+                      {Array.isArray(dash.alert_stale) && dash.alert_stale.length > 0 && (
                         <div className="dash-alert-group dash-alert-group--stale">
                           <div className="dash-alert-group-title">Залежалый товар (30+ дней без продаж)</div>
                           <ul className="dash-alert-list">
-                            {dash.alert_stale.map((a) => (
+                            {dash.alert_stale?.map((a) => (
                               <li key={`s-${a.id}`} className="dash-alert-row">
                                 <span className="dash-alert-name">{a.name}</span>
                                 <span className="dash-alert-qty">{a.quantity} шт</span>
@@ -286,11 +286,11 @@ const Dashboard = () => {
                   </button>
                 </div>
                 <div className="dash-panel-body dash-panel-body--sales">
-                  {dash.recent_sales?.length === 0 ? (
+                  {Array.isArray(dash.recent_sales) && dash.recent_sales.length === 0 ? (
                     <div className="dash-empty-soft">Пока нет продаж</div>
                   ) : (
                     <ul className="dash-sales-list">
-                      {dash.recent_sales.map((s) => (
+                      {dash.recent_sales?.map((s) => (
                         <li key={s.id} className="dash-sales-row">
                           <div className="dash-sales-left">
                             <div className="dash-sales-topline">
