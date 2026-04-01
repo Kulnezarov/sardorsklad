@@ -333,6 +333,103 @@ npm run type-check
 
 ## Production Deployment
 
+### VPS Deployment (Recommended when you want full control)
+
+This repository includes a ready VPS setup:
+
+- `docker-compose.vps.yml`
+- `deploy/vps/Caddyfile`
+- `deploy/vps/.env.example`
+
+Architecture on one server:
+
+- `frontend` (Nginx static SPA)
+- `backend` (FastAPI)
+- `caddy` (reverse proxy + automatic Let's Encrypt HTTPS)
+
+#### 1) Choose VPS plan
+
+Minimum for current project:
+
+- 2 vCPU
+- 4 GB RAM
+- 40+ GB SSD
+- Ubuntu 22.04 LTS
+
+If you expect heavier traffic/imports:
+
+- 4 vCPU
+- 8 GB RAM
+
+#### 2) Point domains to VPS
+
+Create DNS `A` records:
+
+- `app.yourdomain.com` -> `<VPS_IP>`
+- `api.yourdomain.com` -> `<VPS_IP>`
+
+Wait until DNS propagates.
+
+#### 3) Prepare server
+
+```bash
+sudo apt update && sudo apt -y upgrade
+sudo apt -y install ca-certificates curl gnupg git
+curl -fsSL https://get.docker.com | sh
+sudo usermod -aG docker $USER
+newgrp docker
+docker --version
+docker compose version
+```
+
+#### 4) Upload project and configure env
+
+```bash
+git clone https://github.com/Kulnezarov/sardorsklad.git
+cd sardorsklad
+cp deploy/vps/.env.example .env.vps
+```
+
+Edit `.env.vps`:
+
+```bash
+APP_DOMAIN=app.yourdomain.com
+API_DOMAIN=api.yourdomain.com
+APP_ORIGIN=https://app.yourdomain.com
+VITE_API_URL=https://api.yourdomain.com/api/v1
+VITE_SUPABASE_URL=https://YOUR_PROJECT.supabase.co
+VITE_SUPABASE_ANON_KEY=YOUR_SUPABASE_ANON_KEY
+```
+
+Also configure backend secrets in `backend/.env` (database URL, supabase keys, etc.).
+
+#### 5) Start production stack
+
+```bash
+docker compose --env-file .env.vps -f docker-compose.vps.yml up -d --build
+docker compose --env-file .env.vps -f docker-compose.vps.yml ps
+```
+
+#### 6) Verify
+
+- Frontend: `https://app.yourdomain.com`
+- API health: `https://api.yourdomain.com/health`
+- API docs: `https://api.yourdomain.com/api/docs`
+
+#### Updates later (fast workflow)
+
+```bash
+git pull
+docker compose --env-file .env.vps -f docker-compose.vps.yml up -d --build
+```
+
+#### Logs / restart
+
+```bash
+docker compose --env-file .env.vps -f docker-compose.vps.yml logs -f
+docker compose --env-file .env.vps -f docker-compose.vps.yml restart
+```
+
 ### Vercel (frontend) + Railway (backend)
 
 Такой вариант не требует менять код приложения: достаточно переменных окружения и CORS.
