@@ -168,7 +168,7 @@ CREATE TABLE purchase_orders (
 	name VARCHAR(255) NOT NULL, 
 	brand VARCHAR(100), 
 	category VARCHAR(100), 
-	photo_data TEXT, 
+	photo_data TEXT, yes
 	barcode VARCHAR(50), 
 	supplier VARCHAR(255), 
 	price_cny NUMERIC(10, 2), 

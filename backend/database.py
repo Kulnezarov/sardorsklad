@@ -12,7 +12,10 @@ load_dotenv()
 
 def _ensure_supabase_ssl(url: str) -> str:
     """Supabase Postgres requires SSL; append sslmode if missing."""
-    if not url or "supabase.co" not in url or "sslmode=" in url:
+    if not url or "sslmode=" in url:
+        return url
+    # Direct host db.*.supabase.co and pooler aws-*.pooler.supabase.com
+    if "supabase.co" not in url and "pooler.supabase.com" not in url:
         return url
     sep = "&" if "?" in url else "?"
     return f"{url}{sep}sslmode=require"
