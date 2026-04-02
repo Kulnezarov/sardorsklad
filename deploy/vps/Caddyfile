@@ -1,9 +1,18 @@
-{$APP_DOMAIN} {
-  encode gzip zstd
-  reverse_proxy frontend:80
-}
+# Один вход на :80 — работает и по IP (http://1.2.3.4/), и по домену (когда появится DNS).
+# API и документация — префикс /api и /health; остальное — SPA (nginx).
 
-{$API_DOMAIN} {
-  encode gzip zstd
-  reverse_proxy backend:8000
+:80 {
+	encode gzip zstd
+
+	handle /api* {
+		reverse_proxy backend:8000
+	}
+
+	handle /health {
+		reverse_proxy backend:8000
+	}
+
+	handle {
+		reverse_proxy frontend:80
+	}
 }
