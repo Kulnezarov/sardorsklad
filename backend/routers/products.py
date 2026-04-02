@@ -209,7 +209,11 @@ def get_product_stats(db: Session = Depends(get_db)):
     cutoff_date = datetime.utcnow() - timedelta(days=30)
     stale = db.query(func.count(models.Product.id)).filter(
         models.Product.is_active == True,
-        or_(models.Product.last_sale_date.is_(None), models.Product.last_sale_date < cutoff_date),
+        models.Product.quantity > 0,
+        or_(
+            models.Product.received_at.isnot(None) & (models.Product.received_at < cutoff_date),
+            models.Product.received_at.is_(None) & (models.Product.created_at < cutoff_date),
+        ),
     ).scalar() or 0
 
     total_value = db.query(
@@ -247,6 +251,7 @@ def create_product(product: schemas.ProductCreate, db: Session = Depends(get_db)
         raise HTTPException(status_code=400, detail="SKU already exists")
 
     payload.pop("profit_percent", None)
+    payload["received_at"] = datetime.utcnow()
 
     db_product = models.Product(**payload)
     db.add(db_product)

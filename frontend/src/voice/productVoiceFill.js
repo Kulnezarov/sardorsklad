@@ -25,40 +25,92 @@ export function isAddProductCommand(text) {
   return ADD_PRODUCT_PATTERNS.some((re) => re.test(n));
 }
 
+const TYPO_MAP = {
+  'каличевство': 'количество', 'каличество': 'количество', 'колличество': 'количество',
+  'каличесво': 'количество', 'колличесво': 'количество', 'колличевство': 'количество',
+  'колчество': 'количество', 'количесво': 'количество',
+  'стоимость': 'продажа', 'цена': 'продажа', 'ценна': 'продажа', 'прайс': 'продажа',
+  'названия': 'название', 'наименование': 'название', 'имя': 'название',
+  'категории': 'категория', 'катигория': 'категория', 'катигории': 'категория',
+  'бренд': 'марка', 'брэнд': 'марка', 'производитель': 'марка',
+  'кол-во': 'количество', 'остаток': 'количество', 'штук': 'количество',
+};
+
+function normalizeTypos(text) {
+  let result = text;
+  for (const [typo, correct] of Object.entries(TYPO_MAP)) {
+    result = result.replace(new RegExp('\\b' + typo + '\\b', 'gi'), correct);
+  }
+  return result;
+}
+
+const RUSSIAN_NUMBERS = {
+  'ноль': 0, 'один': 1, 'одна': 1, 'одно': 1, 'два': 2, 'две': 2, 'три': 3,
+  'четыре': 4, 'пять': 5, 'шесть': 6, 'семь': 7, 'восемь': 8, 'девять': 9,
+  'десять': 10, 'одиннадцать': 11, 'двенадцать': 12, 'тринадцать': 13,
+  'четырнадцать': 14, 'пятнадцать': 15, 'шестнадцать': 16, 'семнадцать': 17,
+  'восемнадцать': 18, 'девятнадцать': 19, 'двадцать': 20, 'тридцать': 30,
+  'сорок': 40, 'пятьдесят': 50, 'шестьдесят': 60, 'семьдесят': 70,
+  'восемьдесят': 80, 'девяносто': 90, 'сто': 100, 'двести': 200, 'триста': 300,
+  'четыреста': 400, 'пятьсот': 500, 'шестьсот': 600, 'семьсот': 700,
+  'восемьсот': 800, 'девятьсот': 900, 'тысяча': 1000, 'тысячи': 1000, 'тысяч': 1000,
+};
+
+function parseRussianNumber(text) {
+  const t = text.trim().toLowerCase();
+  if (RUSSIAN_NUMBERS[t] !== undefined) return RUSSIAN_NUMBERS[t];
+  return null;
+}
+
 function parseNumberLoose(raw) {
   if (raw == null) return null;
   const s = String(raw).replace(/\s/g, '').replace(',', '.');
   const m = s.match(/(\d+(?:\.\d+)?)/);
-  if (!m) return null;
+  if (!m) {
+    const wordNum = parseRussianNumber(String(raw).trim());
+    if (wordNum !== null) return wordNum;
+    return null;
+  }
   const v = parseFloat(m[1]);
   return Number.isFinite(v) ? v : null;
 }
 
 /**
  * Extract slots from a single Russian utterance.
+ * Handles full multi-field phrases like:
+ * "название тормоза категория тормоз марка чанган количество 10 стоимость 2000"
  * @returns {Partial<{ name, category, brand, cny_price, delivery_cost_kzt, sale_price, quantity }>}
  */
 export function parseProductSlots(text) {
   if (!text || typeof text !== 'string') return {};
-  const lower = text.toLowerCase().replace(/[.,!?;:«»""]/g, ' ').replace(/\s+/g, ' ').trim();
+  const normalized = normalizeTypos(text.toLowerCase().replace(/[.,!?;:«»""]/g, ' ').replace(/\s+/g, ' ').trim());
   const out = {};
 
   const markers = [
     { re: /\bназвание\b/i, field: 'name' },
     { re: /\bкатегори[яи]\b/i, field: 'category' },
-    { re: /\bмарка\b|\bбренд\b/i, field: 'brand' },
-    { re: /\bколичеств[оа]\b|\bостаток\b/i, field: 'quantity' },
+    { re: /\bмарка\b/i, field: 'brand' },
+    { re: /\bколичеств[оа]\b/i, field: 'quantity' },
     { re: /\bдоставк[аи]\b/i, field: 'delivery_cost_kzt' },
-    { re: /\bпродаж[аи]\b|\bцена\s+продажи\b/i, field: 'sale_price' },
-    { re: /\bсебе\b|\bсебестоимость\b|\bстоимость\s+себе\b|\bв\s+юан/i, field: '_cny_ctx' },
+    { re: /\bпродаж[аи]\b/i, field: 'sale_price' },
+    { re: /\bсебестоимость\b|\bв\s+юан/i, field: '_cny_ctx' },
     { re: /\bюан/i, field: '_cny_ctx' },
+    { re: /\bместо\b|\bячейк[аи]\b/i, field: 'storage_location' },
+    { re: /\bпоставщик\b/i, field: 'supplier' },
   ];
 
   const positions = [];
   for (const { re, field } of markers) {
-    const match = lower.match(re);
-    if (match && match.index !== undefined) {
-      positions.push({ field, start: match.index, end: match.index + match[0].length });
+    const globalRe = new RegExp(re.source, 'gi');
+    let match;
+    while ((match = globalRe.exec(normalized)) !== null) {
+      const alreadyTaken = positions.some(
+        (p) => match.index >= p.start && match.index < p.end
+      );
+      if (!alreadyTaken) {
+        positions.push({ field, start: match.index, end: match.index + match[0].length });
+        break;
+      }
     }
   }
   positions.sort((a, b) => a.start - b.start);
@@ -66,7 +118,7 @@ export function parseProductSlots(text) {
   for (let i = 0; i < positions.length; i++) {
     const cur = positions[i];
     const next = positions[i + 1];
-    const slice = lower.slice(cur.end, next ? next.start : undefined).trim();
+    const slice = normalized.slice(cur.end, next ? next.start : undefined).trim();
     if (!slice) continue;
 
     if (cur.field === '_cny_ctx') {
@@ -84,27 +136,31 @@ export function parseProductSlots(text) {
       if (n != null) out[cur.field] = n;
       continue;
     }
+    if (cur.field === 'storage_location') {
+      out.storage_location = slice.toUpperCase();
+      continue;
+    }
     const words = slice.replace(/\d+[\d\s.,]*/g, ' ').replace(/\s+/g, ' ').trim();
     if (words) out[cur.field] = words;
   }
 
   // Fallback: number + юань / тг / шт without explicit marker
-  const cnyM = lower.match(/(\d[\d\s.,]*)\s*юан/);
+  const cnyM = normalized.match(/(\d[\d\s.,]*)\s*юан/);
   if (cnyM && out.cny_price == null) {
     const n = parseNumberLoose(cnyM[1]);
     if (n != null) out.cny_price = n;
   }
-  const delM = lower.match(/доставк[аи]\s+(\d[\d\s.,]*)\s*(?:тг|тенге|т\.?\s*г\.?)/);
+  const delM = normalized.match(/доставк[аи]\s+(\d[\d\s.,]*)\s*(?:тг|тенге|т\.?\s*г\.?)/);
   if (delM && out.delivery_cost_kzt == null) {
     const n = parseNumberLoose(delM[1]);
     if (n != null) out.delivery_cost_kzt = n;
   }
-  const saleM = lower.match(/продаж[аи]\s+(\d[\d\s.,]*)\s*(?:тг|тенге|т\.?\s*г\.?)/);
+  const saleM = normalized.match(/продаж[аи]\s+(\d[\d\s.,]*)\s*(?:тг|тенге|т\.?\s*г\.?)/);
   if (saleM && out.sale_price == null) {
     const n = parseNumberLoose(saleM[1]);
     if (n != null) out.sale_price = n;
   }
-  const qtyM = lower.match(/(\d[\d\s.,]*)\s*(?:шт|штук|штуки)/);
+  const qtyM = normalized.match(/(\d[\d\s.,]*)\s*(?:шт|штук|штуки)/);
   if (qtyM && out.quantity == null) {
     const n = parseNumberLoose(qtyM[1]);
     if (n != null) out.quantity = Math.round(n);
@@ -127,7 +183,9 @@ export function isVoiceSaveCommand(text) {
 }
 
 /**
- * One phrase → one or more field updates. Prefers explicit "название …", "марка …" patterns.
+ * One phrase → one or more field updates.
+ * Tries multi-field extraction first (e.g. "название тормоза категория тормоз марка чанган количество 10 стоимость 2000").
+ * Falls back to single-field patterns for short commands.
  * @returns {{ updates?: object, command?: 'stop'|'save' }}
  */
 export function parseVoiceSmart(text) {
@@ -136,11 +194,17 @@ export function parseVoiceSmart(text) {
   if (isVoiceStopCommand(raw)) return { command: 'stop' };
   if (isVoiceSaveCommand(raw)) return { command: 'save' };
 
+  const normalizedRaw = normalizeTypos(raw);
+
+  // Try multi-field extraction first — this handles full phrases
+  const bulk = parseProductSlots(normalizedRaw);
+  if (Object.keys(bulk).length >= 2) return { updates: bulk };
+
+  // Single-field patterns for short commands
   const tryPatterns = [
     { re: /^название\s+(.+)/i, field: 'name', map: (m) => m[1].trim() },
     { re: /^называется\s+(.+)/i, field: 'name', map: (m) => m[1].trim() },
     { re: /^марка\s+(.+)/i, field: 'brand', map: (m) => m[1].trim() },
-    { re: /^бренд\s+(.+)/i, field: 'brand', map: (m) => m[1].trim() },
     { re: /^категори[яи]\s+(.+)/i, field: 'category', map: (m) => m[1].trim() },
     { re: /^место\s+(.+)/i, field: 'storage_location', map: (m) => m[1].trim().toUpperCase() },
     { re: /^ячейк[аи]\s+(.+)/i, field: 'storage_location', map: (m) => m[1].trim().toUpperCase() },
@@ -149,11 +213,12 @@ export function parseVoiceSmart(text) {
     { re: /^в\s+юан[ях]?\s+(.+)/i, field: 'cny_price', map: (m) => parseNumberLoose(m[1]) },
     { re: /^доставк[аи]\s+(.+)/i, field: 'delivery_cost_kzt', map: (m) => parseNumberLoose(m[1]) },
     { re: /^продаж[аи]\s+(.+)/i, field: 'sale_price', map: (m) => parseNumberLoose(m[1]) },
+    { re: /^(?:стоимость|цена)\s+(.+)/i, field: 'sale_price', map: (m) => parseNumberLoose(m[1]) },
     { re: /^количеств[оа]\s+(.+)/i, field: 'quantity', map: (m) => Math.round(parseNumberLoose(m[1]) || 0) },
   ];
 
   for (const { re, field, map } of tryPatterns) {
-    const m = raw.match(re);
+    const m = normalizedRaw.match(re);
     if (m) {
       const val = map(m);
       if (val === null || val === undefined || val === '') continue;
@@ -166,7 +231,7 @@ export function parseVoiceSmart(text) {
     }
   }
 
-  const bulk = parseProductSlots(raw);
+  // Single-field bulk extraction if only 1 slot found
   if (Object.keys(bulk).length) return { updates: bulk };
   return {};
 }

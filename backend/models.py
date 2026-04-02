@@ -71,6 +71,7 @@ class Product(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), onupdate=func.now(), nullable=True)
     last_sale_date = Column(DateTime(timezone=True), nullable=True)
+    received_at = Column(DateTime(timezone=True), nullable=True)
 
     # Status flags
     is_active = Column(Boolean, default=True, nullable=False)
@@ -286,7 +287,7 @@ class Settings(Base):
     store_name = Column(String(255), default='SkladPro', nullable=False)
     scan_auto_increment = Column(Boolean, default=True, nullable=False)
     history_auto_clean_days = Column(Integer, default=30, nullable=False)
-    label_size = Column(String(20), default='medium', nullable=False)
+    label_size = Column(String(20), default='small', nullable=False)
     dark_mode = Column(Boolean, default=False, nullable=False)
     
     # Финансы

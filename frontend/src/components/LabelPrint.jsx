@@ -4,9 +4,10 @@ import JsBarcode from 'jsbarcode';
 import QRCodeLib from 'qrcode';
 import { FiPrinter, FiX, FiRefreshCw, FiTag, FiShare2, FiLoader } from 'react-icons/fi';
 
-/* ── size presets — default 40×30 мм (4см × 3см) ── */
+/* ── size presets ── */
 const SIZES = {
-  def: { label: 'Стандарт 40×30 мм ✓', w: '40mm',  h: '30mm',  previewW: 200, previewH: 150 },
+  xs:  { label: 'Маленькая 30×20 мм',  w: '30mm',  h: '20mm',  previewW: 160, previewH: 100, minimal: true },
+  def: { label: 'Стандарт 40×30 мм',   w: '40mm',  h: '30mm',  previewW: 200, previewH: 150 },
   sm:  { label: 'Средняя 58×40 мм',    w: '58mm',  h: '40mm',  previewW: 232, previewH: 160 },
   md:  { label: 'Большая 80×60 мм',    w: '80mm',  h: '60mm',  previewW: 280, previewH: 210 },
   lg:  { label: 'XL 100×70 мм',        w: '100mm', h: '70mm',  previewW: 320, previewH: 224 },
@@ -64,7 +65,7 @@ function generateBarcodeDataUrl(value) {
 ───────────────────────────────────────────── */
 const LabelPrint = ({ isOpen, onClose, product, settings, initialLabelType = 'barcode' }) => {
   const [type, setType]         = useState(initialLabelType);
-  const [size, setSize]         = useState('def');
+  const [size, setSize]         = useState('xs');
   const [copies, setCopies]     = useState(1);
   const [custom, setCustom]     = useState('');
   const [printing, setPrinting] = useState(false);
@@ -81,6 +82,7 @@ const LabelPrint = ({ isOpen, onClose, product, settings, initialLabelType = 'ba
   useEffect(() => {
     if (isOpen) {
       setType(initialLabelType);
+      setSize('xs');
       setCustom('');
       setQrPreviewUrl('');
     }
@@ -141,16 +143,20 @@ const LabelPrint = ({ isOpen, onClose, product, settings, initialLabelType = 'ba
          <div class="code-text">${escHtml(type === 'barcode' ? barcodeVal : qrVal)}</div>`
       : `<div class="code-text" style="color:red">Не удалось сгенерировать код</div>`;
 
+    const isMinimal = s.minimal;
     const labelHtml = Array.from({ length: Math.max(1, Number(copies)) })
-      .map(() => `
-        <div class="label">
-          <div class="pname">${escHtml(product.name)}</div>
-          ${product.brand
-            ? `<div class="psub">${escHtml(product.brand)}${product.category ? ' · ' + escHtml(product.category) : ''}</div>`
-            : ''}
-          ${codeHtml}
-          <div class="pprice">${Number(product.sale_price || 0).toLocaleString('ru-RU')} ₸</div>
-        </div>`
+      .map(() => isMinimal
+        ? `<div class="label label-minimal">
+            ${codeHtml}
+          </div>`
+        : `<div class="label">
+            <div class="pname">${escHtml(product.name)}</div>
+            ${product.brand
+              ? `<div class="psub">${escHtml(product.brand)}${product.category ? ' · ' + escHtml(product.category) : ''}</div>`
+              : ''}
+            ${codeHtml}
+            <div class="pprice">${Number(product.sale_price || 0).toLocaleString('ru-RU')} ₸</div>
+          </div>`
       )
       .join('');
 
@@ -177,6 +183,11 @@ const LabelPrint = ({ isOpen, onClose, product, settings, initialLabelType = 'ba
     .code-wrap { display: flex; align-items: center; justify-content: center; flex: 1; padding: 0.5mm 0; }
     .code-wrap img { max-width: 100%; max-height: 100%; object-fit: contain; display: block; }
     .pprice { font-size: 10pt; font-weight: 900; color: #000; border-top: 0.3mm solid #e0e0e0; padding-top: 0.8mm; margin-top: 0.5mm; width: 100%; }
+    .label-minimal { justify-content: center; padding: 0.5mm; }
+    .label-minimal .code-wrap { padding: 0; flex: none; }
+    .label-minimal .code-wrap img { max-height: 14mm; }
+    .label-minimal .code-text { font-size: 6pt; margin-top: 0.3mm; }
+    .label-minimal .pname, .label-minimal .psub, .label-minimal .pprice { display: none; }
     @media print { html, body { margin: 0; padding: 0; } }
   </style>
 </head>
@@ -318,31 +329,43 @@ const LabelPrint = ({ isOpen, onClose, product, settings, initialLabelType = 'ba
                   width: s.previewW, height: s.previewH,
                   background: '#fff', border: '1px dashed #ccc', borderRadius: 8,
                   display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-                  textAlign: 'center', padding: 10, overflow: 'hidden', flexShrink: 0,
+                  textAlign: 'center', padding: s.minimal ? 4 : 10, overflow: 'hidden', flexShrink: 0,
                 }}>
-                  <div style={{ fontSize: 11, fontWeight: 800, wordBreak: 'break-word', maxWidth: '100%', marginBottom: 3, lineHeight: 1.25 }}>
-                    {product.name}
-                  </div>
-                  {product.brand && (
-                    <div style={{ fontSize: 9, color: '#666', marginBottom: 6 }}>
-                      {product.brand}{product.category ? ` · ${product.category}` : ''}
-                    </div>
+                  {!s.minimal && (
+                    <>
+                      <div style={{ fontSize: 11, fontWeight: 800, wordBreak: 'break-word', maxWidth: '100%', marginBottom: 3, lineHeight: 1.25 }}>
+                        {product.name}
+                      </div>
+                      {product.brand && (
+                        <div style={{ fontSize: 9, color: '#666', marginBottom: 6 }}>
+                          {product.brand}{product.category ? ` · ${product.category}` : ''}
+                        </div>
+                      )}
+                    </>
                   )}
 
                   {type === 'barcode' ? (
                     <canvas
                       ref={barcodeCanvasRef}
-                      style={{ maxWidth: s.previewW - 20, height: 'auto', display: 'block' }}
+                      style={{ maxWidth: s.previewW - (s.minimal ? 8 : 20), height: 'auto', display: 'block' }}
                     />
                   ) : (
                     qrPreviewUrl
-                      ? <img src={qrPreviewUrl} alt="QR" style={{ width: 80, height: 80, display: 'block' }} />
+                      ? <img src={qrPreviewUrl} alt="QR" style={{ width: s.minimal ? 50 : 80, height: s.minimal ? 50 : 80, display: 'block' }} />
                       : <div style={{ width: 80, height: 80, background: '#eee', borderRadius: 4, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 9, color: '#999' }}>Генерация…</div>
                   )}
 
-                  <div style={{ fontSize: 10, fontWeight: 800, marginTop: 5 }}>
-                    {Number(product.sale_price || 0).toLocaleString('ru-RU')} ₸
-                  </div>
+                  {s.minimal && (
+                    <div style={{ fontSize: 8, fontWeight: 700, marginTop: 2, color: '#333', fontFamily: 'ui-monospace,monospace' }}>
+                      {barcodeVal}
+                    </div>
+                  )}
+
+                  {!s.minimal && (
+                    <div style={{ fontSize: 10, fontWeight: 800, marginTop: 5 }}>
+                      {Number(product.sale_price || 0).toLocaleString('ru-RU')} ₸
+                    </div>
+                  )}
                 </div>
               </div>
             </div>

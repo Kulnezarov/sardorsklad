@@ -109,6 +109,11 @@ def ensure_schema_updates():
                     "ALTER TABLE products ADD COLUMN IF NOT EXISTS supplier VARCHAR(255)"
                 )
             )
+            conn.execute(
+                text(
+                    "ALTER TABLE products ADD COLUMN IF NOT EXISTS received_at TIMESTAMPTZ"
+                )
+            )
             # Legacy DBs may have CHECK (operation_type) without app enum values → DELETE/ADD history fails with 500.
             conn.execute(text("ALTER TABLE history DROP CONSTRAINT IF EXISTS history_operation_type_check"))
             conn.execute(

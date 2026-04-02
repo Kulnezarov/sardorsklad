@@ -16,7 +16,7 @@ const defaultSettings = {
   store_name: 'SkladPro',
   scan_auto_increment: true,
   history_auto_clean_days: 30,
-  label_size: 'medium',
+  label_size: 'small',
   dark_mode: false,
   cny_rate: 65,
   low_stock_threshold: 5,

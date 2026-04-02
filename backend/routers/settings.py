@@ -37,7 +37,12 @@ def get_dashboard_stats(db: Session = Depends(get_db)):
     cutoff = datetime.utcnow() - timedelta(days=30)
     stale_count = db.query(func.count(models.Product.id)).filter(
         models.Product.is_active == True,
-        (models.Product.last_sale_date.is_(None)) | (models.Product.last_sale_date < cutoff),
+        models.Product.quantity > 0,
+        (
+            (models.Product.received_at.isnot(None)) & (models.Product.received_at < cutoff)
+        ) | (
+            (models.Product.received_at.is_(None)) & (models.Product.created_at < cutoff)
+        ),
     ).scalar() or 0
 
     today = date.today()
@@ -131,7 +136,11 @@ def get_dashboard_stats(db: Session = Depends(get_db)):
         .filter(
             models.Product.is_active == True,
             models.Product.quantity > 0,
-            (models.Product.last_sale_date.is_(None)) | (models.Product.last_sale_date < cutoff),
+            (
+                (models.Product.received_at.isnot(None)) & (models.Product.received_at < cutoff)
+            ) | (
+                (models.Product.received_at.is_(None)) & (models.Product.created_at < cutoff)
+            ),
         )
         .order_by(models.Product.name)
         .limit(alert_limit)

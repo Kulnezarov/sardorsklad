@@ -99,6 +99,7 @@ class ProductResponse(ProductBase):
     created_at: datetime
     updated_at: Optional[datetime]
     last_sale_date: Optional[datetime]
+    received_at: Optional[datetime] = None
 
     model_config = {"from_attributes": True}
 

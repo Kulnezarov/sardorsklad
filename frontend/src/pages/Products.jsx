@@ -115,10 +115,11 @@ const PRODUCTS_PAGE_SIZE = 30;
 function isStale(p) {
   if (!p.quantity || p.quantity <= 0) return false;
   const now = Date.now();
-  const created = p.created_at ? new Date(p.created_at).getTime() : null;
-  if (created && now - created < STALE_MS) return false;
-  if (!p.last_sale_date) return true;
-  return now - new Date(p.last_sale_date).getTime() > STALE_MS;
+  const stockDate = p.received_at ? new Date(p.received_at).getTime()
+    : p.created_at ? new Date(p.created_at).getTime()
+    : null;
+  if (!stockDate) return false;
+  return now - stockDate > STALE_MS;
 }
 
 /* ── component ── */
@@ -156,8 +157,10 @@ const Products = () => {
   const [importError, setImportError] = useState('');
 
   const [scanNotFound, setScanNotFound] = useState(null); // scanned barcode string when not found
+  const [showSuggestions, setShowSuggestions] = useState(false);
 
   const importAbortRef = useRef(null);
+  const searchWrapRef = useRef(null);
   const importFileRef = useRef(null);
   const voiceCtlRef = useRef(null);
   const barcodeCanvasRef = useRef(null);
@@ -174,6 +177,44 @@ const Products = () => {
     const t = setTimeout(() => setSearch(searchInput), 300);
     return () => clearTimeout(t);
   }, [searchInput]);
+
+  // Search autocomplete suggestions (max 6, deduplicated)
+  const searchSuggestions = useMemo(() => {
+    const q = searchInput.trim().toLowerCase();
+    if (!q) return [];
+    const seen = new Set();
+    const results = [];
+    const allProducts = productsRef.current.length ? productsRef.current : products;
+    for (const p of allProducts) {
+      if (results.length >= 6) break;
+      const entries = [
+        { val: p.name, type: 'Товар' },
+        { val: p.brand, type: 'Марка' },
+        { val: p.category, type: 'Категория' },
+      ];
+      for (const { val, type } of entries) {
+        if (!val) continue;
+        const key = val.toLowerCase();
+        if (key.includes(q) && !seen.has(key)) {
+          seen.add(key);
+          results.push({ label: val, type });
+          if (results.length >= 6) break;
+        }
+      }
+    }
+    return results;
+  }, [searchInput, products]);
+
+  // Close suggestions on outside click
+  useEffect(() => {
+    const handler = (e) => {
+      if (searchWrapRef.current && !searchWrapRef.current.contains(e.target)) {
+        setShowSuggestions(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
 
   const { data: settingsRow } = useQuery({
     queryKey: ['settings-row'],
@@ -633,15 +674,40 @@ const Products = () => {
 
       {/* ── Search + categories ── */}
       <div className="ios-glass-panel" style={{ padding: '14px 16px', marginBottom: 12 }}>
-        <div className="catalog-search-wrap" style={{ marginBottom: 10 }}>
-          <FiSearch className="catalog-search-icon" size={17} />
-          <input
-            className="catalog-search-input"
-            placeholder="Поиск по названию, марке, штрих-коду…"
-            value={searchInput}
-            onChange={(e) => setSearchInput(e.target.value)}
-            aria-label="Поиск"
-          />
+        <div ref={searchWrapRef} style={{ position: 'relative', marginBottom: 10 }}>
+          <div className="catalog-search-wrap">
+            <FiSearch className="catalog-search-icon" size={17} />
+            <input
+              className="catalog-search-input"
+              placeholder="Поиск по названию, марке, штрих-коду…"
+              value={searchInput}
+              onChange={(e) => { setSearchInput(e.target.value); setShowSuggestions(true); }}
+              onFocus={() => searchSuggestions.length > 0 && setShowSuggestions(true)}
+              aria-label="Поиск"
+            />
+            {searchInput && (
+              <button type="button" onClick={() => { setSearchInput(''); setShowSuggestions(false); }} style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: 4, zIndex: 2 }}>
+                <FiX size={16} />
+              </button>
+            )}
+          </div>
+          {showSuggestions && searchSuggestions.length > 0 && (
+            <div style={{ position: 'absolute', top: 'calc(100% + 4px)', left: 0, right: 0, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, boxShadow: 'var(--shadow-lg)', zIndex: 50, overflow: 'hidden' }}>
+              {searchSuggestions.map((s, i) => (
+                <button
+                  key={`${s.label}-${i}`}
+                  type="button"
+                  onClick={() => { setSearchInput(s.label); setShowSuggestions(false); }}
+                  style={{ width: '100%', padding: '10px 14px', border: 'none', background: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, borderBottom: i < searchSuggestions.length - 1 ? '1px solid var(--border-light)' : 'none', textAlign: 'left', transition: 'background 0.12s' }}
+                  onMouseEnter={(e) => e.currentTarget.style.background = 'var(--primary-light)'}
+                  onMouseLeave={(e) => e.currentTarget.style.background = 'none'}
+                >
+                  <span style={{ fontWeight: 600, fontSize: 14, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.label}</span>
+                  <span style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 500, flexShrink: 0 }}>{s.type}</span>
+                </button>
+              ))}
+            </div>
+          )}
         </div>
         <div className="catalog-chips-scroll">
           <button type="button" className={`catalog-chip ${selectedCategory === '' && !showStale ? 'catalog-chip-active' : ''}`} onClick={() => { setSelectedCategory(''); setShowStale(false); }}>Все</button>
@@ -933,7 +999,7 @@ const Products = () => {
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
               <div>
                 <div style={{ fontWeight: 600, fontSize: 14 }}>Голосовое заполнение</div>
-                <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>«название мотор», «место A25», «продажа 4500», «сохранить»</div>
+                <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>«название тормоза категория тормоз марка чанган количество 10 стоимость 2000» или по частям</div>
               </div>
               <Button variant={voiceListening ? 'danger' : 'secondary'} icon={voiceListening ? FiMicOff : FiMic} onClick={toggleVoiceFill}>{voiceListening ? 'Стоп' : 'Слушать'}</Button>
             </div>

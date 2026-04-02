@@ -25,8 +25,18 @@ const Sales = () => {
     staleTime: 60000,
   });
 
+  const CART_STORAGE_KEY = 'skladpro-cart-draft';
+
+  const loadCartDraft = () => {
+    try {
+      const raw = localStorage.getItem(CART_STORAGE_KEY);
+      if (!raw) return [];
+      return JSON.parse(raw);
+    } catch { return []; }
+  };
+
   // Cart state: [{ product, quantity, unitPrice }]
-  const [cart, setCart] = useState([]);
+  const [cart, setCart] = useState(loadCartDraft);
   const [searchInput, setSearchInput] = useState('');
   const [searchResults, setSearchResults] = useState([]);
   const [showDropdown, setShowDropdown] = useState(false);
@@ -36,11 +46,21 @@ const Sales = () => {
   const [showSuccess, setShowSuccess] = useState(false);
   const [successAmount, setSuccessAmount] = useState(0);
   const [editingPrice, setEditingPrice] = useState(null); // cart item index
-  const [paymentMethod, setPaymentMethod] = useState('cash');
 
   const searchRef = useRef(null);
   const barcodeRef = useRef(null);
   const dropdownRef = useRef(null);
+
+  // Persist cart draft to localStorage
+  useEffect(() => {
+    try {
+      if (cart.length > 0) {
+        localStorage.setItem(CART_STORAGE_KEY, JSON.stringify(cart));
+      } else {
+        localStorage.removeItem(CART_STORAGE_KEY);
+      }
+    } catch {}
+  }, [cart]);
 
   // Search with debounce
   useEffect(() => {
@@ -144,7 +164,7 @@ const Sales = () => {
       if (cart.length === 0) throw new Error('Корзина пуста');
       return saleApi.create({
         items: cart.map((i) => ({ product_id: i.product.id, quantity: i.quantity, unit_price: i.unitPrice })),
-        payment_method: paymentMethod,
+        payment_method: 'cash',
       });
     },
     onSuccess: () => {
@@ -164,7 +184,7 @@ const Sales = () => {
         gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.3);
         osc.start(); osc.stop(ctx.currentTime + 0.3);
       } catch (_) {}
-      setTimeout(() => { setShowSuccess(false); setCart([]); setPaymentMethod('cash'); }, 1500);
+      setTimeout(() => { setShowSuccess(false); setCart([]); localStorage.removeItem(CART_STORAGE_KEY); }, 1500);
     },
     onError: (err) => { toast.error(err.message || 'Ошибка при продаже'); },
   });
@@ -384,18 +404,6 @@ const Sales = () => {
 
           {/* Cart footer */}
           <div style={{ borderTop: '2px solid var(--border)', padding: '14px 16px', background: 'var(--surface)' }}>
-            {/* Payment method */}
-            {cart.length > 0 && (
-              <div style={{ display: 'flex', gap: 6, marginBottom: 12 }}>
-                {[{ val: 'cash', label: '💵 Нал' }, { val: 'card', label: '💳 Карта' }, { val: 'transfer', label: '📲 Перевод' }].map((m) => (
-                  <button key={m.val} type="button" onClick={() => setPaymentMethod(m.val)}
-                    style={{ flex: 1, padding: '8px', borderRadius: 12, border: `1.5px solid ${paymentMethod === m.val ? 'var(--primary)' : 'var(--border)'}`, background: paymentMethod === m.val ? 'var(--primary-light)' : 'var(--surface)', color: paymentMethod === m.val ? 'var(--primary)' : 'var(--text-secondary)', fontWeight: 600, fontSize: 12, cursor: 'pointer', transition: 'all 0.15s', textAlign: 'center' }}>
-                    {m.label}
-                  </button>
-                ))}
-              </div>
-            )}
-
             {/* Total */}
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
               <span style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>ИТОГО</span>
@@ -414,7 +422,7 @@ const Sales = () => {
             </button>
 
             {cart.length > 0 && (
-              <button type="button" onClick={() => { if (window.confirm('Очистить чек?')) { setCart([]); setPaymentMethod('cash'); } }} style={{ width: '100%', background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, color: 'var(--text-muted)', fontWeight: 600, padding: '6px', textAlign: 'center' }}>
+              <button type="button" onClick={() => { if (window.confirm('Очистить чек?')) { setCart([]); localStorage.removeItem(CART_STORAGE_KEY); } }} style={{ width: '100%', background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, color: 'var(--text-muted)', fontWeight: 600, padding: '6px', textAlign: 'center' }}>
                 Очистить чек
               </button>
             )}
