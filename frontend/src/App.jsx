@@ -12,7 +12,7 @@ import Sales from './pages/Sales';
 import ProductFound from './pages/ProductFound';
 import Reserve from './pages/Reserve';
 import History from './pages/History';
-import Revision from './pages/Revision';
+import AstraChat from './pages/AstraChat';
 import Settings from './pages/Settings';
 
 class ErrorBoundary extends Component {
@@ -59,7 +59,7 @@ function AppShell() {
               <Route path="/sales/found" element={<ProductFound />} />
               <Route path="/reserve" element={<Reserve />} />
               <Route path="/history" element={<History />} />
-              <Route path="/revision" element={<Revision />} />
+              <Route path="/astra" element={<AstraChat />} />
               <Route path="/settings" element={<Settings />} />
             </Routes>
           </ErrorBoundary>

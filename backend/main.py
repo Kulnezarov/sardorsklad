@@ -10,7 +10,7 @@ from sqlalchemy.exc import OperationalError
 import database
 import models
 from routers import products, sales, reserve, history, revision, settings
-from routers import wish_orders
+from routers import wish_orders, ai_chat
 from config.logger import setup_logger
 
 # ============================================================================
@@ -195,6 +195,7 @@ app.include_router(history.router)
 app.include_router(revision.router)
 app.include_router(settings.router)
 app.include_router(wish_orders.router)
+app.include_router(ai_chat.router)
 
 
 # ============================================================================
