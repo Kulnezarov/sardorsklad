@@ -34,44 +34,15 @@ export async function fetchAllProducts(filters = {}) {
   return acc
 }
 
-/**
- * Non-local HTTP backends break HTTPS sites (Mixed Content).
- * For any remote host (Railway, etc.) always use HTTPS — Railway serves TLS on the public domain.
- * Keep HTTP only for localhost / private LAN IPs (local dev).
- */
-function isLocalOrPrivateHost(hostname) {
-  if (['localhost', '127.0.0.1', '0.0.0.0'].includes(hostname)) return true
-  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(hostname)
-  if (!m) return false
-  const a = Number(m[1])
-  const b = Number(m[2])
-  if (a === 10) return true
-  if (a === 192 && b === 168) return true
-  if (a === 172 && b >= 16 && b <= 31) return true
-  return false
-}
-
-function upgradeHttpToHttpsIfNeeded(url) {
-  if (!url.startsWith('http://')) return url
-  try {
-    const u = new URL(url)
-    if (isLocalOrPrivateHost(u.hostname)) return url
-    u.protocol = 'https:'
-    return u.toString().replace(/\/$/, '')
-  } catch {
-    return url
-  }
-}
-
 export function getResolvedApiBaseUrl() {
   const raw = (import.meta.env.VITE_API_URL || '').trim()
   if (raw && raw !== 'auto') {
-    return upgradeHttpToHttpsIfNeeded(raw.replace(/\/$/, ''))
+    return raw.replace(/\/$/, '')
   }
   if (typeof window !== 'undefined' && window.location?.hostname) {
     const port = String(import.meta.env.VITE_API_PORT || '8000').trim()
-    const { protocol, hostname } = window.location
-    return `${protocol}//${hostname}:${port}/api/v1`
+    const { hostname } = window.location
+    return `http://${hostname}:${port}/api/v1`
   }
   return 'http://localhost:8000/api/v1'
 }

@@ -1,5 +1,3 @@
-version: "3.9"
-
 services:
   backend:
     build:
@@ -13,7 +11,7 @@ services:
       PORT: 8000
       API_HOST: 0.0.0.0
       API_PORT: 8000
-      ORIGINS: ${APP_ORIGIN}
+      ORIGINS: ${APP_ORIGIN:-http://194.32.142.253}
     expose:
       - "8000"
 
@@ -22,7 +20,7 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
       args:
-        VITE_API_URL: ${VITE_API_URL}
+        VITE_API_URL: ${VITE_API_URL:-http://194.32.142.253/api/v1}
         VITE_SUPABASE_URL: ${VITE_SUPABASE_URL}
         VITE_SUPABASE_ANON_KEY: ${VITE_SUPABASE_ANON_KEY}
     container_name: skladpro-frontend
@@ -38,10 +36,6 @@ services:
     restart: unless-stopped
     ports:
       - "80:80"
-      - "443:443"
-    environment:
-      APP_DOMAIN: ${APP_DOMAIN}
-      API_DOMAIN: ${API_DOMAIN}
     volumes:
       - ./deploy/vps/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
