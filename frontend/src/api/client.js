@@ -90,16 +90,26 @@ apiClient.interceptors.request.use(
 apiClient.interceptors.response.use(
   (response) => response,
   (error) => {
-    if (error.response?.status === 401) {
+    const url = String(error.config?.url || '')
+    const isAuthAttempt = url.includes('/auth/login') || url.includes('/auth/register')
+    if (error.response?.status === 401 && !isAuthAttempt) {
       localStorage.removeItem('authToken')
       localStorage.removeItem('user')
-      // Emit custom event for auth state change
       window.dispatchEvent(new CustomEvent('auth:logout'))
       window.location.href = '/login'
     }
     return Promise.reject(error)
   },
 )
+
+// ============================================================================
+// AUTH API
+// ============================================================================
+export const authApi = {
+  login: (body) => apiClient.post('/api/v1/auth/login', body),
+  register: (body) => apiClient.post('/api/v1/auth/register', body),
+  me: () => apiClient.get('/api/v1/auth/me'),
+}
 
 // ============================================================================
 // PRODUCTS API

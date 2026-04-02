@@ -3,7 +3,7 @@ from decimal import Decimal
 from enum import Enum
 from typing import Any, List, Optional
 
-from pydantic import BaseModel, Field, condecimal, field_validator
+from pydantic import BaseModel, EmailStr, Field, condecimal, field_validator
 
 
 class OperationType(str, Enum):
@@ -447,3 +447,31 @@ class ImportResult(BaseModel):
     success_count: int
     error_count: int
     errors: List[dict]
+
+
+# ============================================================================
+# AUTH
+# ============================================================================
+class UserRegister(BaseModel):
+    email: EmailStr
+    password: str = Field(..., min_length=6, max_length=128)
+    full_name: Optional[str] = Field(None, max_length=255)
+
+
+class UserLogin(BaseModel):
+    email: EmailStr
+    password: str = Field(..., min_length=1, max_length=128)
+
+
+class UserPublic(BaseModel):
+    id: int
+    email: str
+    full_name: Optional[str] = None
+
+    model_config = {"from_attributes": True}
+
+
+class AuthTokenResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    user: UserPublic

@@ -1,51 +1,43 @@
 import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
-import { createClient } from '@supabase/supabase-js';
-
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
-const hasSupabaseConfig = Boolean(supabaseUrl && supabaseAnonKey);
-
-const supabase = hasSupabaseConfig ? createClient(supabaseUrl, supabaseAnonKey) : null;
+import { authApi } from '../api/client';
 
 const AuthContext = createContext(undefined);
+
+const USER_STORAGE_KEY = 'user';
 
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (!supabase) {
-      console.error('Supabase is not configured. Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.');
-      setUser(null);
-      setLoading(false);
-      return undefined;
-    }
-
-    const getSession = async () => {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-
-      setUser(session?.user ?? null);
-      setLoading(false);
-    };
-
-    getSession();
-
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
-      setUser(session?.user ?? null);
-      setLoading(false);
-
-      if (session?.access_token) {
-        localStorage.setItem('supabase_token', session.access_token);
-      } else {
-        localStorage.removeItem('supabase_token');
+    const bootstrap = async () => {
+      const token = localStorage.getItem('authToken');
+      if (!token) {
+        setUser(null);
+        setLoading(false);
+        return;
       }
-    });
+      try {
+        const { data } = await authApi.me();
+        setUser(data);
+        localStorage.setItem(USER_STORAGE_KEY, JSON.stringify(data));
+      } catch {
+        localStorage.removeItem('authToken');
+        localStorage.removeItem(USER_STORAGE_KEY);
+        setUser(null);
+      } finally {
+        setLoading(false);
+      }
+    };
+    bootstrap();
+  }, []);
 
-    return () => subscription.unsubscribe();
+  useEffect(() => {
+    const onLogout = () => {
+      setUser(null);
+    };
+    window.addEventListener('auth:logout', onLogout);
+    return () => window.removeEventListener('auth:logout', onLogout);
   }, []);
 
   const value = useMemo(
@@ -53,36 +45,33 @@ export const AuthProvider = ({ children }) => {
       user,
       loading,
       isDemoMode: false,
-      login: async (login, password) => {
-        if (!supabase) {
-          throw new Error('Supabase не настроен на фронтенде');
-        }
-
-        const { data, error } = await supabase.auth.signInWithPassword({
-          email: login,
-          password,
-        });
-
-        if (error) {
-          throw error;
-        }
-
+      login: async (email, password) => {
+        localStorage.removeItem('authToken');
+        localStorage.removeItem(USER_STORAGE_KEY);
+        const { data } = await authApi.login({ email, password });
+        localStorage.setItem('authToken', data.access_token);
+        localStorage.setItem(USER_STORAGE_KEY, JSON.stringify(data.user));
+        setUser(data.user);
+        return data;
+      },
+      register: async (email, password, full_name) => {
+        localStorage.removeItem('authToken');
+        localStorage.removeItem(USER_STORAGE_KEY);
+        const body = { email, password };
+        if (full_name) body.full_name = full_name;
+        const { data } = await authApi.register(body);
+        localStorage.setItem('authToken', data.access_token);
+        localStorage.setItem(USER_STORAGE_KEY, JSON.stringify(data.user));
+        setUser(data.user);
         return data;
       },
       logout: async () => {
-        if (!supabase) {
-          setUser(null);
-          return;
-        }
-
-        const { error } = await supabase.auth.signOut();
-        if (error) {
-          throw error;
-        }
+        localStorage.removeItem('authToken');
+        localStorage.removeItem(USER_STORAGE_KEY);
+        setUser(null);
       },
-      supabase,
     }),
-    [user, loading]
+    [user, loading],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
@@ -90,10 +79,8 @@ export const AuthProvider = ({ children }) => {
 
 export const useAuth = () => {
   const context = useContext(AuthContext);
-
-  if (!context) {
+  if (context === undefined) {
     throw new Error('useAuth must be used within an AuthProvider');
   }
-
   return context;
 };

@@ -1,35 +1,42 @@
 import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from './AuthContext';
 import toast from 'react-hot-toast';
 import './LoginPage.css';
 
-const LoginPage = () => {
-  const [loginValue, setLoginValue] = useState('');
+function apiErrorMessage(error) {
+  const d = error?.response?.data?.detail;
+  if (typeof d === 'string') return d;
+  if (Array.isArray(d) && d[0]?.msg) return d.map((x) => x.msg).join(', ');
+  return error?.message || 'Ошибка';
+}
+
+const RegisterPage = () => {
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [fullName, setFullName] = useState('');
   const [loading, setLoading] = useState(false);
-  const { login: signIn } = useAuth();
+  const { register } = useAuth();
   const navigate = useNavigate();
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    
-    if (!loginValue || !password) {
-      toast.error('Заполните все поля');
+    if (!email || !password) {
+      toast.error('Заполните email и пароль');
+      return;
+    }
+    if (password.length < 6) {
+      toast.error('Пароль не короче 6 символов');
       return;
     }
 
     setLoading(true);
-    
     try {
-      await signIn(loginValue, password);
-      toast.success('Вход выполнен успешно');
+      await register(email, password, fullName.trim() || undefined);
+      toast.success('Аккаунт создан');
       navigate('/dashboard');
     } catch (error) {
-      const d = error?.response?.data?.detail;
-      const msg =
-        typeof d === 'string' ? d : Array.isArray(d) ? d.map((x) => x.msg).join(', ') : error?.message;
-      toast.error(msg || 'Ошибка при входе');
+      toast.error(apiErrorMessage(error));
     } finally {
       setLoading(false);
     }
@@ -47,60 +54,67 @@ const LoginPage = () => {
             </svg>
           </div>
           <h2 className="login-title">SkladPro</h2>
-          <p className="login-subtitle">Вход в систему склада</p>
+          <p className="login-subtitle">Регистрация</p>
         </div>
-        
+
         <form className="login-form" onSubmit={handleSubmit}>
           <div className="form-group">
             <label className="form-label">Email</label>
             <input
               type="email"
-              value={loginValue}
-              onChange={(e) => setLoginValue(e.target.value)}
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
               placeholder="name@example.com"
               required
               className="form-input"
-              autoComplete="username"
+              autoComplete="email"
             />
           </div>
-          
+
+          <div className="form-group">
+            <label className="form-label">Имя (необязательно)</label>
+            <input
+              type="text"
+              value={fullName}
+              onChange={(e) => setFullName(e.target.value)}
+              placeholder="Имя"
+              className="form-input"
+              autoComplete="name"
+            />
+          </div>
+
           <div className="form-group">
             <label className="form-label">Пароль</label>
             <input
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              placeholder="Введите ваш пароль"
+              placeholder="Не менее 6 символов"
               required
+              minLength={6}
               className="form-input"
-              autoComplete="current-password"
+              autoComplete="new-password"
             />
           </div>
 
-          <button
-            type="submit"
-            disabled={loading}
-            className="form-button"
-          >
-            {loading ? 'Вход...' : 'Войти в систему'}
+          <button type="submit" disabled={loading} className="form-button">
+            {loading ? 'Создание...' : 'Зарегистрироваться'}
           </button>
 
           <div className="login-footer">
             <p className="login-footer-text">
-              Нет аккаунта?{' '}
-              <Link to="/register" style={{ color: 'var(--accent, #2563eb)' }}>
-                Регистрация
+              Уже есть аккаунт?{' '}
+              <Link to="/login" style={{ color: 'var(--accent, #2563eb)' }}>
+                Войти
               </Link>
             </p>
           </div>
         </form>
       </div>
-      
-      <p className="login-copyright">
-        © 2026 SkladPro. Все права защищены.
-      </p>
+
+      <p className="login-copyright">© 2026 SkladPro. Все права защищены.</p>
     </div>
   );
 };
 
-export default LoginPage;
+export default RegisterPage;

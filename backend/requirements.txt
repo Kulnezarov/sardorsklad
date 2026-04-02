@@ -16,8 +16,10 @@ redis==5.0.1
 celery==5.3.4
 apscheduler==3.10.4
 
-# Cloud/Auth
-supabase==2.3.5
+# Auth
+passlib[bcrypt]==1.7.4
+python-jose[cryptography]==3.3.0
+email-validator==2.1.0.post1
 python-multipart==0.0.6
 
 # File Processing
