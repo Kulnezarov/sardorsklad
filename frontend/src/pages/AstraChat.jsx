@@ -1,28 +1,98 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
-import { FiSend, FiImage, FiTrash2, FiX, FiLoader } from 'react-icons/fi';
+import {
+  Send,
+  Loader2,
+  ImagePlus,
+  Trash2,
+  X,
+  User,
+  PanelLeftClose,
+  PanelLeft,
+  MessageSquarePlus,
+  Sparkles,
+} from 'lucide-react';
 import { astraChatApi } from '../api/client';
 
-const STORAGE_KEY = 'astra-chat-history';
-const MAX_HISTORY = 50;
+const WINDOW_BASE = 5;
+const LOAD_CHUNK = 5;
+const MAX_VISIBLE = 50;
 
-function loadHistory() {
+const STORAGE = {
+  WIPE_DAY: 'astra-wipe-day-v1',
+  SESSIONS: 'astra-sessions-v1',
+  CURRENT: 'astra-current-messages-v1',
+};
+
+function localDateKey(d = new Date()) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+function minutesSinceMidnight(d = new Date()) {
+  return d.getHours() * 60 + d.getMinutes();
+}
+
+function persistWipeDay() {
+  localStorage.setItem(STORAGE.WIPE_DAY, localDateKey());
+}
+
+function shouldRunDailyWipe() {
+  if (minutesSinceMidnight() < 2) return false;
+  const today = localDateKey();
+  const last = localStorage.getItem(STORAGE.WIPE_DAY);
+  if (last == null || last === '') {
+    persistWipeDay();
+    return false;
+  }
+  return last !== today;
+}
+
+function hardWipeAll() {
+  localStorage.removeItem(STORAGE.CURRENT);
+  localStorage.removeItem(STORAGE.SESSIONS);
+  persistWipeDay();
+}
+
+function loadCurrent() {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw = localStorage.getItem(STORAGE.CURRENT);
     if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
+    const p = JSON.parse(raw);
+    return Array.isArray(p) ? p : [];
   } catch {
     return [];
   }
 }
 
-function saveHistory(messages) {
+function saveCurrent(messages) {
   try {
-    const trimmed = messages.slice(-MAX_HISTORY);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(trimmed));
+    localStorage.setItem(STORAGE.CURRENT, JSON.stringify(messages));
   } catch {}
+}
+
+function loadSessions() {
+  try {
+    const raw = localStorage.getItem(STORAGE.SESSIONS);
+    if (!raw) return [];
+    const p = JSON.parse(raw);
+    return Array.isArray(p) ? p : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveSessions(list) {
+  try {
+    localStorage.setItem(STORAGE.SESSIONS, JSON.stringify(list.slice(0, 40)));
+  } catch {}
+}
+
+function newId() {
+  return crypto.randomUUID?.() || `m-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
 function resizeImage(file, maxSize = 800) {
@@ -50,77 +120,178 @@ function resizeImage(file, maxSize = 800) {
   });
 }
 
-function AstraLogo({ size = 88 }) {
+function AstraAvatar({ className = '' }) {
   return (
     <div
+      className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 via-violet-600 to-purple-600 text-sm font-extrabold text-white shadow-lg shadow-indigo-500/30 ${className}`}
       aria-hidden
-      style={{
-        width: size,
-        height: size,
-        borderRadius: '28%',
-        background: 'linear-gradient(145deg, #6366f1 0%, #4f46e5 40%, #7c3aed 100%)',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        color: '#fff',
-        fontWeight: 800,
-        fontSize: size * 0.38,
-        letterSpacing: '-0.06em',
-        boxShadow: '0 12px 40px rgba(99, 102, 241, 0.45)',
-        flexShrink: 0,
-      }}
     >
       A
     </div>
   );
 }
 
+function UserAvatar({ className = '' }) {
+  return (
+    <div
+      className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-zinc-600 bg-zinc-800 text-zinc-200 ${className}`}
+      aria-hidden
+    >
+      <User className="h-4 w-4" strokeWidth={2} />
+    </div>
+  );
+}
+
+function TypewriterText({ text, active, className, onComplete }) {
+  const [shown, setShown] = useState(active ? '' : text);
+  const onCompleteRef = useRef(onComplete);
+  onCompleteRef.current = onComplete;
+
+  useEffect(() => {
+    if (!active) {
+      setShown(text);
+      return undefined;
+    }
+    setShown('');
+    let i = 0;
+    const delay = text.length > 500 ? 6 : 12;
+    const id = window.setInterval(() => {
+      i += 1;
+      setShown(text.slice(0, i));
+      if (i >= text.length) {
+        window.clearInterval(id);
+        onCompleteRef.current?.();
+      }
+    }, delay);
+    return () => window.clearInterval(id);
+  }, [text, active]);
+
+  return <span className={className}>{shown}</span>;
+}
+
 const AstraChat = () => {
-  const [messages, setMessages] = useState(loadHistory);
+  const [archive, setArchive] = useState(loadCurrent);
+  const [sessions, setSessions] = useState(loadSessions);
+  const [olderLoaded, setOlderLoaded] = useState(0);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
   const [input, setInput] = useState('');
   const [photoPreview, setPhotoPreview] = useState(null);
   const [photoBase64, setPhotoBase64] = useState(null);
+  const [typewriterMsgId, setTypewriterMsgId] = useState(null);
 
-  const messagesEndRef = useRef(null);
+  const scrollRef = useRef(null);
+  const loadLockRef = useRef(false);
+  const prevScrollHeightRef = useRef(0);
   const fileInputRef = useRef(null);
   const inputRef = useRef(null);
+  const messagesEndRef = useRef(null);
 
-  const scrollToBottom = useCallback(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  const applyDailyWipe = useCallback(() => {
+    if (!shouldRunDailyWipe()) return;
+    hardWipeAll();
+    setArchive([]);
+    setSessions([]);
+    setOlderLoaded(0);
+    setTypewriterMsgId(null);
+    toast.success('ASTRA: новый день — история очищена (00:02).');
   }, []);
 
   useEffect(() => {
-    if (messages.length > 0) scrollToBottom();
-  }, [messages, scrollToBottom]);
+    applyDailyWipe();
+    const t = setInterval(applyDailyWipe, 60_000);
+    return () => clearInterval(t);
+  }, [applyDailyWipe]);
 
   useEffect(() => {
-    saveHistory(messages);
-  }, [messages]);
+    saveCurrent(archive);
+  }, [archive]);
+
+  useEffect(() => {
+    saveSessions(sessions);
+  }, [sessions]);
+
+  const visibleCount = useMemo(() => {
+    const n = archive.length;
+    if (n === 0) return 0;
+    const want = Math.min(n, Math.min(MAX_VISIBLE, WINDOW_BASE + olderLoaded));
+    return want;
+  }, [archive.length, olderLoaded]);
+
+  const visibleMessages = useMemo(() => {
+    if (!archive.length) return [];
+    return archive.slice(-visibleCount);
+  }, [archive, visibleCount]);
+
+  const scrollToBottomSmooth = useCallback(() => {
+    requestAnimationFrame(() => {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    });
+  }, []);
+
+  useEffect(() => {
+    if (olderLoaded === 0) scrollToBottomSmooth();
+  }, [archive.length, olderLoaded, scrollToBottomSmooth]);
+
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    if (!el || prevScrollHeightRef.current === 0) return;
+    const diff = el.scrollHeight - prevScrollHeightRef.current;
+    if (diff > 0) el.scrollTop += diff;
+    prevScrollHeightRef.current = 0;
+  }, [visibleMessages.length, olderLoaded]);
 
   const sendMutation = useMutation({
     mutationFn: (data) => astraChatApi.send(data),
-    onSuccess: (res) => {
+    onSuccess: (res, variables) => {
       const reply = res.data?.reply || 'Нет ответа';
-      setMessages((prev) => [...prev, { role: 'assistant', text: reply }]);
+      const assistantId = newId();
+      setArchive((prev) => [...prev, { id: assistantId, role: 'assistant', text: reply }]);
+      setTypewriterMsgId(assistantId);
+      setOlderLoaded(0);
     },
     onError: (err) => {
       const detail = err.response?.data?.detail || err.message || 'Ошибка';
       toast.error(`ASTRA: ${detail}`);
-      setMessages((prev) => [...prev, { role: 'assistant', text: `Ошибка: ${detail}` }]);
+      const assistantId = newId();
+      setArchive((prev) => [...prev, { id: assistantId, role: 'assistant', text: `Ошибка: ${detail}` }]);
+      setTypewriterMsgId(assistantId);
+      setOlderLoaded(0);
     },
   });
+
+  const handleScroll = () => {
+    const el = scrollRef.current;
+    if (!el || loadLockRef.current) return;
+    if (el.scrollTop < 72 && olderLoaded + WINDOW_BASE < archive.length) {
+      loadLockRef.current = true;
+      prevScrollHeightRef.current = el.scrollHeight;
+      setOlderLoaded((o) => Math.min(o + LOAD_CHUNK, Math.max(0, archive.length - WINDOW_BASE)));
+      window.setTimeout(() => {
+        loadLockRef.current = false;
+      }, 400);
+    }
+  };
 
   const handleSend = () => {
     const text = input.trim();
     if (!text && !photoBase64) return;
 
-    const userMessage = { role: 'user', text: text || '📷 Фото', photo: photoPreview || undefined };
-    const updatedMessages = [...messages, userMessage];
-    setMessages(updatedMessages);
+    const userId = newId();
+    const userMessage = {
+      id: userId,
+      role: 'user',
+      text: text || '📷 Фото',
+      photo: photoPreview || undefined,
+    };
+
+    setArchive((prev) => [...prev, userMessage]);
+
     setInput('');
     setPhotoPreview(null);
+    setOlderLoaded(0);
+    setTypewriterMsgId(null);
 
-    const historyForApi = updatedMessages
+    const historyForApi = [...archive, userMessage]
       .filter((m) => !m.photo)
       .map((m) => ({ role: m.role, text: m.text }));
 
@@ -154,10 +325,47 @@ const AstraChat = () => {
     }
   };
 
-  const clearChat = () => {
-    if (!window.confirm('Очистить историю чата с ASTRA?')) return;
-    setMessages([]);
-    localStorage.removeItem(STORAGE_KEY);
+  const newChat = () => {
+    if (archive.length > 0) {
+      const title =
+        archive.find((m) => m.role === 'user' && m.text && !m.text.startsWith('📷'))?.text?.slice(0, 48) ||
+        'Диалог';
+      setSessions((prev) => [
+        { id: newId(), title, updatedAt: Date.now(), messages: [...archive] },
+        ...prev,
+      ]);
+    }
+    setArchive([]);
+    setOlderLoaded(0);
+    setTypewriterMsgId(null);
+    saveCurrent([]);
+  };
+
+  const openSession = (s) => {
+    if (archive.length > 0) {
+      const title =
+        archive.find((m) => m.role === 'user' && m.text && !m.text.startsWith('📷'))?.text?.slice(0, 48) ||
+        'Диалог';
+      setSessions((prev) => [{ id: newId(), title, updatedAt: Date.now(), messages: [...archive] }, ...prev]);
+    }
+    setArchive(Array.isArray(s.messages) ? [...s.messages] : []);
+    setOlderLoaded(0);
+    setTypewriterMsgId(null);
+    setSidebarOpen(false);
+  };
+
+  const deleteSession = (id, e) => {
+    e.stopPropagation();
+    setSessions((prev) => prev.filter((x) => x.id !== id));
+  };
+
+  const clearEverything = () => {
+    if (!window.confirm('Удалить текущий чат и всю историю в боковой панели?')) return;
+    hardWipeAll();
+    setArchive([]);
+    setSessions([]);
+    setOlderLoaded(0);
+    setTypewriterMsgId(null);
   };
 
   const removePhoto = () => {
@@ -165,332 +373,225 @@ const AstraChat = () => {
     setPhotoBase64(null);
   };
 
-  const hasThread = messages.length > 0;
+  const hasThread = archive.length > 0;
+  const canLoadMore = olderLoaded + WINDOW_BASE < archive.length;
 
   return (
-    <div
-      style={{
-        display: 'flex',
-        flexDirection: 'column',
-        height: '100%',
-        minHeight: 'min(100dvh - 120px, calc(100vh - 120px))',
-        maxWidth: 720,
-        margin: '0 auto',
-        width: '100%',
-        padding: '0 env(safe-area-inset-right, 0) 0 env(safe-area-inset-left, 0)',
-      }}
-    >
-      <style>{`
-        @keyframes astra-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
-      `}</style>
-
-      {/* Верхняя панель */}
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          padding: '10px 12px',
-          flexShrink: 0,
-          gap: 8,
-        }}
-      >
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
-          <div style={{ transform: 'scale(0.55)', transformOrigin: 'left center' }}>
-            <AstraLogo size={72} />
-          </div>
-          <div style={{ minWidth: 0 }}>
-            <div style={{ fontWeight: 800, fontSize: 17, color: 'var(--text)', letterSpacing: '-0.02em' }}>ASTRA</div>
-            <div style={{ fontSize: 12, color: 'var(--text-muted)', fontWeight: 500 }}>Gemini · автозапчасти</div>
-          </div>
-        </div>
-        {hasThread && (
-          <button
-            type="button"
-            onClick={clearChat}
-            title="Очистить чат"
-            style={{
-              width: 40,
-              height: 40,
-              borderRadius: 12,
-              border: '1px solid var(--border)',
-              background: 'var(--surface)',
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              color: 'var(--text-muted)',
-              flexShrink: 0,
-            }}
-          >
-            <FiTrash2 size={16} />
-          </button>
-        )}
-      </div>
-
-      {/* Область контента: приветствие по центру или переписка */}
-      <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', position: 'relative' }}>
-        {!hasThread ? (
-          <div
-            style={{
-              flex: 1,
-              display: 'flex',
-              flexDirection: 'column',
-              alignItems: 'center',
-              justifyContent: 'center',
-              textAlign: 'center',
-              padding: '24px 20px 100px',
-              background:
-                'radial-gradient(ellipse 80% 60% at 50% 20%, rgba(99, 102, 241, 0.12), transparent 55%), var(--bg, transparent)',
-            }}
-          >
-            <AstraLogo size={96} />
-            <h1
-              style={{
-                margin: '28px 0 0',
-                fontSize: 'clamp(1.25rem, 4.5vw, 1.5rem)',
-                fontWeight: 700,
-                color: 'var(--text)',
-                lineHeight: 1.35,
-                maxWidth: 320,
-              }}
-            >
-              Привет, я ASTRA
-            </h1>
-            <p
-              style={{
-                margin: '10px 0 0',
-                fontSize: 'clamp(1rem, 3.5vw, 1.125rem)',
-                fontWeight: 500,
-                color: 'var(--text-muted)',
-                maxWidth: 280,
-                lineHeight: 1.45,
-              }}
-            >
-              ваш личный помощник
-            </p>
-          </div>
-        ) : (
-          <div
-            style={{
-              flex: 1,
-              overflowY: 'auto',
-              WebkitOverflowScrolling: 'touch',
-              padding: '8px 12px 8px',
-            }}
-          >
-            {messages.map((msg, i) => (
-              <div
-                key={i}
-                style={{
-                  display: 'flex',
-                  justifyContent: msg.role === 'user' ? 'flex-end' : 'flex-start',
-                  marginBottom: 10,
-                }}
-              >
-                <div
-                  style={{
-                    maxWidth: 'min(85%, 520px)',
-                    padding: '12px 16px',
-                    borderRadius: msg.role === 'user' ? '18px 18px 4px 18px' : '18px 18px 18px 4px',
-                    background:
-                      msg.role === 'user'
-                        ? 'linear-gradient(135deg, #6366f1, #7c3aed)'
-                        : 'var(--ios-grouped-bg)',
-                    color: msg.role === 'user' ? '#fff' : 'var(--text)',
-                    fontSize: 14,
-                    lineHeight: 1.55,
-                    fontWeight: 500,
-                    border: msg.role === 'user' ? 'none' : '1px solid var(--border)',
-                    whiteSpace: 'pre-wrap',
-                    wordBreak: 'break-word',
-                    boxShadow: msg.role === 'user' ? '0 4px 12px rgba(99, 102, 241, 0.25)' : 'none',
-                  }}
-                >
-                  {msg.photo && (
-                    <img
-                      src={msg.photo}
-                      alt=""
-                      style={{ maxWidth: '100%', maxHeight: 220, borderRadius: 12, marginBottom: 8, display: 'block' }}
-                    />
-                  )}
-                  {msg.text}
-                </div>
-              </div>
-            ))}
-
-            {sendMutation.isPending && (
-              <div style={{ display: 'flex', justifyContent: 'flex-start', marginBottom: 10 }}>
-                <div
-                  style={{
-                    padding: '14px 18px',
-                    borderRadius: '18px 18px 18px 4px',
-                    background: 'var(--ios-grouped-bg)',
-                    border: '1px solid var(--border)',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 10,
-                    color: 'var(--text-muted)',
-                    fontSize: 14,
-                    fontWeight: 500,
-                  }}
-                >
-                  <FiLoader size={16} style={{ animation: 'astra-spin 1s linear infinite' }} />
-                  ASTRA думает...
-                </div>
-              </div>
-            )}
-
-            <div ref={messagesEndRef} />
-          </div>
-        )}
-      </div>
-
-      {/* Превью фото */}
-      {photoPreview && (
-        <div style={{ padding: '0 12px 6px', flexShrink: 0 }}>
-          <div
-            style={{
-              display: 'inline-flex',
-              position: 'relative',
-              borderRadius: 14,
-              overflow: 'hidden',
-              border: '2px solid var(--primary)',
-              background: 'var(--surface)',
-            }}
-          >
-            <img src={photoPreview} alt="" style={{ height: 72, display: 'block' }} />
-            <button
-              type="button"
-              onClick={removePhoto}
-              style={{
-                position: 'absolute',
-                top: 4,
-                right: 4,
-                width: 26,
-                height: 26,
-                borderRadius: 8,
-                border: 'none',
-                background: 'rgba(0,0,0,0.55)',
-                color: '#fff',
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-              }}
-            >
-              <FiX size={14} />
-            </button>
-          </div>
-        </div>
+    <div className="flex h-[min(100dvh-56px,calc(100vh-56px))] min-h-[420px] w-full max-w-[1400px] mx-auto bg-zinc-950 text-zinc-100 antialiased rounded-xl overflow-hidden border border-zinc-800 shadow-2xl shadow-black/40">
+      {/* Mobile sidebar overlay */}
+      {sidebarOpen && (
+        <button
+          type="button"
+          className="fixed inset-0 z-40 bg-black/60 md:hidden"
+          aria-label="Закрыть меню"
+          onClick={() => setSidebarOpen(false)}
+        />
       )}
 
-      {/* Поле ввода — снизу, как в ChatGPT */}
-      <div
-        style={{
-          flexShrink: 0,
-          padding: '10px 12px calc(12px + env(safe-area-inset-bottom, 0px))',
-          borderTop: '1px solid var(--border)',
-          background: 'var(--surface)',
-        }}
+      <aside
+        className={`
+          fixed z-50 flex h-[min(100dvh-56px,calc(100vh-56px))] w-[min(100%,280px)] flex-col border-r border-zinc-800 bg-zinc-900/95 backdrop-blur-md transition-transform md:static md:z-0 md:w-64
+          ${sidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0 md:w-0 md:min-w-0 md:border-0 md:overflow-hidden md:p-0 md:opacity-0'}
+        `}
       >
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'flex-end',
-            gap: 8,
-            padding: '8px 10px',
-            borderRadius: 22,
-            background: 'var(--ios-grouped-bg)',
-            border: '1px solid var(--border)',
-            maxWidth: '100%',
-          }}
-        >
-          <button
-            type="button"
-            onClick={() => fileInputRef.current?.click()}
-            title="Фото"
-            style={{
-              width: 42,
-              height: 42,
-              borderRadius: 12,
-              border: 'none',
-              background: 'var(--surface)',
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              color: 'var(--primary)',
-              flexShrink: 0,
-            }}
-          >
-            <FiImage size={20} />
-          </button>
-          <input ref={fileInputRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={handlePhoto} />
-
-          <textarea
-            ref={inputRef}
-            rows={1}
-            placeholder="Сообщение для ASTRA..."
-            value={input}
-            onChange={(e) => {
-              setInput(e.target.value);
-              e.target.style.height = 'auto';
-              e.target.style.height = `${Math.min(e.target.scrollHeight, 120)}px`;
-            }}
-            onKeyDown={handleKeyDown}
-            style={{
-              flex: 1,
-              border: 'none',
-              outline: 'none',
-              background: 'transparent',
-              fontSize: '16px',
-              fontWeight: 500,
-              color: 'var(--text)',
-              resize: 'none',
-              fontFamily: 'inherit',
-              minHeight: 42,
-              maxHeight: 120,
-              padding: '8px 4px',
-              lineHeight: 1.4,
-            }}
-          />
-
-          <button
-            type="button"
-            onClick={handleSend}
-            disabled={sendMutation.isPending || (!input.trim() && !photoBase64)}
-            style={{
-              width: 44,
-              height: 44,
-              borderRadius: 14,
-              border: 'none',
-              background:
-                (input.trim() || photoBase64) && !sendMutation.isPending
-                  ? 'linear-gradient(135deg, #6366f1, #7c3aed)'
-                  : 'var(--bg-secondary)',
-              color: (input.trim() || photoBase64) && !sendMutation.isPending ? '#fff' : 'var(--text-muted)',
-              cursor: sendMutation.isPending ? 'not-allowed' : 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              flexShrink: 0,
-              boxShadow:
-                (input.trim() || photoBase64) && !sendMutation.isPending
-                  ? '0 4px 12px rgba(99, 102, 241, 0.3)'
-                  : 'none',
-            }}
-          >
-            {sendMutation.isPending ? (
-              <FiLoader size={18} style={{ animation: 'astra-spin 1s linear infinite' }} />
-            ) : (
-              <FiSend size={18} />
-            )}
-          </button>
+        <div className="flex items-center gap-2 border-b border-zinc-800 p-3">
+          <Sparkles className="h-5 w-5 text-indigo-400" />
+          <span className="font-semibold tracking-tight">ASTRA</span>
         </div>
-        <p style={{ textAlign: 'center', margin: '8px 0 0', fontSize: 11, color: 'var(--text-muted)', fontWeight: 500 }}>
-          Сардор Кулнезаров · Gemini
-        </p>
+        <button
+          type="button"
+          onClick={newChat}
+          className="m-2 flex items-center justify-center gap-2 rounded-lg border border-zinc-700 bg-zinc-800/80 py-2.5 text-sm font-medium text-zinc-100 transition hover:bg-zinc-800"
+        >
+          <MessageSquarePlus className="h-4 w-4" />
+          Новый чат
+        </button>
+        <div className="flex-1 overflow-y-auto px-2 pb-3">
+          <p className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-zinc-500">История</p>
+          {sessions.length === 0 && (
+            <p className="px-2 py-4 text-xs text-zinc-500">Сохранённые диалоги появятся после «Новый чат».</p>
+          )}
+          <ul className="space-y-1">
+            {sessions.map((s) => (
+              <li key={s.id}>
+                <button
+                  type="button"
+                  onClick={() => openSession(s)}
+                  className="group flex w-full items-start gap-2 rounded-lg px-2 py-2 text-left text-sm text-zinc-300 transition hover:bg-zinc-800"
+                >
+                  <MessageSquarePlus className="mt-0.5 h-4 w-4 shrink-0 text-zinc-500 group-hover:text-indigo-400" />
+                  <span className="line-clamp-2 flex-1">{s.title}</span>
+                  <button
+                    type="button"
+                    onClick={(e) => deleteSession(s.id, e)}
+                    className="shrink-0 rounded p-1 text-zinc-500 opacity-0 transition hover:bg-zinc-700 hover:text-red-400 group-hover:opacity-100"
+                    title="Удалить"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+        <div className="border-t border-zinc-800 p-2 text-[10px] leading-relaxed text-zinc-500">
+          Эксперт по автозапчастям и ТО. Сброс истории каждый день в 00:02.
+        </div>
+      </aside>
+
+      <div className="flex min-w-0 flex-1 flex-col bg-zinc-950">
+        <header className="flex shrink-0 items-center justify-between gap-2 border-b border-zinc-800 px-3 py-2 md:px-4">
+          <button
+            type="button"
+            onClick={() => setSidebarOpen((v) => !v)}
+            className="flex h-9 w-9 items-center justify-center rounded-lg border border-zinc-700 bg-zinc-900 text-zinc-300 md:hidden"
+            aria-label="Меню"
+          >
+            {sidebarOpen ? <PanelLeftClose className="h-4 w-4" /> : <PanelLeft className="h-4 w-4" />}
+          </button>
+          <button
+            type="button"
+            onClick={() => setSidebarOpen((v) => !v)}
+            className="hidden h-9 w-9 items-center justify-center rounded-lg border border-zinc-700 bg-zinc-900 text-zinc-300 md:flex"
+            title="Панель истории"
+          >
+            {sidebarOpen ? <PanelLeftClose className="h-4 w-4" /> : <PanelLeft className="h-4 w-4" />}
+          </button>
+          <div className="min-w-0 flex-1 text-center md:text-left">
+            <h1 className="truncate text-sm font-semibold text-zinc-100">ASTRA · автозапчасти</h1>
+            <p className="truncate text-xs text-zinc-500">Точные ответы по каталогам, совместимости и обслуживанию</p>
+          </div>
+          {hasThread && (
+            <button
+              type="button"
+              onClick={clearEverything}
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-zinc-700 text-zinc-400 transition hover:border-red-900/50 hover:bg-red-950/30 hover:text-red-300"
+              title="Очистить всё"
+            >
+              <Trash2 className="h-4 w-4" />
+            </button>
+          )}
+        </header>
+
+        <div
+          ref={scrollRef}
+          onScroll={handleScroll}
+          className="min-h-0 flex-1 overflow-y-auto scroll-smooth"
+        >
+          {!hasThread ? (
+            <div className="flex min-h-[50vh] flex-col items-center justify-center px-6 pb-32 text-center">
+              <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_70%_50%_at_50%_0%,rgba(99,102,241,0.15),transparent)]" />
+              <AstraAvatar className="!h-20 !w-20 !text-2xl !rounded-2xl" />
+              <h2 className="relative mt-8 text-xl font-semibold text-zinc-100 sm:text-2xl">Привет, я ASTRA</h2>
+              <p className="relative mt-2 max-w-sm text-sm text-zinc-400">Ваш личный помощник по автозапчастям и техобслуживанию.</p>
+            </div>
+          ) : (
+            <div className="mx-auto max-w-3xl px-3 py-4 md:px-6">
+              {canLoadMore && (
+                <div className="mb-4 flex justify-center">
+                  <span className="rounded-full border border-zinc-700 bg-zinc-900 px-3 py-1 text-xs text-zinc-500">
+                    Прокрутите вверх для более ранних сообщений
+                  </span>
+                </div>
+              )}
+              <div className="flex flex-col gap-4">
+                {visibleMessages.map((msg) => (
+                  <div
+                    key={msg.id}
+                    className={`flex gap-3 ${msg.role === 'user' ? 'flex-row-reverse' : 'flex-row'}`}
+                  >
+                    {msg.role === 'assistant' ? <AstraAvatar /> : <UserAvatar />}
+                    <div
+                      className={`max-w-[min(100%,560px)] rounded-2xl px-4 py-3 text-sm leading-relaxed shadow-lg ${
+                        msg.role === 'user'
+                          ? 'bg-gradient-to-br from-indigo-600 to-violet-700 text-white'
+                          : 'border border-zinc-700/80 bg-zinc-900 text-zinc-100'
+                      }`}
+                    >
+                      {msg.photo && (
+                        <img src={msg.photo} alt="" className="mb-2 max-h-52 w-full rounded-lg object-contain" />
+                      )}
+                      {msg.role === 'assistant' ? (
+                        <TypewriterText
+                          text={msg.text}
+                          active={msg.id === typewriterMsgId}
+                          onComplete={() => {
+                            if (msg.id === typewriterMsgId) setTypewriterMsgId(null);
+                          }}
+                          className="whitespace-pre-wrap break-words"
+                        />
+                      ) : (
+                        <span className="whitespace-pre-wrap break-words">{msg.text}</span>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {sendMutation.isPending && (
+                <div className="mt-4 flex gap-3">
+                  <AstraAvatar />
+                  <div className="flex items-center gap-2 rounded-2xl border border-zinc-700 bg-zinc-900 px-4 py-3 text-sm text-zinc-400">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    ASTRA готовит ответ…
+                  </div>
+                </div>
+              )}
+              <div ref={messagesEndRef} className="h-px w-full shrink-0" />
+            </div>
+          )}
+        </div>
+
+        {photoPreview && (
+          <div className="shrink-0 border-t border-zinc-800 px-3 py-2 md:px-6">
+            <div className="relative inline-block overflow-hidden rounded-xl border-2 border-indigo-500">
+              <img src={photoPreview} alt="" className="h-20 object-cover" />
+              <button
+                type="button"
+                onClick={removePhoto}
+                className="absolute right-1 top-1 flex h-7 w-7 items-center justify-center rounded-lg bg-black/60 text-white"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+          </div>
+        )}
+
+        <div className="shrink-0 border-t border-zinc-800 bg-zinc-900/90 px-3 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] md:px-6">
+          <div className="mx-auto flex max-w-3xl items-end gap-2 rounded-2xl border border-zinc-700 bg-zinc-950/80 p-2 shadow-inner">
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-zinc-700 bg-zinc-900 text-indigo-400 transition hover:bg-zinc-800"
+              title="Фото"
+            >
+              <ImagePlus className="h-5 w-5" />
+            </button>
+            <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handlePhoto} />
+            <textarea
+              ref={inputRef}
+              rows={1}
+              placeholder="Спросите о запчастях, артикулах, совместимости…"
+              value={input}
+              onChange={(e) => {
+                setInput(e.target.value);
+                e.target.style.height = 'auto';
+                e.target.style.height = `${Math.min(e.target.scrollHeight, 120)}px`;
+              }}
+              onKeyDown={handleKeyDown}
+              className="max-h-[120px] min-h-[44px] flex-1 resize-none bg-transparent px-2 py-2.5 text-[15px] text-zinc-100 placeholder:text-zinc-500 focus:outline-none"
+            />
+            <button
+              type="button"
+              onClick={handleSend}
+              disabled={sendMutation.isPending || (!input.trim() && !photoBase64)}
+              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-600 to-violet-600 text-white shadow-lg shadow-indigo-500/25 transition enabled:hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              {sendMutation.isPending ? <Loader2 className="h-5 w-5 animate-spin" /> : <Send className="h-5 w-5" />}
+            </button>
+          </div>
+          <p className="mt-2 text-center text-[10px] text-zinc-600">Профессиональный тон · данные не для замены сервисной документации OEM</p>
+        </div>
       </div>
     </div>
   );

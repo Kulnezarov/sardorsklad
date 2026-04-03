@@ -64,7 +64,7 @@ SkladPro is a comprehensive web-based inventory management system designed for a
 - Batch printing support
 
 ### 🔐 Authentication & Security
-- Supabase-based authentication
+- JWT authentication (FastAPI)
 - JWT token management
 - Row-Level Security (RLS)
 - Protected routes
@@ -101,7 +101,7 @@ SkladPro is a comprehensive web-based inventory management system designed for a
 └── React Hot Toast for notifications
 ```
 
-### Database (PostgreSQL + Supabase)
+### Database (PostgreSQL)
 ```
 ├── 8 Core Tables with relationships
 ├── Generated columns for calculations
@@ -138,7 +138,7 @@ skladpro/
 │   ├── Dockerfile        # Production container
 │   ├── nginx.conf        # Web server config
 │   └── .env.example     # Environment template
-├── supabase_schema.sql    # Complete database schema
+├── postgres_schema.sql    # Initial PostgreSQL schema
 ├── docker-compose.yml     # Multi-container deployment
 ├── README.md            # Comprehensive documentation
 ├── DEPLOYMENT.md       # Detailed deployment guide
@@ -231,13 +231,13 @@ docker-compose up -d
 ### Cloud Options
 - Vercel (Frontend)
 - Railway/Render (Backend)
-- Supabase (Database)
+- PostgreSQL
 - DigitalOcean/Vultr (VPS)
 
 ## 🔒 Security Implementation
 
 ### Authentication
-- Supabase Auth integration
+- JWT auth (backend)
 - JWT token management
 - Automatic token refresh
 - Session persistence

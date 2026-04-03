@@ -10,24 +10,10 @@ logger = logging.getLogger(__name__)
 load_dotenv()
 
 
-def _ensure_supabase_ssl(url: str) -> str:
-    """Supabase Postgres requires SSL; append sslmode if missing."""
-    if not url or "sslmode=" in url:
-        return url
-    # Direct host db.*.supabase.co and pooler aws-*.pooler.supabase.com
-    if "supabase.co" not in url and "pooler.supabase.com" not in url:
-        return url
-    sep = "&" if "?" in url else "?"
-    return f"{url}{sep}sslmode=require"
-
-
 # Database configuration
 DATABASE_URL = os.getenv("DATABASE_URL")
 if not DATABASE_URL:
-    # Fallback for local development
     DATABASE_URL = "postgresql://user:password@localhost:5432/skladpro"
-else:
-    DATABASE_URL = _ensure_supabase_ssl(DATABASE_URL)
 
 # Connection pool settings
 POOL_SIZE = int(os.getenv("DB_POOL_SIZE", 20))
@@ -107,7 +93,7 @@ def ensure_schema_updates():
     if not DATABASE_URL or "postgresql" not in DATABASE_URL.lower():
         return
 
-    # Старая supabase_schema.sql: sales(id, product_id, quantity, total_price, ...) — не совместима с моделью Sale (receipt_number, sale_items).
+    # Старая схема БД: sales(id, product_id, quantity, total_price, ...) — не совместима с моделью Sale (receipt_number, sale_items).
     # Переименовываем, чтобы create_tables() создал новые sales + sale_items.
     _exec_schema_sql(
         """
@@ -130,7 +116,7 @@ def ensure_schema_updates():
         "sales.rename_legacy",
     )
 
-    # Старая supabase_schema.sql: products(id, name, sku, category, quantity, price, description, created_at, updated_at)
+    # Старая схема products(id, name, sku, category, quantity, price, description, created_at, updated_at)
     # Нужно привести к модели Product (колонки по одной, отдельные транзакции).
     product_alters = [
         ("products.barcode", "ALTER TABLE products ADD COLUMN IF NOT EXISTS barcode VARCHAR(50)"),

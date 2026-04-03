@@ -16,68 +16,26 @@ This guide covers different deployment options for SkladPro inventory management
 
 - Node.js 18+ 
 - Python 3.11+
-- PostgreSQL (or Supabase account)
+- PostgreSQL 15+ (или контейнер из `docker-compose.vps.yml`)
 - Docker & Docker Compose (recommended)
 - Nginx (for production)
 - SSL certificate (for HTTPS)
 
 ## Environment Setup
 
-### 1. Create Supabase Project
+### 1. PostgreSQL
 
-1. Go to [supabase.com](https://supabase.com)
-2. Create a new project
-3. Note down:
-   - Project URL
-   - Anon key
-   - Database connection string
+На VPS: `docker compose -f docker-compose.vps.yml up -d` поднимает PostgreSQL и применяет `postgres_schema.sql` при первом старте (volume пустой).
+
+Локально: `docker compose up -d postgresql` или свой инстанс + `DATABASE_URL` в `backend/.env`.
 
 ### 2. Configure Environment Variables
 
-#### Backend (.env)
-```bash
-# Supabase Configuration
-SUPABASE_URL=https://your-project.supabase.co
-SUPABASE_KEY=your-anon-key
-SUPABASE_DB_URL=postgresql://postgres:password@db.your-project.supabase.co:5432/postgres
-
-# Security
-SECRET_KEY=your-very-secure-secret-key-here
-ALLOWED_ORIGINS=https://yourdomain.com,http://localhost:5173
-
-# API Configuration
-API_HOST=0.0.0.0
-API_PORT=8000
-ENVIRONMENT=production
-
-# Optional: Redis for caching
-REDIS_URL=redis://localhost:6379
-CACHE_ENABLED=true
-```
-
-#### Frontend (.env)
-```bash
-# API Configuration
-VITE_API_URL=https://api.yourdomain.com/api/v1
-
-# Supabase Configuration
-VITE_SUPABASE_URL=https://your-project.supabase.co
-VITE_SUPABASE_ANON_KEY=your-anon-key
-
-# App Configuration
-VITE_APP_TITLE=SkladPro
-VITE_APP_VERSION=1.0.0
-```
+См. `backend/.env.example` и `frontend/.env.example`. Обязательно: `DATABASE_URL`, `SECRET_KEY`, `ORIGINS`, для фронта — `VITE_API_URL`.
 
 ### 3. Database Setup
 
-Execute the SQL schema in Supabase:
-
-1. Go to Supabase Dashboard → SQL Editor
-2. Copy and paste contents of `supabase_schema.sql`
-3. Click "Run"
-
-This will create all tables, indexes, views, triggers, and RLS policies.
+Схема применяется автоматически из `postgres_schema.sql` при инициализации контейнера Postgres. Дополнительные колонки подтягивает `ensure_schema_updates()` в бэкенде.
 
 ## Deployment Options
 
@@ -93,11 +51,9 @@ services:
     ports:
       - "8000:8000"
     environment:
-      - SUPABASE_URL=${SUPABASE_URL}
-      - SUPABASE_KEY=${SUPABASE_KEY}
-      - SUPABASE_DB_URL=${SUPABASE_DB_URL}
+      - DATABASE_URL=${DATABASE_URL}
       - SECRET_KEY=${SECRET_KEY}
-      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS}
+      - ORIGINS=${ORIGINS}
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
@@ -311,14 +267,14 @@ sudo tail -f /var/log/nginx/error.log
 # Create backup script
 #!/bin/bash
 DATE=$(date +%Y%m%d_%H%M%S)
-pg_dump $SUPABASE_DB_URL > backup_$DATE.sql
+pg_dump $DATABASE_URL > backup_$DATE.sql
 
 # Set up cron job
 0 2 * * * /path/to/backup-script.sh
 ```
 
 #### Performance Monitoring
-- Monitor query performance in Supabase dashboard
+- Monitor query performance (pg_stat_statements, логи)
 - Check slow queries regularly
 - Optimize indexes if needed
 
@@ -350,10 +306,10 @@ pip-audit
 #### Database Connection Issues
 ```bash
 # Test connection
-psql $SUPABASE_DB_URL -c "SELECT 1;"
+psql $DATABASE_URL -c "SELECT 1;"
 
 # Check network connectivity
-telnet db.your-project.supabase.co 5432
+nc -zv your-postgres-host 5432
 ```
 
 #### API Not Responding
@@ -459,7 +415,7 @@ docker-compose up -d --scale backend=3
 ### Database Scaling
 
 #### Read Replicas
-- Configure read replicas in Supabase
+- При необходимости — read replicas PostgreSQL
 - Update application to use read replicas for read operations
 - Implement connection pooling
 
@@ -474,7 +430,7 @@ BACKUP_DIR="/opt/backups"
 DATE=$(date +%Y%m%d_%H%M%S)
 
 # Database backup
-pg_dump $SUPABASE_DB_URL > $BACKUP_DIR/db_$DATE.sql
+pg_dump $DATABASE_URL > $BACKUP_DIR/db_$DATE.sql
 
 # Application files backup
 tar -czf $BACKUP_DIR/app_$DATE.tar.gz /opt/skladpro
@@ -486,7 +442,7 @@ tar -czf $BACKUP_DIR/app_$DATE.tar.gz /opt/skladpro
 #### Recovery Process
 ```bash
 # Restore database
-psql $SUPABASE_DB_URL < backup_20231201_120000.sql
+psql $DATABASE_URL < backup_20231201_120000.sql
 
 # Restore application files
 tar -xzf backup_20231201_120000.tar.gz -C /

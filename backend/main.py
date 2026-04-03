@@ -64,10 +64,9 @@ async def lifespan(app: FastAPI):
         if "could not translate host name" in err or "nodename nor servname" in err:
             logger.error(
                 "✗ База данных: не удаётся разрешить имя хоста (DNS). "
-                "Проверьте интернет, отключите VPN при тесте, убедитесь что проект Supabase активен, "
-                "и что DATABASE_URL в .env указывает на доступный хост. "
-                "Для работы без облака: поднимите PostgreSQL локально и задайте "
-                "DATABASE_URL=postgresql://USER:PASS@localhost:5432/DBNAME"
+                "Проверьте DATABASE_URL (хост PostgreSQL доступен из контейнера/сервера), "
+                "VPN и сеть. Пример: DATABASE_URL=postgresql://USER:PASS@postgresql:5432/skladpro "
+                "в Docker или postgresql://USER:PASS@localhost:5432/skladpro локально."
             )
         logger.error(f"✗ Startup failed (БД): {e}")
         raise

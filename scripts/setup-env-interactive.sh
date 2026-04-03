@@ -5,13 +5,12 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
-echo "=== SkladPro: настройка .env (ввод только у вас локально) ==="
+echo "=== SkladPro: настройка .env (локальный ввод) ==="
 echo ""
 
-read -r -p "Supabase project URL (https://xxxx.supabase.co): " SUPABASE_URL
-read -r -s -p "Supabase anon key (JWT, длинная строка): " ANON_KEY
-echo ""
-read -r -p "Полный DATABASE_URL (pooler, из Dashboard → Database): " DATABASE_URL
+read -r -p "DATABASE_URL [postgresql://skladpro:skladpro_password@localhost:5432/skladpro]: " DATABASE_URL
+DATABASE_URL="${DATABASE_URL:-postgresql://skladpro:skladpro_password@localhost:5432/skladpro}"
+
 read -r -p "VITE_API_URL для локального фронта [http://localhost:8000/api/v1]: " VITE_API_URL
 VITE_API_URL="${VITE_API_URL:-http://localhost:8000/api/v1}"
 
@@ -26,16 +25,12 @@ if [[ "${WANT_VPS}" =~ ^[yY]$ ]]; then
   VITE_API_URL_PROD="${VITE_API_URL_PROD:-https://${APP_DOMAIN}/api/v1}"
 fi
 
-# --- frontend/.env (Vite читает только отсюда для npm run dev) ---
 {
-  printf 'VITE_SUPABASE_URL=%s\n' "${SUPABASE_URL}"
-  printf 'VITE_SUPABASE_ANON_KEY=%s\n' "${ANON_KEY}"
   printf 'VITE_API_URL=%s\n' "${VITE_API_URL}"
 } > frontend/.env
 chmod 600 frontend/.env
 echo "OK: frontend/.env"
 
-# --- backend: обновить ключевые строки или создать из примера ---
 BACKEND_ENV="backend/.env"
 BACKEND_EX="backend/.env.example"
 if [[ ! -f "${BACKEND_ENV}" ]]; then
@@ -44,8 +39,6 @@ if [[ ! -f "${BACKEND_ENV}" ]]; then
 fi
 
 export _BACKEND_ENV="${BACKEND_ENV}"
-export _SETUP_SUPABASE_URL="${SUPABASE_URL}"
-export _SETUP_ANON_KEY="${ANON_KEY}"
 export _SETUP_DATABASE_URL="${DATABASE_URL}"
 python3 <<'PY'
 import os
@@ -68,14 +61,11 @@ def set_var(name: str, value: str) -> None:
         text += line + "\n"
 
 
-set_var("SUPABASE_URL", os.environ["_SETUP_SUPABASE_URL"])
-set_var("SUPABASE_KEY", os.environ["_SETUP_ANON_KEY"])
-set_var("SUPABASE_DB_URL", os.environ["_SETUP_DATABASE_URL"])
 set_var("DATABASE_URL", os.environ["_SETUP_DATABASE_URL"])
 path.write_text(text, encoding="utf-8")
 PY
 chmod 600 "${BACKEND_ENV}" 2>/dev/null || true
-echo "OK: ${BACKEND_ENV} (обновлены SUPABASE_*, DATABASE_URL)"
+echo "OK: ${BACKEND_ENV} (обновлён DATABASE_URL)"
 
 if [[ "${WANT_VPS}" =~ ^[yY]$ ]]; then
   {
@@ -83,8 +73,6 @@ if [[ "${WANT_VPS}" =~ ^[yY]$ ]]; then
     printf 'API_DOMAIN=%s\n' "${API_DOMAIN}"
     printf 'APP_ORIGIN=%s\n' "${APP_ORIGIN}"
     printf 'VITE_API_URL=%s\n' "${VITE_API_URL_PROD}"
-    printf 'VITE_SUPABASE_URL=%s\n' "${SUPABASE_URL}"
-    printf 'VITE_SUPABASE_ANON_KEY=%s\n' "${ANON_KEY}"
   } > .env.vps
   chmod 600 .env.vps
   echo "OK: .env.vps (для docker compose --env-file .env.vps)"
@@ -92,6 +80,6 @@ fi
 
 echo ""
 echo "Дальше:"
-echo "  Локально:  cd frontend && npm run dev"
-echo "  Docker:    docker compose --env-file .env.vps -f docker-compose.vps.yml build --no-cache frontend && docker compose --env-file .env.vps -f docker-compose.vps.yml up -d"
+echo "  Локально:  docker compose up -d postgresql redis && cd frontend && npm run dev"
+echo "  VPS:       docker compose -f docker-compose.vps.yml up -d --build"
 echo ""

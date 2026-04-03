@@ -1,6 +1,6 @@
 # SkladPro - Smart Inventory Management System
 
-A comprehensive web-based inventory management system built with FastAPI, React, and PostgreSQL (Supabase).
+A comprehensive web-based inventory management system built with FastAPI, React, and PostgreSQL.
 
 ## Features
 
@@ -13,7 +13,7 @@ A comprehensive web-based inventory management system built with FastAPI, React,
 - **Label Printing**: Generate barcode and QR code labels in multiple sizes
 - **Cache System**: In-memory caching with TTL for performance
 - **Notifications**: System notifications for low stock and stale products
-- **Authentication**: Supabase-based authentication with RLS security
+- **Authentication**: JWT login via FastAPI (`/api/v1/auth`)
 - **Excel Integration**: Import/export products via Excel files
 - **Responsive Design**: Mobile-friendly interface with touch gestures
 
@@ -38,8 +38,9 @@ skladpro/
 │   │   ├── store/   # Zustand state management
 │   │   └── utils/   # Utility functions
 │   └── vite.config.js
-├── supabase_schema.sql  # Complete database schema
-├── docker-compose.yml   # Docker deployment
+├── postgres_schema.sql  # Initial PostgreSQL schema (Docker init)
+├── docker-compose.yml   # Local dev: Postgres, Redis, backend, frontend
+├── docker-compose.vps.yml  # Production stack (Postgres + Redis + Caddy)
 └── README.md
 ```
 
@@ -48,7 +49,7 @@ skladpro/
 ### Backend
 - FastAPI 0.104.1
 - SQLAlchemy 2.0.23
-- PostgreSQL / Supabase
+- PostgreSQL
 - AsyncPG for async database operations
 - APScheduler for background tasks
 - Pydantic v2 for data validation
@@ -67,9 +68,8 @@ skladpro/
 - QRCode.react for QR codes
 
 ### Database
-- PostgreSQL with Supabase
-- RLS (Row-Level Security)
-- Custom triggers and views
+- PostgreSQL (Docker или отдельный сервер)
+- SQLAlchemy models + миграции через `ensure_schema_updates`
 - Generated columns for calculations
 - Database indexes for performance
 
@@ -78,13 +78,11 @@ skladpro/
 ### Prerequisites
 - Node.js 18+
 - Python 3.11+
-- Supabase account
+- PostgreSQL 15+ (или только Docker)
 - Git
 
-### 1. Create Supabase Project
-1. Go to [supabase.com](https://supabase.com)
-2. Create a new project
-3. Run the SQL schema from `supabase_schema.sql` in the SQL Editor
+### 1. PostgreSQL
+При `docker compose up` база создаётся из `postgres_schema.sql`. Либо поднимите свой Postgres и задайте `DATABASE_URL` в `backend/.env`.
 
 ### 2. Backend Setup
 
@@ -96,7 +94,7 @@ pip install -r requirements.txt
 
 # Copy and configure environment
 cp .env.example .env
-# Edit .env with your Supabase credentials
+# Edit .env: DATABASE_URL, SECRET_KEY, GEMINI_API_KEY (опционально)
 
 # Start the server
 uvicorn main:app --host 0.0.0.0 --port 8000 --reload
@@ -113,7 +111,7 @@ npm install
 
 # Copy and configure environment
 cp .env.example .env
-# Edit .env with your Supabase and API URLs
+# Edit .env: VITE_API_URL (например http://localhost:8000/api/v1)
 
 # Start development server
 npm run dev
@@ -124,44 +122,10 @@ The application will be available at `http://localhost:5173`
 ## Environment Variables
 
 ### Backend (.env)
-```bash
-# Supabase Configuration
-SUPABASE_URL=https://your-project.supabase.co
-SUPABASE_KEY=your-anon-key
-SUPABASE_DB_URL=postgresql://postgres:password@db.your-project.supabase.co:5432/postgres
-
-# Security
-SECRET_KEY=your-secret-key-here-change-this-in-production
-ALLOWED_ORIGINS=http://localhost:5173,https://yourdomain.com
-
-# Optional: Redis for caching
-REDIS_URL=redis://localhost:6379
-CACHE_ENABLED=true
-
-# API Configuration
-API_HOST=0.0.0.0
-API_PORT=8000
-ENVIRONMENT=development
-```
+См. `backend/.env.example`: `DATABASE_URL`, `SECRET_KEY`, `ORIGINS`, `REDIS_URL`, `GEMINI_API_KEY`.
 
 ### Frontend (.env)
-```bash
-# API Configuration
-# Use fixed backend URL:
-# VITE_API_URL=http://localhost:8000/api/v1
-#
-# Or use current hostname automatically (best for access by link/IP):
-# VITE_API_URL=auto
-# VITE_API_PORT=8000
-
-# Supabase Configuration
-VITE_SUPABASE_URL=https://your-project.supabase.co
-VITE_SUPABASE_ANON_KEY=your-anon-key
-
-# App Configuration
-VITE_APP_TITLE=SkladPro
-VITE_APP_VERSION=1.0.0
-```
+См. `frontend/.env.example`: `VITE_API_URL` (или `auto` для того же хоста + порт API).
 
 ## Docker Deployment
 
@@ -258,7 +222,7 @@ docker build -t skladpro-frontend .
 - **Triggers**: updated_at timestamps
 - **Indexes**: barcode, category, name (GIN), created_at, quantity
 - **Views**: v_dashboard_stats, v_today_top_sales, v_today_revenue, v_stale_products, v_low_stock
-- **RLS Policies**: All tables protected with authenticated user policies
+- **Application-level auth**: JWT и проверки в FastAPI
 
 ## Key Features
 
@@ -285,11 +249,8 @@ docker build -t skladpro-frontend .
 - Custom barcode option
 
 ### Authentication
-- Supabase-based authentication
-- JWT token management
-- Protected routes with PrivateRoute component
-- Automatic token refresh
-- Session persistence
+- Логин через API (`/api/v1/auth/login`), токен в `localStorage`
+- Защищённые маршруты (`PrivateRoute`)
 
 ### Performance
 - In-memory caching with TTL (60s for products, 15s for dashboard)
@@ -343,9 +304,11 @@ This repository includes a ready VPS setup:
 
 Architecture on one server:
 
+- `postgresql` (данные, volume `postgres_data`)
+- `redis` (кэш)
 - `frontend` (Nginx static SPA)
 - `backend` (FastAPI)
-- `caddy` (reverse proxy + automatic Let's Encrypt HTTPS)
+- `caddy` (reverse proxy; по IP часто только HTTP)
 
 #### 1) Choose VPS plan
 
@@ -396,12 +359,10 @@ Edit `.env.vps`:
 APP_DOMAIN=app.yourdomain.com
 API_DOMAIN=api.yourdomain.com
 APP_ORIGIN=https://app.yourdomain.com
-VITE_API_URL=https://api.yourdomain.com/api/v1
-VITE_SUPABASE_URL=https://YOUR_PROJECT.supabase.co
-VITE_SUPABASE_ANON_KEY=YOUR_SUPABASE_ANON_KEY
+VITE_API_URL=https://app.yourdomain.com/api/v1
 ```
 
-Also configure backend secrets in `backend/.env` (database URL, supabase keys, etc.).
+В `backend/.env`: `SECRET_KEY`, `GEMINI_API_KEY` (опционально). `DATABASE_URL` на VPS задаётся в `docker-compose.vps.yml` (PostgreSQL в том же compose); при необходимости переопределите `POSTGRES_PASSWORD` в `.env` в корне или в переменных окружения хоста.
 
 #### 5) Start production stack
 
@@ -452,11 +413,11 @@ docker compose --env-file .env.vps -f docker-compose.vps.yml restart
 Если данные не грузятся: в DevTools на ПК проверь, что запросы идут на Railway, а не на `localhost`, и что в ответе нет ошибки CORS.
 
 ### Environment Setup
-1. Set up production Supabase project
-2. Configure environment variables
-3. Set up reverse proxy (nginx)
-4. Configure SSL certificates
-5. Set up monitoring and logging
+1. Поднять PostgreSQL (входит в `docker-compose.vps.yml`)
+2. Настроить переменные окружения и `backend/.env`
+3. Reverse proxy (Caddy в compose) или nginx
+4. SSL при необходимости
+5. Мониторинг и бэкапы БД
 
 ### Docker Production
 ```bash
@@ -485,8 +446,7 @@ npm run build
 
 ## Security Features
 
-- **Row-Level Security (RLS)**: All tables protected with RLS policies
-- **Authentication**: Supabase Auth with JWT tokens
+- **Authentication**: JWT (FastAPI), пароли через bcrypt
 - **Input Validation**: Pydantic schemas for all inputs
 - **CORS**: Configured for safe cross-origin requests
 - **Environment Variables**: Sensitive data in .env files
@@ -498,9 +458,7 @@ npm run build
 ### Common Issues
 
 **Database Connection Error**
-- Check `SUPABASE_DB_URL` in `.env`
-- Ensure Supabase project is active
-- Verify credentials and network access
+- Проверьте `DATABASE_URL` и что контейнер `postgresql` healthy (`docker compose ps`)
 
 **API Not Responding**
 - Check API health: `curl http://localhost:8000/health`
@@ -518,9 +476,7 @@ npm run build
 - If you still see 405, verify backend version and reverse-proxy method rules for `POST`
 
 **Authentication Issues**
-- Verify Supabase URL and keys
-- Check RLS policies in Supabase
-- Ensure user is authenticated
+- Проверьте логин/пароль админа, `SECRET_KEY`, заголовок `Authorization: Bearer …`
 
 ## Contributing
 

@@ -1,4 +1,38 @@
 services:
+  postgresql:
+    image: postgres:15-alpine
+    container_name: skladpro-postgresql
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: skladpro
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-skladpro_password}
+      POSTGRES_DB: skladpro
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./postgres_schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U skladpro"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    expose:
+      - "5432"
+
+  redis:
+    image: redis:7-alpine
+    container_name: skladpro-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    expose:
+      - "6379"
+
   backend:
     build:
       context: ./backend
@@ -12,10 +46,17 @@ services:
       API_HOST: 0.0.0.0
       API_PORT: 8000
       ALLOW_OPEN_REGISTRATION: "false"
+      DATABASE_URL: postgresql://skladpro:${POSTGRES_PASSWORD:-skladpro_password}@postgresql:5432/skladpro
+      REDIS_URL: redis://redis:6379
       # Фронт с :5173 шлёт Origin http://IP:5173 — без порта в списке CORS preflight падает
       ORIGINS: ${APP_ORIGIN:-http://194.32.142.253,http://194.32.142.253:5173}
     expose:
       - "8000"
+    depends_on:
+      postgresql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
 
   frontend:
     build:
@@ -45,5 +86,7 @@ services:
       - backend
 
 volumes:
+  postgres_data:
+  redis_data:
   caddy_data:
   caddy_config:

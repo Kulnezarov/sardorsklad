@@ -11,7 +11,7 @@ export const PRODUCTS_PAGE_SIZE = 30
 
 /**
  * Загружает все товары по частям (skip/limit), чтобы не слать один огромный SELECT
- * (иначе на Supabase часто sqlalche.me/e/20/e3q8 — таймаут операции).
+ * (иначе один огромный SELECT может дать таймаут на сервере).
  */
 export async function fetchAllProducts(filters = {}) {
   const { limit: _l, skip: _s, ...rest } = filters

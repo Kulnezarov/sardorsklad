@@ -178,33 +178,6 @@ const Products = () => {
     return () => clearTimeout(t);
   }, [searchInput]);
 
-  // Search autocomplete suggestions (max 6, deduplicated)
-  const searchSuggestions = useMemo(() => {
-    const q = searchInput.trim().toLowerCase();
-    if (!q) return [];
-    const seen = new Set();
-    const results = [];
-    const allProducts = productsRef.current.length ? productsRef.current : products;
-    for (const p of allProducts) {
-      if (results.length >= 6) break;
-      const entries = [
-        { val: p.name, type: 'Товар' },
-        { val: p.brand, type: 'Марка' },
-        { val: p.category, type: 'Категория' },
-      ];
-      for (const { val, type } of entries) {
-        if (!val) continue;
-        const key = val.toLowerCase();
-        if (key.includes(q) && !seen.has(key)) {
-          seen.add(key);
-          results.push({ label: val, type });
-          if (results.length >= 6) break;
-        }
-      }
-    }
-    return results;
-  }, [searchInput, products]);
-
   // Close suggestions on outside click
   useEffect(() => {
     const handler = (e) => {
@@ -281,6 +254,33 @@ const Products = () => {
   const products = useMemo(() => (productsPages?.pages || []).flat(), [productsPages]);
 
   useEffect(() => { productsRef.current = products; }, [products]);
+
+  // Search autocomplete suggestions (max 6); must be after `products` is defined
+  const searchSuggestions = useMemo(() => {
+    const q = searchInput.trim().toLowerCase();
+    if (!q) return [];
+    const seen = new Set();
+    const results = [];
+    const allProducts = productsRef.current.length ? productsRef.current : products;
+    for (const p of allProducts) {
+      if (results.length >= 6) break;
+      const entries = [
+        { val: p.name, type: 'Товар' },
+        { val: p.brand, type: 'Марка' },
+        { val: p.category, type: 'Категория' },
+      ];
+      for (const { val, type } of entries) {
+        if (!val) continue;
+        const key = val.toLowerCase();
+        if (key.includes(q) && !seen.has(key)) {
+          seen.add(key);
+          results.push({ label: val, type });
+          if (results.length >= 6) break;
+        }
+      }
+    }
+    return results;
+  }, [searchInput, products]);
 
   const { data: categories = [] } = useQuery({
     queryKey: ['categories'],
