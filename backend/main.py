@@ -9,7 +9,7 @@ from sqlalchemy.exc import OperationalError
 import database
 import models
 import bootstrap_admin
-from middleware.force_cors import ForceCorsMiddleware
+from fastapi.middleware.cors import CORSMiddleware
 from routers import auth, products, sales, reserve, history, revision, settings
 from routers import wish_orders, ai_chat
 from config.logger import setup_logger
@@ -240,10 +240,17 @@ def api_info():
 
 
 # ============================================================================
-# CORS: внешний слой с явными заголовками (обходит проблемы порядка CORSMiddleware).
-# JWT в заголовке Authorization — cookie не используем, * допустим.
+# CORS: стандартный CORSMiddleware (BaseHTTPMiddleware/ForceCors давали пустые заголовки
+# на части ответов). JWT в Authorization — allow_credentials=False.
 # ============================================================================
-app.add_middleware(ForceCorsMiddleware)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+    expose_headers=["*"],
+)
 
 
 # ============================================================================
