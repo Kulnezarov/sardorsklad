@@ -54,17 +54,6 @@ export const AuthProvider = ({ children }) => {
         setUser(data.user);
         return data;
       },
-      register: async (email, password, full_name) => {
-        localStorage.removeItem('authToken');
-        localStorage.removeItem(USER_STORAGE_KEY);
-        const body = { email, password };
-        if (full_name) body.full_name = full_name;
-        const { data } = await authApi.register(body);
-        localStorage.setItem('authToken', data.access_token);
-        localStorage.setItem(USER_STORAGE_KEY, JSON.stringify(data.user));
-        setUser(data.user);
-        return data;
-      },
       logout: async () => {
         localStorage.removeItem('authToken');
         localStorage.removeItem(USER_STORAGE_KEY);

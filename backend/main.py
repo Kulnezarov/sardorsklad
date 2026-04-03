@@ -1,7 +1,6 @@
 import os
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
 from datetime import datetime
@@ -9,6 +8,8 @@ from sqlalchemy.exc import OperationalError
 
 import database
 import models
+import bootstrap_admin
+from middleware.force_cors import ForceCorsMiddleware
 from routers import auth, products, sales, reserve, history, revision, settings
 from routers import wish_orders, ai_chat
 from config.logger import setup_logger
@@ -53,6 +54,8 @@ async def lifespan(app: FastAPI):
             db.commit()
             logger.info("✓ Default settings initialized")
         db.close()
+
+        bootstrap_admin.ensure_default_admin()
 
         logger.info("✓ SkladPro API startup complete")
 
@@ -112,24 +115,7 @@ ORIGINS = [
     if o.strip()
 ]
 
-# Browsers send Origin with the real host (e.g. http://192.168.1.5:5173), not "localhost", when you open the app by IP.
-# Vercel production & preview: https://*.vercel.app (add your custom domain to ORIGINS in env).
-_CORS_ORIGIN_REGEX = (
-    r"^(https?://(localhost|127\.0\.0\.1|192\.168\.\d{1,3}\.\d{1,3}|10\.\d{1,3}\.\d{1,3}\.\d{1,3}|194\.32\.142\.253)(:\d+)?"
-    r"|https://([a-zA-Z0-9-]+\.)*vercel\.app)$"
-)
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=ORIGINS,
-    allow_origin_regex=_CORS_ORIGIN_REGEX,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-    expose_headers=["*"],
-)
-
-logger.info(f"CORS enabled for: {', '.join(ORIGINS)}")
+logger.info(f"ORIGINS (для логов/будущего CORS_STRICT): {', '.join(ORIGINS)}")
 
 
 # ============================================================================
@@ -251,6 +237,13 @@ def api_info():
         "cache_enabled": os.getenv("CACHE_ENABLED", "true").lower() == "true",
         "notifications_enabled": os.getenv("NOTIFICATIONS_ENABLED", "true").lower() == "true",
     }
+
+
+# ============================================================================
+# CORS: внешний слой с явными заголовками (обходит проблемы порядка CORSMiddleware).
+# JWT в заголовке Authorization — cookie не используем, * допустим.
+# ============================================================================
+app.add_middleware(ForceCorsMiddleware)
 
 
 # ============================================================================

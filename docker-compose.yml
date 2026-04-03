@@ -45,6 +45,7 @@ services:
       API_HOST: 0.0.0.0
       API_PORT: 8000
       ORIGINS: http://localhost:5173,http://localhost:3000,http://194.32.142.253,http://194.32.142.253:5173
+      ALLOW_OPEN_REGISTRATION: "false"
     ports:
       - "8000:8000"
     depends_on:

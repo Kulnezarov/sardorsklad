@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from './AuthContext';
 import toast from 'react-hot-toast';
 import './LoginPage.css';
@@ -86,12 +86,7 @@ const LoginPage = () => {
           </button>
 
           <div className="login-footer">
-            <p className="login-footer-text">
-              Нет аккаунта?{' '}
-              <Link to="/register" style={{ color: 'var(--accent, #2563eb)' }}>
-                Регистрация
-              </Link>
-            </p>
+            <p className="login-footer-text">Доступ выдаёт администратор</p>
           </div>
         </form>
       </div>

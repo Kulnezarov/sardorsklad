@@ -107,7 +107,6 @@ apiClient.interceptors.response.use(
 // ============================================================================
 export const authApi = {
   login: (body) => apiClient.post('/api/v1/auth/login', body),
-  register: (body) => apiClient.post('/api/v1/auth/register', body),
   me: () => apiClient.get('/api/v1/auth/me'),
 }
 
