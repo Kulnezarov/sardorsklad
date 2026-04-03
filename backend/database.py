@@ -93,49 +93,117 @@ def create_tables():
     Base.metadata.create_all(bind=engine)
 
 
+def _exec_schema_sql(sql: str, label: str = "") -> None:
+    """Выполняет один DDL в отдельной транзакции — сбой одного шага не откатывает остальные."""
+    try:
+        with engine.begin() as conn:
+            conn.execute(text(sql))
+    except Exception as e:
+        logger.warning("ensure_schema_updates%s: %s", f" [{label}]" if label else "", e)
+
+
 def ensure_schema_updates():
     """Idempotent ALTERs for databases created before new columns (PostgreSQL)."""
     if not DATABASE_URL or "postgresql" not in DATABASE_URL.lower():
         return
-    try:
-        with engine.begin() as conn:
-            conn.execute(
-                text(
-                    "ALTER TABLE products ADD COLUMN IF NOT EXISTS barcode VARCHAR(50)"
+
+    # Старая supabase_schema.sql: products(id, name, sku, category, quantity, price, description, created_at, updated_at)
+    # Нужно привести к модели Product (колонки по одной, отдельные транзакции).
+    product_alters = [
+        ("products.barcode", "ALTER TABLE products ADD COLUMN IF NOT EXISTS barcode VARCHAR(50)"),
+        ("products.brand", "ALTER TABLE products ADD COLUMN IF NOT EXISTS brand VARCHAR(100)"),
+        ("products.purchase_price", "ALTER TABLE products ADD COLUMN IF NOT EXISTS purchase_price NUMERIC(10, 2) DEFAULT 0 NOT NULL"),
+        ("products.sale_price", "ALTER TABLE products ADD COLUMN IF NOT EXISTS sale_price NUMERIC(10, 2) DEFAULT 0 NOT NULL"),
+        ("products.cny_price", "ALTER TABLE products ADD COLUMN IF NOT EXISTS cny_price NUMERIC(10, 2)"),
+        ("products.delivery_cost_kzt", "ALTER TABLE products ADD COLUMN IF NOT EXISTS delivery_cost_kzt NUMERIC(10, 2)"),
+        ("products.min_quantity", "ALTER TABLE products ADD COLUMN IF NOT EXISTS min_quantity INTEGER DEFAULT 0"),
+        ("products.max_quantity", "ALTER TABLE products ADD COLUMN IF NOT EXISTS max_quantity INTEGER"),
+        ("products.location_row", "ALTER TABLE products ADD COLUMN IF NOT EXISTS location_row VARCHAR(10)"),
+        ("products.location_shelf", "ALTER TABLE products ADD COLUMN IF NOT EXISTS location_shelf VARCHAR(10)"),
+        ("products.location_position", "ALTER TABLE products ADD COLUMN IF NOT EXISTS location_position VARCHAR(10)"),
+        ("products.location_zone", "ALTER TABLE products ADD COLUMN IF NOT EXISTS location_zone VARCHAR(50)"),
+        ("products.supplier", "ALTER TABLE products ADD COLUMN IF NOT EXISTS supplier VARCHAR(255)"),
+        ("products.last_sale_date", "ALTER TABLE products ADD COLUMN IF NOT EXISTS last_sale_date TIMESTAMPTZ"),
+        ("products.received_at", "ALTER TABLE products ADD COLUMN IF NOT EXISTS received_at TIMESTAMPTZ"),
+        ("products.is_active", "ALTER TABLE products ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE NOT NULL"),
+    ]
+    for label, sql in product_alters:
+        _exec_schema_sql(sql, label)
+
+    # Старая схема: одна колонка price → purchase_price и sale_price
+    _exec_schema_sql(
+        """
+        DO $$
+        BEGIN
+          IF EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'public' AND table_name = 'products' AND column_name = 'price'
+          ) THEN
+            UPDATE products SET purchase_price = price::numeric, sale_price = price::numeric;
+          END IF;
+        END $$;
+        """,
+        "products.migrate_price",
+    )
+
+    # GENERATED profit_percent (как в модели SQLAlchemy)
+    _exec_schema_sql(
+        """
+        DO $$
+        BEGIN
+          IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'public' AND table_name = 'products' AND column_name = 'profit_percent'
+          ) THEN
+            ALTER TABLE products ADD COLUMN profit_percent NUMERIC(5, 2) GENERATED ALWAYS AS (
+              CASE WHEN purchase_price IS NULL OR purchase_price = 0 THEN NULL
+              ELSE ROUND((((sale_price - purchase_price) / purchase_price) * 100)::numeric, 2) END
+            ) STORED;
+          END IF;
+        END $$;
+        """,
+        "products.profit_percent",
+    )
+
+    # history — только если таблица есть (в старой схеме мог быть product_history вместо history)
+    _exec_schema_sql(
+        """
+        DO $$
+        BEGIN
+          IF EXISTS (
+            SELECT 1 FROM information_schema.tables
+            WHERE table_schema = 'public' AND table_name = 'history'
+          ) THEN
+            ALTER TABLE history DROP CONSTRAINT IF EXISTS history_operation_type_check;
+          END IF;
+        END $$;
+        """,
+        "history.drop_check",
+    )
+    _exec_schema_sql(
+        """
+        DO $$
+        BEGIN
+          IF EXISTS (
+            SELECT 1 FROM information_schema.tables
+            WHERE table_schema = 'public' AND table_name = 'history'
+          ) THEN
+            BEGIN
+              ALTER TABLE history ADD CONSTRAINT history_operation_type_check CHECK (
+                operation_type IN (
+                  'sale', 'purchase', 'adjustment', 'reserve_to_stock', 'revision',
+                  'added', 'sold', 'edited', 'discount', 'deleted', 'ordered',
+                  'to_stock', 'cancelled', 'restored'
                 )
-            )
-            conn.execute(
-                text(
-                    "ALTER TABLE products ADD COLUMN IF NOT EXISTS delivery_cost_kzt NUMERIC(10, 2)"
-                )
-            )
-            conn.execute(
-                text(
-                    "ALTER TABLE products ADD COLUMN IF NOT EXISTS supplier VARCHAR(255)"
-                )
-            )
-            conn.execute(
-                text(
-                    "ALTER TABLE products ADD COLUMN IF NOT EXISTS received_at TIMESTAMPTZ"
-                )
-            )
-            # Legacy DBs may have CHECK (operation_type) without app enum values → DELETE/ADD history fails with 500.
-            conn.execute(text("ALTER TABLE history DROP CONSTRAINT IF EXISTS history_operation_type_check"))
-            conn.execute(
-                text(
-                    """
-                    ALTER TABLE history ADD CONSTRAINT history_operation_type_check CHECK (
-                        operation_type IN (
-                            'sale', 'purchase', 'adjustment', 'reserve_to_stock', 'revision',
-                            'added', 'sold', 'edited', 'discount', 'deleted', 'ordered',
-                            'to_stock', 'cancelled', 'restored'
-                        )
-                    )
-                    """
-                )
-            )
-    except Exception as e:
-        logger.warning("ensure_schema_updates: %s", e)
+              );
+            EXCEPTION
+              WHEN duplicate_object THEN NULL;
+            END;
+          END IF;
+        END $$;
+        """,
+        "history.add_check",
+    )
 
 
 def drop_tables():
