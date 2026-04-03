@@ -11,7 +11,6 @@ import database
 import models
 from routers import auth, products, sales, reserve, history, revision, settings
 from routers import wish_orders, ai_chat
-from security import decode_access_token
 from config.logger import setup_logger
 
 # ============================================================================
@@ -107,7 +106,8 @@ ORIGINS = [
     o.strip()
     for o in os.getenv(
         "ORIGINS",
-        "http://localhost:5173,http://localhost:3000,http://127.0.0.1:5173",
+        "http://localhost:5173,http://localhost:3000,http://127.0.0.1:5173,"
+        "http://194.32.142.253,http://194.32.142.253:5173",
     ).split(",")
     if o.strip()
 ]
@@ -115,7 +115,7 @@ ORIGINS = [
 # Browsers send Origin with the real host (e.g. http://192.168.1.5:5173), not "localhost", when you open the app by IP.
 # Vercel production & preview: https://*.vercel.app (add your custom domain to ORIGINS in env).
 _CORS_ORIGIN_REGEX = (
-    r"^(https?://(localhost|127\.0\.0\.1|192\.168\.\d{1,3}\.\d{1,3}|10\.\d{1,3}\.\d{1,3}\.\d{1,3})(:\d+)?"
+    r"^(https?://(localhost|127\.0\.0\.1|192\.168\.\d{1,3}\.\d{1,3}|10\.\d{1,3}\.\d{1,3}\.\d{1,3}|194\.32\.142\.253)(:\d+)?"
     r"|https://([a-zA-Z0-9-]+\.)*vercel\.app)$"
 )
 

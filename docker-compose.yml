@@ -44,7 +44,7 @@ services:
       REDIS_URL: redis://redis:6379
       API_HOST: 0.0.0.0
       API_PORT: 8000
-      ORIGINS: http://localhost:5173,http://localhost:3000
+      ORIGINS: http://localhost:5173,http://localhost:3000,http://194.32.142.253,http://194.32.142.253:5173
     ports:
       - "8000:8000"
     depends_on:
@@ -56,21 +56,20 @@ services:
       - ./backend:/app
     command: python main.py
 
-  # React Frontend
+  # React Frontend (production: Nginx + статика из `npm run build`)
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+      args:
+        VITE_API_URL: http://194.32.142.253:8000
     container_name: skladpro-frontend
     environment:
-      VITE_API_URL: http://localhost:8000
+      VITE_API_URL: http://194.32.142.253:8000
     ports:
-      - "5173:5173"
+      - "80:80"
     depends_on:
       - backend
-    volumes:
-      - ./frontend:/app
-    command: npm run dev
 
 volumes:
   postgresql_data:

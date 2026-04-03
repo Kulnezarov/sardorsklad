@@ -11,7 +11,8 @@ services:
       PORT: 8000
       API_HOST: 0.0.0.0
       API_PORT: 8000
-      ORIGINS: ${APP_ORIGIN:-http://194.32.142.253}
+      # Фронт с :5173 шлёт Origin http://IP:5173 — без порта в списке CORS preflight падает
+      ORIGINS: ${APP_ORIGIN:-http://194.32.142.253,http://194.32.142.253:5173}
     expose:
       - "8000"
 
