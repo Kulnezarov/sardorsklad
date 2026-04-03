@@ -40,9 +40,9 @@ async def lifespan(app: FastAPI):
     logger.info("Starting SkladPro API...")
 
     try:
-        # Create tables
-        database.create_tables()
+        # Сначала миграции (в т.ч. переименование legacy sales), затем create_all для новых таблиц
         database.ensure_schema_updates()
+        database.create_tables()
         logger.info("✓ Database tables created")
 
         # Initialize default settings if not exist

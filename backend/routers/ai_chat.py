@@ -15,6 +15,8 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/ai-chat", tags=["ai-chat"])
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+# Бесплатный слой: gemini-2.0-flash / gemini-1.5-flash (задаётся в .env)
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
 
 SYSTEM_PROMPT = """Ты — ASTRA, интеллектуальный ассистент по китайским автозапчастям.
 Создатель: Сардор Кулнезаров.
@@ -87,7 +89,10 @@ def _build_products_context(db: Session) -> str:
 @router.post("/", response_model=ChatResponse)
 def chat_with_astra(req: ChatRequest, db: Session = Depends(get_db)):
     if not GEMINI_API_KEY:
-        raise HTTPException(status_code=500, detail="GEMINI_API_KEY не настроен на сервере")
+        raise HTTPException(
+            status_code=503,
+            detail="GEMINI_API_KEY не задан: добавьте ключ в backend/.env на сервере и перезапустите контейнер",
+        )
 
     try:
         import google.generativeai as genai
@@ -141,7 +146,7 @@ def chat_with_astra(req: ChatRequest, db: Session = Depends(get_db)):
 
     try:
         model = genai.GenerativeModel(
-            "gemini-2.0-flash",
+            GEMINI_MODEL,
             system_instruction=full_system,
         )
         response = model.generate_content(contents)

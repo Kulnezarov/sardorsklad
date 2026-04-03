@@ -107,6 +107,29 @@ def ensure_schema_updates():
     if not DATABASE_URL or "postgresql" not in DATABASE_URL.lower():
         return
 
+    # Старая supabase_schema.sql: sales(id, product_id, quantity, total_price, ...) — не совместима с моделью Sale (receipt_number, sale_items).
+    # Переименовываем, чтобы create_tables() создал новые sales + sale_items.
+    _exec_schema_sql(
+        """
+        DO $$
+        BEGIN
+          IF EXISTS (
+            SELECT 1 FROM information_schema.tables
+            WHERE table_schema = 'public' AND table_name = 'sales'
+          ) AND EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'public' AND table_name = 'sales' AND column_name = 'product_id'
+          ) AND NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'public' AND table_name = 'sales' AND column_name = 'receipt_number'
+          ) THEN
+            EXECUTE 'ALTER TABLE sales RENAME TO sales_legacy_old_schema';
+          END IF;
+        END $$;
+        """,
+        "sales.rename_legacy",
+    )
+
     # Старая supabase_schema.sql: products(id, name, sku, category, quantity, price, description, created_at, updated_at)
     # Нужно привести к модели Product (колонки по одной, отдельные транзакции).
     product_alters = [
