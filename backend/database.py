@@ -101,6 +101,11 @@ def ensure_schema_updates():
         with engine.begin() as conn:
             conn.execute(
                 text(
+                    "ALTER TABLE products ADD COLUMN IF NOT EXISTS barcode VARCHAR(50)"
+                )
+            )
+            conn.execute(
+                text(
                     "ALTER TABLE products ADD COLUMN IF NOT EXISTS delivery_cost_kzt NUMERIC(10, 2)"
                 )
             )
