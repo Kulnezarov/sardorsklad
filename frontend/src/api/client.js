@@ -3,8 +3,8 @@ import axios from 'axios'
 /**
  * Resolve API base URL.
  * - Set VITE_API_URL to a full base (e.g. http://192.168.1.10:8000/api/v1) for a fixed backend.
- * - Set VITE_API_URL=auto (or leave empty) to use the same hostname as the page + VITE_API_PORT (default 8000).
- *   This fixes LAN access: opening http://192.168.x.x:5173 calls http://192.168.x.x:8000/api/v1.
+ * - Set VITE_API_URL=auto (or leave empty): dev servers (5173/3000/…) → same host + VITE_API_PORT (8000);
+ *   production on :80 / :443 → same origin + /api/v1 (Caddy/nginx проксируют /api на backend).
  */
 /** Размер одной страницы при запросе списка товаров. Небольшой размер снижает нагрузку на телефоны. */
 export const PRODUCTS_PAGE_SIZE = 30
@@ -34,15 +34,21 @@ export async function fetchAllProducts(filters = {}) {
   return acc
 }
 
+const DEV_PORTS_NEED_SEPARATE_API = new Set(['5173', '3000', '4173', '8080'])
+
 export function getResolvedApiBaseUrl() {
   const raw = (import.meta.env.VITE_API_URL || '').trim()
   if (raw && raw !== 'auto') {
     return raw.replace(/\/$/, '')
   }
   if (typeof window !== 'undefined' && window.location?.hostname) {
-    const port = String(import.meta.env.VITE_API_PORT || '8000').trim()
-    const { hostname } = window.location
-    return `http://${hostname}:${port}/api/v1`
+    const pagePort = (window.location.port || '').trim()
+    const apiPort = String(import.meta.env.VITE_API_PORT || '8000').trim()
+    const { hostname, protocol } = window.location
+    if (DEV_PORTS_NEED_SEPARATE_API.has(pagePort)) {
+      return `${protocol}//${hostname}:${apiPort}/api/v1`
+    }
+    return `${window.location.origin}/api/v1`
   }
   return 'http://localhost:8000/api/v1'
 }
