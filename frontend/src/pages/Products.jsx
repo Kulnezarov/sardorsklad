@@ -478,41 +478,56 @@ const Products = () => {
 
   useEffect(() => () => stopVoice(), []);
 
-  /* ── Global barcode scanner (hardware) ── */
+  /* ── Global barcode scanner (hardware) ──
+     Сканер шлёт символы очень быстро (< 50 мс между клавишами).
+     Человек печатает медленно (> 100 мс). Отличаем их по скорости:
+     - Если курсор в input/textarea И символы идут медленно — это ручной ввод, не трогаем.
+     - Если символы идут быстро (< SCANNER_GAP мс) — это сканер: перехватываем всегда.
+     - Enter завершает сканирование независимо от фокуса. ── */
+  const SCANNER_GAP = 60; // мс — если быстрее, считаем сканером
   useEffect(() => {
     const handleKey = (e) => {
-      // Skip if a real input / textarea / select is focused (user is typing)
-      const active = document.activeElement;
-      const tag = active?.tagName;
-      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
-
       const now = Date.now();
       const gap = now - scanLastRef.current;
 
+      const active = document.activeElement;
+      const tag = active?.tagName;
+      const inInput = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
+
+      // Enter: завершить скан только если буфер набран быстро (сканер)
       if (e.key === 'Enter') {
         const buf = scanBufRef.current.trim();
         scanBufRef.current = '';
         scanLastRef.current = 0;
-        if (buf.length < 3) return;
-        // Search product
-        const found = productsRef.current.find(
-          (p) => p.barcode === buf || p.sku === buf
-        );
-        if (found) {
-          setSideProduct(found);
-        } else {
-          setScanNotFound(buf);
+        // Если буфер накоплен (значит, быстрые нажатия были) — ищем товар
+        if (buf.length >= 3) {
+          e.preventDefault();
+          const found = productsRef.current.find(
+            (p) => p.barcode === buf || p.sku === buf
+          );
+          if (found) {
+            setSideProduct(found);
+          } else {
+            setScanNotFound(buf);
+          }
         }
         return;
       }
 
-      // Reset buffer if gap is too long (not a scanner)
-      if (gap > 120) scanBufRef.current = '';
-      scanLastRef.current = now;
+      // Только печатаемые символы
+      if (e.key.length !== 1 || e.ctrlKey || e.metaKey || e.altKey) return;
 
-      if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
-        scanBufRef.current += e.key;
+      // Если в инпуте и пауза большая — это человек, пропускаем
+      if (inInput && gap > SCANNER_GAP) {
+        scanBufRef.current = '';
+        scanLastRef.current = now;
+        return;
       }
+
+      // Сбрасываем буфер при большой паузе (новое сканирование)
+      if (gap > 400) scanBufRef.current = '';
+      scanLastRef.current = now;
+      scanBufRef.current += e.key;
     };
 
     document.addEventListener('keydown', handleKey);
