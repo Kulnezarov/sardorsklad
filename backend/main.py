@@ -5,7 +5,8 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
-from datetime import datetime
+from datetime import date, datetime
+from enum import Enum
 from sqlalchemy.exc import OperationalError
 
 import database
@@ -93,21 +94,49 @@ async def lifespan(app: FastAPI):
 # ============================================================================
 # APP INITIALIZATION
 # ============================================================================
-def _json_default(obj):
+def sanitize_json_for_response(obj):
+    """
+    Рекурсивно приводит тело ответа к JSON-совместимым типам.
+    Decimal из PostgreSQL/SQLAlchemy и Pydantic иначе дают «not JSON serializable»
+    даже при default= в json.dumps (вложенные структуры / особые объекты).
+    """
+    if obj is None:
+        return None
+    if isinstance(obj, (str, int, float, bool)):
+        return obj
     if isinstance(obj, Decimal):
         return float(obj)
-    raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
+    if isinstance(obj, (datetime, date)):
+        return obj.isoformat()
+    if isinstance(obj, Enum):
+        v = obj.value
+        return sanitize_json_for_response(v)
+    if isinstance(obj, dict):
+        return {str(k): sanitize_json_for_response(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple, set, frozenset)):
+        return [sanitize_json_for_response(v) for v in obj]
+    if isinstance(obj, bytes):
+        return obj.decode("utf-8", errors="replace")
+    if hasattr(obj, "model_dump") and callable(obj.model_dump):
+        return sanitize_json_for_response(obj.model_dump(mode="python"))
+    # pydantic v1
+    if hasattr(obj, "dict") and callable(obj.dict):
+        try:
+            return sanitize_json_for_response(obj.dict())
+        except Exception:
+            pass
+    return str(obj)
 
 
 class DecimalJSONResponse(JSONResponse):
-    """JSONResponse that serialises Decimal as float."""
+    """Все JSON-ответы приложения: Decimal, даты, enum — безопасно для json.dumps."""
     def render(self, content) -> bytes:
+        safe = sanitize_json_for_response(content)
         return json.dumps(
-            content,
+            safe,
             ensure_ascii=False,
             allow_nan=False,
             separators=(",", ":"),
-            default=_json_default,
         ).encode("utf-8")
 
 
@@ -144,7 +173,7 @@ logger.info(f"ORIGINS (для логов/будущего CORS_STRICT): {', '.jo
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
     """Handle validation errors."""
-    return JSONResponse(
+    return DecimalJSONResponse(
         status_code=422,
         content={
             "detail": "Validation error",
@@ -159,7 +188,7 @@ async def global_exception_handler(request: Request, exc: Exception):
     """Handle unexpected errors."""
     logger.error(f"Unhandled exception: {str(exc)}", exc_info=True)
 
-    return JSONResponse(
+    return DecimalJSONResponse(
         status_code=500,
         content={
             "error": "Internal server error",
