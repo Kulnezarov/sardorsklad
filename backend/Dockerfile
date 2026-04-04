@@ -27,8 +27,8 @@ USER app
 EXPOSE 8000
 
 # Health check (PORT задаёт Railway и др.)
-HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
-    CMD sh -c 'curl -f "http://127.0.0.1:$${PORT:-8000}/health" || exit 1'
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+    CMD sh -c 'curl -sf "http://127.0.0.1:${PORT:-8000}/health" || exit 1'
 
 # Railway и другие PaaS задают PORT; локально по умолчанию 8000
 CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}"]
