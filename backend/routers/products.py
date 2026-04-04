@@ -71,7 +71,10 @@ def get_product_by_barcode(barcode: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail="Barcode required")
     product = (
         db.query(models.Product)
-        .filter(models.Product.barcode == code, models.Product.is_active.is_(True))
+        .filter(
+            models.Product.is_active.is_(True),
+            or_(models.Product.barcode == code, models.Product.sku == code),
+        )
         .first()
     )
     if not product:

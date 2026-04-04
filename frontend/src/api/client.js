@@ -127,7 +127,8 @@ export const productApi = {
     })
   },
   getById: (id) => apiClient.get(`/api/v1/products/${id}`),
-  getByBarcode: (barcode) => apiClient.get(`/api/v1/products/barcode/${barcode}`),
+  getByBarcode: (barcode) =>
+    apiClient.get(`/api/v1/products/barcode/${encodeURIComponent(String(barcode))}`),
   create: (data) => apiClient.post('/api/v1/products', data),
   update: (id, data) => apiClient.put(`/api/v1/products/${id}`, data),
   delete: (id) => apiClient.delete(`/api/v1/products/${id}`),

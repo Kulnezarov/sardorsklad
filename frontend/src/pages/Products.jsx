@@ -39,6 +39,19 @@ function shouldFallbackImport(err) {
   return status === 404 || status === 405 || status === 501;
 }
 
+/** Как в POS: убираем хвосты после сканера */
+function normalizeScanCode(s) {
+  return String(s ?? '').replace(/[\s\r\n\t\u0000]+/g, '').trim();
+}
+
+function productMatchesScan(p, code) {
+  const c = normalizeScanCode(code);
+  if (!c) return false;
+  const pb = normalizeScanCode(p.barcode);
+  const ps = normalizeScanCode(p.sku);
+  return (pb && pb === c) || (ps && ps === c);
+}
+
 const CAT_COLORS = [
   { bg: 'rgba(99,102,241,0.14)', color: '#4338ca' },
   { bg: 'rgba(16,185,129,0.14)', color: '#047857' },
@@ -478,60 +491,98 @@ const Products = () => {
 
   useEffect(() => () => stopVoice(), []);
 
-  /* ── Global barcode scanner (hardware) ──
-     Сканер шлёт символы очень быстро (< 50 мс между клавишами).
-     Человек печатает медленно (> 100 мс). Отличаем их по скорости:
-     - Если курсор в input/textarea И символы идут медленно — это ручной ввод, не трогаем.
-     - Если символы идут быстро (< SCANNER_GAP мс) — это сканер: перехватываем всегда.
-     - Enter завершает сканирование независимо от фокуса. ── */
-  const SCANNER_GAP = 60; // мс — если быстрее, считаем сканером
+  const showFormRef = useRef(false);
+  const blockScanRef = useRef(false);
+  useEffect(() => {
+    showFormRef.current = showForm;
+  }, [showForm]);
+  useEffect(() => {
+    blockScanRef.current = !!(deleteModal || importOverlay || showPrint);
+  }, [deleteModal, importOverlay, showPrint]);
+
+  /* ── Глобальный сканер (HID-клавиатура), как на складе ──
+     - capture: true — раньше поля поиска; цифры/код не «съедаются» полем.
+     - Длинная пауза между символами → новый код (до 220 мс — медленные сканеры).
+     - Поиск: сначала кэш страницы, затем GET /products/barcode/… (вся БД, штрих или SKU).
+     - В поле поиска по-прежнему можно искать по-русски; латиница/цифры уходят в буфер скана. */
+  const SCAN_MAX_GAP_MS = 220;
+  const MIN_SCAN_LEN = 3;
+  const SCAN_CHAR = /^[0-9A-Za-z\-]$/;
+
   useEffect(() => {
     const handleKey = (e) => {
-      const now = Date.now();
-      const gap = now - scanLastRef.current;
+      if (showFormRef.current || blockScanRef.current) return;
 
-      const active = document.activeElement;
-      const tag = active?.tagName;
-      const inInput = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
-
-      // Enter: завершить скан только если буфер набран быстро (сканер)
       if (e.key === 'Enter') {
-        const buf = scanBufRef.current.trim();
+        const raw = scanBufRef.current;
         scanBufRef.current = '';
         scanLastRef.current = 0;
-        // Если буфер накоплен (значит, быстрые нажатия были) — ищем товар
-        if (buf.length >= 3) {
-          e.preventDefault();
-          const found = productsRef.current.find(
-            (p) => p.barcode === buf || p.sku === buf
-          );
+        const buf = normalizeScanCode(raw);
+        if (buf.length < MIN_SCAN_LEN) return;
+        e.preventDefault();
+        e.stopPropagation();
+
+        void (async () => {
+          let found = productsRef.current.find((p) => productMatchesScan(p, buf));
+          if (!found) {
+            try {
+              const r = await productApi.getByBarcode(buf);
+              if (r?.data) found = r.data;
+            } catch {
+              /* 404 */
+            }
+          }
           if (found) {
             setSideProduct(found);
+            setSearchInput('');
+            setShowSuggestions(false);
           } else {
             setScanNotFound(buf);
           }
-        }
+        })();
         return;
       }
 
-      // Только печатаемые символы
       if (e.key.length !== 1 || e.ctrlKey || e.metaKey || e.altKey) return;
-
-      // Если в инпуте и пауза большая — это человек, пропускаем
-      if (inInput && gap > SCANNER_GAP) {
+      if (!SCAN_CHAR.test(e.key)) {
         scanBufRef.current = '';
-        scanLastRef.current = now;
+        scanLastRef.current = 0;
         return;
       }
 
-      // Сбрасываем буфер при большой паузе (новое сканирование)
-      if (gap > 400) scanBufRef.current = '';
+      const now = Date.now();
+      const gap = now - scanLastRef.current;
+      const active = document.activeElement;
+      const inField = /^(INPUT|TEXTAREA|SELECT)$/i.test(active?.tagName || '');
+      const onCatalog = active?.closest?.('.products-page-shell');
+      const isMainSearch = active?.classList?.contains('catalog-search-input');
+
+      if (gap > SCAN_MAX_GAP_MS) scanBufRef.current = '';
+
+      /* В главном поиске: медленные буквы — обычный ввод (марка латиницей); цифры и быстрый поток — сканер */
+      if (isMainSearch && gap > SCAN_MAX_GAP_MS && !/^[0-9\-]$/.test(e.key)) {
+        scanLastRef.current = now;
+        scanBufRef.current = '';
+        return;
+      }
+
       scanLastRef.current = now;
       scanBufRef.current += e.key;
+
+      const rapidBurst = gap <= SCAN_MAX_GAP_MS;
+      if (inField && onCatalog) {
+        if (!isMainSearch) {
+          e.preventDefault();
+          e.stopPropagation();
+        } else if (/^[0-9\-]$/.test(e.key) || rapidBurst) {
+          e.preventDefault();
+          e.stopPropagation();
+        }
+      }
     };
 
-    document.addEventListener('keydown', handleKey);
-    return () => document.removeEventListener('keydown', handleKey);
+    document.addEventListener('keydown', handleKey, true);
+    return () => document.removeEventListener('keydown', handleKey, true);
   }, []);
 
   const handleEdit = (product) => {
