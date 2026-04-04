@@ -1,4 +1,6 @@
 import os
+import json
+from decimal import Decimal
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
@@ -91,6 +93,24 @@ async def lifespan(app: FastAPI):
 # ============================================================================
 # APP INITIALIZATION
 # ============================================================================
+def _json_default(obj):
+    if isinstance(obj, Decimal):
+        return float(obj)
+    raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
+
+
+class DecimalJSONResponse(JSONResponse):
+    """JSONResponse that serialises Decimal as float."""
+    def render(self, content) -> bytes:
+        return json.dumps(
+            content,
+            ensure_ascii=False,
+            allow_nan=False,
+            separators=(",", ":"),
+            default=_json_default,
+        ).encode("utf-8")
+
+
 app = FastAPI(
     title="SkladPro API",
     description="Smart inventory management system for warehouse management",
@@ -99,6 +119,7 @@ app = FastAPI(
     redoc_url="/api/redoc",
     openapi_url="/api/openapi.json",
     lifespan=lifespan,
+    default_response_class=DecimalJSONResponse,
 )
 
 # ============================================================================
