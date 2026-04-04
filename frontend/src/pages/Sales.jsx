@@ -13,6 +13,9 @@ const num = (v) => { const n = parseFloat(String(v || 0).replace(',', '.')); ret
 
 const formatMoney = (v) => Number(v || 0).toLocaleString('ru-RU');
 
+/** Сканеры часто шлют пробелы / перевод строки после кода */
+const normalizeScanCode = (s) => String(s ?? '').replace(/[\s\r\n\t\u0000]+/g, '').trim();
+
 /* ── POS component ── */
 const Sales = () => {
   const navigate = useNavigate();
@@ -77,7 +80,7 @@ const Sales = () => {
       ).slice(0, 8);
       setSearchResults(results);
       setShowDropdown(results.length > 0);
-    }, 200);
+    }, 300);
     return () => clearTimeout(t);
   }, [searchInput, products]);
 
@@ -132,12 +135,16 @@ const Sales = () => {
 
   // Barcode scan — show confirmation instead of immediately adding
   const handleBarcodeScan = async (barcode) => {
-    const bc = barcode.trim();
+    const bc = normalizeScanCode(barcode);
     if (!bc) return;
     setBarcodeInput('');
 
-    // Search locally first
-    let found = products.find((p) => p.barcode === bc || p.sku === bc);
+    // Search locally first (нормализуем поля — пробелы в БД / с сканера)
+    let found = products.find((p) => {
+      const pb = normalizeScanCode(p.barcode);
+      const ps = normalizeScanCode(p.sku);
+      return (pb && pb === bc) || (ps && ps === bc);
+    });
 
     // Fallback: API lookup
     if (!found) {
@@ -203,7 +210,20 @@ const Sales = () => {
                   <div style={{ fontSize: 36, marginBottom: 10 }}>✅</div>
                   <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--success)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 6 }}>Товар найден</div>
                   <div style={{ fontSize: 18, fontWeight: 800, color: 'var(--text)', marginBottom: 4, lineHeight: 1.25 }}>{scannedResult.product.name}</div>
-                  {scannedResult.product.brand && <div style={{ fontSize: 13, color: 'var(--text-muted)', fontWeight: 500, marginBottom: 14 }}>{scannedResult.product.brand}</div>}
+                  {scannedResult.product.brand && <div style={{ fontSize: 13, color: 'var(--text-muted)', fontWeight: 500, marginBottom: 6 }}>Марка: {scannedResult.product.brand}</div>}
+                  {scannedResult.product.category && <div style={{ fontSize: 12, color: 'var(--text-muted)', fontWeight: 500, marginBottom: 6 }}>Категория: {scannedResult.product.category}</div>}
+                  {(scannedResult.product.barcode || scannedResult.product.sku) && (
+                    <div style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 500, marginBottom: 8, fontFamily: 'ui-monospace, monospace', wordBreak: 'break-all' }}>
+                      {scannedResult.product.barcode && <span>ШК: {scannedResult.product.barcode}</span>}
+                      {scannedResult.product.barcode && scannedResult.product.sku ? ' · ' : null}
+                      {scannedResult.product.sku && <span>Арт.: {scannedResult.product.sku}</span>}
+                    </div>
+                  )}
+                  {scannedResult.product.description && (
+                    <div style={{ fontSize: 12, color: 'var(--text-secondary)', fontWeight: 500, marginBottom: 12, textAlign: 'left', lineHeight: 1.45, maxHeight: '4.35em', overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical' }}>
+                      {scannedResult.product.description}
+                    </div>
+                  )}
                   <div style={{ display: 'flex', gap: 10, justifyContent: 'center', flexWrap: 'wrap' }}>
                     <div style={{ padding: '10px 16px', borderRadius: 14, background: 'var(--ios-grouped-bg)', border: '1px solid var(--border)', textAlign: 'center' }}>
                       <div style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 600, marginBottom: 3 }}>Цена</div>
@@ -320,7 +340,7 @@ const Sales = () => {
           >
             <div style={{ fontSize: 36 }}>{scanFlash === 'ok' ? '✅' : scanFlash === 'err' ? '❌' : '📷'}</div>
             <div style={{ fontWeight: 600, fontSize: 14, color: 'var(--text-secondary)', textAlign: 'center' }}>
-              {scanFlash === 'ok' ? 'Товар добавлен!' : scanFlash === 'err' ? 'Не найден' : 'Наведите сканер или найдите товар выше'}
+              {scanFlash === 'ok' ? 'Штрих-код распознан' : scanFlash === 'err' ? 'Товар не найден' : 'Наведите сканер или найдите товар выше'}
             </div>
             {!scanFlash && <div style={{ fontSize: 12, color: 'var(--text-muted)', textAlign: 'center' }}>Сканер ведёт ввод здесь — отправьте Enter</div>}
             <input

@@ -1143,8 +1143,9 @@ textarea {
   display: flex;
   gap: 8px;
   overflow-x: auto;
-  padding-bottom: 6px;
-  margin-bottom: 4px;
+  /* Запас под box-shadow чипов — иначе тень обрезается прямоугольником скролла */
+  padding: 6px 4px 16px;
+  margin: -2px -4px 0;
   scrollbar-width: thin;
   -webkit-overflow-scrolling: touch;
 }
@@ -1160,6 +1161,9 @@ textarea {
   transition: var(--transition);
   background: var(--bg-secondary);
   color: var(--text-secondary);
+  -webkit-appearance: none;
+  appearance: none;
+  background-clip: padding-box;
 }
 
 .catalog-chip:hover {
@@ -1170,7 +1174,9 @@ textarea {
 .catalog-chip-active {
   background: linear-gradient(135deg, #6366f1, #7c3aed);
   color: #fff;
-  box-shadow: 0 6px 20px rgba(99, 102, 241, 0.35);
+  /* drop-shadow повторяет скругление; box-shadow у кнопок иногда даёт «квадрат» за pill */
+  box-shadow: none;
+  filter: drop-shadow(0 4px 14px rgba(99, 102, 241, 0.38));
 }
 
 .catalog-search-wrap {
@@ -2107,7 +2113,10 @@ textarea {
   transition: var(--transition);
   background: linear-gradient(135deg, #f59e0b, #d97706);
   color: #fff;
-  box-shadow: 0 4px 16px rgba(245, 158, 11, 0.38);
+  -webkit-appearance: none;
+  appearance: none;
+  box-shadow: none;
+  filter: drop-shadow(0 4px 12px rgba(217, 119, 6, 0.35));
 }
 
 .catalog-chip-stale-off {
@@ -2123,6 +2132,8 @@ textarea {
   transition: var(--transition);
   background: rgba(245, 158, 11, 0.1);
   color: #b45309;
+  -webkit-appearance: none;
+  appearance: none;
 }
 
 .catalog-chip-stale-off:hover {

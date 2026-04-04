@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
-import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { keepPreviousData, useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 import {
   FiPlus, FiEdit2, FiTrash2, FiSearch, FiAlertTriangle,
@@ -221,7 +221,7 @@ const Products = () => {
 
   const {
     data: productsPages,
-    isLoading,
+    isPending,
     isError,
     fetchNextPage,
     hasNextPage,
@@ -229,6 +229,7 @@ const Products = () => {
     isFetching,
   } = useInfiniteQuery({
     queryKey: ['products', search, selectedCategory],
+    placeholderData: keepPreviousData,
     queryFn: async ({ pageParam = 0 }) => {
       try {
         const r = await productApi.getAll({
@@ -592,7 +593,8 @@ const Products = () => {
 
   const listId = 'product-category-suggestions';
 
-  if (isLoading) return <LoadingSpinner message="Загружаем товары..." />;
+  /* Только первый холодный старт: иначе при смене search весь экран → Spinner и инпут размонтируется (потеря фокуса). */
+  if (isPending && !productsPages) return <LoadingSpinner message="Загружаем товары..." />;
 
   /* ─────────── RENDER ─────────── */
   return (
@@ -642,11 +644,11 @@ const Products = () => {
             type="button"
             className="btn-ios-secondary"
             onClick={() => handleRefreshCatalog()}
-            disabled={Boolean(isFetching && !isFetchingNextPage && !isLoading)}
+            disabled={Boolean(isFetching && !isFetchingNextPage)}
             title="Обновить список с сервера"
-            style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '9px 14px', borderRadius: 12, border: '1px solid var(--border)', background: 'var(--surface)', fontWeight: 600, fontSize: 13, cursor: isFetching && !isFetchingNextPage && !isLoading ? 'wait' : 'pointer', color: 'var(--text)', transition: 'var(--transition)' }}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '9px 14px', borderRadius: 12, border: '1px solid var(--border)', background: 'var(--surface)', fontWeight: 600, fontSize: 13, cursor: isFetching && !isFetchingNextPage ? 'wait' : 'pointer', color: 'var(--text)', transition: 'var(--transition)' }}
           >
-            <FiRefreshCw size={15} style={isFetching && !isFetchingNextPage && !isLoading ? { animation: 'spin 1s linear infinite' } : undefined} />
+            <FiRefreshCw size={15} style={isFetching && !isFetchingNextPage ? { animation: 'spin 1s linear infinite' } : undefined} />
             Обновить
           </button>
           <button type="button" className="btn-ios-secondary" onClick={() => importFileRef.current?.click()} disabled={importMutation.isPending} style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '9px 14px', borderRadius: 12, border: '1px solid var(--border)', background: 'var(--surface)', fontWeight: 600, fontSize: 13, cursor: 'pointer', color: 'var(--text)', transition: 'var(--transition)' }}>
