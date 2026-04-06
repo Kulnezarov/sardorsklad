@@ -14,7 +14,7 @@ import models
 import bootstrap_admin
 from fastapi.middleware.cors import CORSMiddleware
 from routers import auth, products, sales, reserve, history, revision, settings
-from routers import wish_orders, ai_chat
+from routers import wish_orders
 from config.logger import setup_logger
 
 # ============================================================================
@@ -232,7 +232,6 @@ app.include_router(history.router)
 app.include_router(revision.router)
 app.include_router(settings.router)
 app.include_router(wish_orders.router)
-app.include_router(ai_chat.router)
 
 
 # ============================================================================

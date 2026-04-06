@@ -264,12 +264,12 @@ const LabelPrint = ({ isOpen, onClose, product, settings, initialLabelType = 'ba
   /* ── RENDER ── */
   return createPortal(
     <div
-      style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', backdropFilter: 'blur(6px)', zIndex: 1100, display: 'flex', alignItems: 'flex-start', justifyContent: 'center', padding: '60px 16px 24px', overflowY: 'auto' }}
+      style={{ position: 'fixed', inset: 0, background: '#6b7280', zIndex: 1100, display: 'flex', alignItems: 'flex-start', justifyContent: 'center', padding: '60px 16px 24px', overflowY: 'auto' }}
       onClick={onClose}
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        style={{ width: '100%', maxWidth: 500, background: 'var(--surface)', borderRadius: 24, boxShadow: 'var(--shadow-2xl)', overflow: 'hidden', animation: 'sheetUp 0.22s ease-out' }}
+        style={{ width: '100%', maxWidth: 500, background: 'var(--surface)', borderRadius: 24, border: '1px solid var(--border)', boxShadow: 'none', overflow: 'hidden', animation: 'sheetUp 0.22s ease-out' }}
       >
         {/* Header */}
         <div style={{ padding: '18px 22px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
@@ -477,13 +477,22 @@ const LabelPrint = ({ isOpen, onClose, product, settings, initialLabelType = 'ba
                   onClick={handlePrint}
                   disabled={printing || sharing}
                   style={{
-                    flex: 2, padding: '13px', borderRadius: 14, border: 'none',
+                    flex: 2,
+                    padding: '13px',
+                    borderRadius: 14,
+                    border: printing ? '1px solid var(--border)' : '1px solid #4f46e5',
                     background: printing ? 'var(--bg-secondary)' : 'linear-gradient(135deg, #6366f1, #7c3aed)',
                     color: printing ? 'var(--text-muted)' : '#fff',
-                    fontWeight: 700, fontSize: 14, cursor: printing ? 'not-allowed' : 'pointer',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-                    boxShadow: printing ? 'none' : '0 8px 24px rgba(99,102,241,0.35)',
-                    transition: 'all 0.2s',
+                    fontWeight: 700,
+                    fontSize: 14,
+                    cursor: printing ? 'not-allowed' : 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: 8,
+                    boxShadow: 'none',
+                    transition: 'opacity 0.2s, transform 0.2s',
+                    willChange: 'transform',
                   }}
                 >
                   <FiPrinter size={17} />

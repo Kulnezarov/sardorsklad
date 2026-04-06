@@ -5,7 +5,6 @@ import {
   FiPackage,
   FiShoppingCart,
   FiClock,
-  FiMessageCircle,
   FiSettings,
 } from 'react-icons/fi';
 
@@ -17,7 +16,6 @@ const Sidebar = ({ isOpen, onClose }) => {
     { path: '/products', label: 'Склад', Icon: FiPackage },
     { path: '/reserve', label: 'Резерв', Icon: FiShoppingCart },
     { path: '/history', label: 'История', Icon: FiClock },
-    { path: '/astra', label: 'ASTRA', Icon: FiMessageCircle },
     { path: '/settings', label: 'Настройки', Icon: FiSettings },
   ];
 

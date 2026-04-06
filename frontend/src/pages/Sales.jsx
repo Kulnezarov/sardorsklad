@@ -202,8 +202,8 @@ const Sales = () => {
 
       {/* ── Scan confirmation modal ── */}
       {scannedResult && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.48)', backdropFilter: 'blur(6px)', zIndex: 600, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
-          <div style={{ width: '100%', maxWidth: 360, background: 'var(--surface)', borderRadius: 24, boxShadow: 'var(--shadow-xl)', overflow: 'hidden', animation: 'sheetUp 0.22s ease-out' }}>
+        <div style={{ position: 'fixed', inset: 0, background: '#6b7280', zIndex: 600, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
+          <div style={{ width: '100%', maxWidth: 360, background: 'var(--surface)', borderRadius: 24, border: '1px solid var(--border)', boxShadow: 'none', overflow: 'hidden', animation: 'sheetUp 0.22s ease-out' }}>
             {scannedResult.found ? (
               <>
                 <div style={{ padding: '26px 22px 18px', textAlign: 'center' }}>
@@ -276,7 +276,7 @@ const Sales = () => {
 
       {/* Success overlay */}
       {showSuccess && (
-        <div style={{ position: 'fixed', inset: 0, zIndex: 999, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(16,185,129,0.92)', backdropFilter: 'blur(12px)', animation: 'sheetUp 0.2s ease-out' }}>
+        <div style={{ position: 'fixed', inset: 0, zIndex: 999, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#10b981', animation: 'sheetUp 0.2s ease-out' }}>
           <div style={{ textAlign: 'center', color: '#fff' }}>
             <div style={{ fontSize: 64, marginBottom: 12, animation: 'popIn 0.25s ease-out' }}>✅</div>
             <div style={{ fontSize: 28, fontWeight: 800, letterSpacing: '-0.04em', marginBottom: 8 }}>Продано!</div>
@@ -314,7 +314,7 @@ const Sales = () => {
 
             {/* Dropdown results */}
             {showDropdown && (
-              <div ref={dropdownRef} style={{ position: 'absolute', top: 'calc(100% + 6px)', left: 0, right: 0, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 18, boxShadow: 'var(--shadow-lg)', zIndex: 50, overflow: 'hidden', backdropFilter: 'blur(20px)' }}>
+              <div ref={dropdownRef} style={{ position: 'absolute', top: 'calc(100% + 6px)', left: 0, right: 0, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 18, boxShadow: 'none', zIndex: 50, overflow: 'hidden' }}>
                 {searchResults.map((p) => (
                   <button key={p.id} type="button" onClick={() => addToCart(p)}
                     style={{ width: '100%', padding: '12px 16px', border: 'none', background: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, borderBottom: '1px solid var(--border-light)', textAlign: 'left', transition: 'background 0.12s' }}
@@ -335,7 +335,7 @@ const Sales = () => {
           {/* Scanner zone */}
           <div
             className={`pos-scanner-zone ${scanFlash === 'ok' ? 'pos-scanner-ok' : scanFlash === 'err' ? 'pos-scanner-err' : ''}`}
-            style={{ flex: 1, minHeight: 180, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', borderRadius: 22, border: `2px dashed ${scanFlash === 'ok' ? 'var(--success)' : scanFlash === 'err' ? 'var(--danger)' : 'var(--border)'}`, background: scanFlash === 'ok' ? 'rgba(16,185,129,0.08)' : scanFlash === 'err' ? 'rgba(239,68,68,0.08)' : 'var(--ios-grouped-bg)', transition: 'all 0.2s', cursor: 'text', gap: 12, padding: 20 }}
+            style={{ flex: 1, minHeight: 180, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', borderRadius: 22, border: `2px dashed ${scanFlash === 'ok' ? 'var(--success)' : scanFlash === 'err' ? 'var(--danger)' : 'var(--border)'}`, background: scanFlash === 'ok' ? '#ecfdf5' : scanFlash === 'err' ? '#fef2f2' : 'var(--ios-grouped-bg)', transition: 'border-color 0.2s, background-color 0.2s', cursor: 'text', gap: 12, padding: 20 }}
             onClick={() => barcodeRef.current?.focus()}
           >
             <div style={{ fontSize: 36 }}>{scanFlash === 'ok' ? '✅' : scanFlash === 'err' ? '❌' : '📷'}</div>
@@ -357,7 +357,7 @@ const Sales = () => {
         </div>
 
         {/* RIGHT: Cart */}
-        <div className="pos-right" style={{ display: 'flex', flexDirection: 'column', gap: 0, overflow: 'hidden', background: 'var(--surface)', borderRadius: 22, border: '1px solid var(--border)', boxShadow: 'var(--shadow-md)' }}>
+        <div className="pos-right" style={{ display: 'flex', flexDirection: 'column', gap: 0, overflow: 'hidden', background: 'var(--surface)', borderRadius: 22, border: '1px solid var(--border)', boxShadow: 'none' }}>
 
           {/* Cart header */}
           <div style={{ padding: '16px 18px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -384,7 +384,7 @@ const Sales = () => {
                         <div style={{ fontWeight: 700, fontSize: 13, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.product.name}</div>
                         {item.product.brand && <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2, fontWeight: 500 }}>{item.product.brand}</div>}
                       </div>
-                      <button type="button" onClick={() => removeFromCart(idx)} style={{ width: 26, height: 26, borderRadius: 8, border: 'none', background: 'rgba(239,68,68,0.1)', color: 'var(--danger)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}><FiX size={13} /></button>
+                      <button type="button" onClick={() => removeFromCart(idx)} style={{ width: 26, height: 26, borderRadius: 8, border: '1px solid #fecaca', background: '#fee2e2', color: 'var(--danger)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}><FiX size={13} /></button>
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
                       {/* Qty */}
@@ -435,7 +435,7 @@ const Sales = () => {
               type="button"
               disabled={cart.length === 0 || saleMutation.isPending}
               onClick={() => saleMutation.mutate()}
-              style={{ width: '100%', height: 56, borderRadius: 18, border: 'none', background: cart.length === 0 ? 'var(--bg-secondary)' : 'linear-gradient(135deg, #6366f1, #7c3aed)', color: cart.length === 0 ? 'var(--text-muted)' : '#fff', fontWeight: 800, fontSize: 17, letterSpacing: '-0.02em', cursor: cart.length === 0 ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, boxShadow: cart.length === 0 ? 'none' : '0 10px 30px rgba(99,102,241,0.4)', transition: 'all 0.2s', marginBottom: 10 }}
+              style={{ width: '100%', height: 56, borderRadius: 18, border: cart.length === 0 ? '1px solid var(--border)' : '1px solid #4f46e5', background: cart.length === 0 ? 'var(--bg-secondary)' : 'linear-gradient(135deg, #6366f1, #7c3aed)', color: cart.length === 0 ? 'var(--text-muted)' : '#fff', fontWeight: 800, fontSize: 17, letterSpacing: '-0.02em', cursor: cart.length === 0 ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, boxShadow: 'none', transition: 'opacity 0.2s, transform 0.2s', marginBottom: 10, willChange: 'transform' }}
             >
               <FiZap size={20} strokeWidth={2.5} />
               {saleMutation.isPending ? 'Продаём…' : 'ПРОДАТЬ'}

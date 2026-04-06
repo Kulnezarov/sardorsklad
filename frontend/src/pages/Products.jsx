@@ -53,14 +53,14 @@ function productMatchesScan(p, code) {
 }
 
 const CAT_COLORS = [
-  { bg: 'rgba(99,102,241,0.14)', color: '#4338ca' },
-  { bg: 'rgba(16,185,129,0.14)', color: '#047857' },
-  { bg: 'rgba(245,158,11,0.14)', color: '#b45309' },
-  { bg: 'rgba(239,68,68,0.14)', color: '#b91c1c' },
-  { bg: 'rgba(6,182,212,0.14)', color: '#0e7490' },
-  { bg: 'rgba(168,85,247,0.14)', color: '#7e22ce' },
-  { bg: 'rgba(234,179,8,0.14)', color: '#a16207' },
-  { bg: 'rgba(59,130,246,0.14)', color: '#1d4ed8' },
+  { bg: '#e8e8fc', color: '#4338ca' },
+  { bg: '#d1fae5', color: '#047857' },
+  { bg: '#fef3c7', color: '#b45309' },
+  { bg: '#fee2e2', color: '#b91c1c' },
+  { bg: '#cffafe', color: '#0e7490' },
+  { bg: '#f3e8ff', color: '#7e22ce' },
+  { bg: '#fef9c3', color: '#a16207' },
+  { bg: '#dbeafe', color: '#1d4ed8' },
 ];
 function getCatColor(cat) {
   if (!cat) return CAT_COLORS[0];
@@ -78,12 +78,19 @@ const emptyForm = () => ({
 const num = (v) => { if (v === '' || v == null) return 0; const n = parseFloat(String(v).replace(',', '.')); return Number.isFinite(n) ? n : 0; };
 const optionalNum = (v) => { if (v === '' || v == null) return null; const n = parseFloat(String(v).replace(',', '.')); return Number.isFinite(n) ? n : null; };
 
-function buildPayload(formData, cnyRate = 65) {
-  const skuTrim = formData.sku?.trim();
+/** Единая логика закупа в ₸: сначала поле «Закуп (₸)», иначе из ¥×курс+доставка (как при сохранении). */
+function effectivePurchaseTenge(formData, cnyRate = 65) {
   const cny = optionalNum(formData.cny_price);
   const del = optionalNum(formData.delivery_cost_kzt) || 0;
   let purchase = num(formData.purchase_price);
-  if (!purchase && cny != null && cny > 0) purchase = Number(cny) * Number(cnyRate) + del;
+  if (purchase <= 0 && cny != null && cny > 0) purchase = Number(cny) * Number(cnyRate) + del;
+  return purchase;
+}
+
+function buildPayload(formData, cnyRate = 65) {
+  const skuTrim = formData.sku?.trim();
+  const cny = optionalNum(formData.cny_price);
+  const purchase = effectivePurchaseTenge(formData, cnyRate);
   return {
     name: formData.name.trim(),
     sku: skuTrim || undefined,
@@ -125,6 +132,9 @@ function genMathProblem() {
 
 const STALE_MS = 30 * 24 * 60 * 60 * 1000;
 const PRODUCTS_PAGE_SIZE = 30;
+/** Фиксированная высота строки каталога для виртуального скролла (px) */
+const CATALOG_ROW_HEIGHT = 52;
+const CATALOG_OVERSCAN = 12;
 function isStale(p) {
   if (!p.quantity || p.quantity <= 0) return false;
   const now = Date.now();
@@ -154,7 +164,6 @@ const Products = () => {
 
   const [sideProduct, setSideProduct] = useState(null);
   const [deleteModal, setDeleteModal] = useState(null);
-  const [hoveredRowId, setHoveredRowId] = useState(null);
 
   const [showPrint, setShowPrint] = useState(false);
   const [printProduct, setPrintProduct] = useState(null);
@@ -181,7 +190,11 @@ const Products = () => {
   const productsRef = useRef([]);
   const scanBufRef = useRef('');
   const scanLastRef = useRef(0);
+  const tableScrollRef = useRef(null);
   const queryClient = useQueryClient();
+
+  const [tableScrollTop, setTableScrollTop] = useState(0);
+  const [tableViewportH, setTableViewportH] = useState(480);
 
   useEffect(() => { formRef.current = formData; }, [formData]);
 
@@ -345,6 +358,40 @@ const Products = () => {
     if (showStale) return products.filter(isStale);
     return products;
   }, [products, showStale]);
+
+  const catalogVirtual = useMemo(() => {
+    const rows = displayProducts;
+    const n = rows.length;
+    if (n === 0) return { padTop: 0, padBottom: 0, slice: [] };
+    const rh = CATALOG_ROW_HEIGHT;
+    const vh = Math.max(1, tableViewportH);
+    const st = tableScrollTop;
+    const rowStart = Math.max(0, Math.floor(st / rh) - CATALOG_OVERSCAN);
+    const rowEnd = Math.min(n, Math.ceil((st + vh) / rh) + CATALOG_OVERSCAN);
+    const padTop = rowStart * rh;
+    const padBottom = (n - rowEnd) * rh;
+    return { padTop, padBottom, slice: rows.slice(rowStart, rowEnd) };
+  }, [displayProducts, tableScrollTop, tableViewportH]);
+
+  useEffect(() => {
+    const el = tableScrollRef.current;
+    if (!el) return undefined;
+    const measure = () => setTableViewportH(el.clientHeight);
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  const handleTableScroll = useCallback((e) => {
+    setTableScrollTop(e.currentTarget.scrollTop);
+  }, []);
+
+  useEffect(() => {
+    const el = tableScrollRef.current;
+    if (el) el.scrollTop = 0;
+    setTableScrollTop(0);
+  }, [showStale, selectedCategory, search]);
 
   /* mutations */
   const saveMutation = useMutation({
@@ -586,7 +633,16 @@ const Products = () => {
   }, []);
 
   const handleEdit = (product) => {
-    setFormData({ ...emptyForm(), ...product, sku: product.sku || '', cny_price: product.cny_price != null ? String(product.cny_price) : '', delivery_cost_kzt: product.delivery_cost_kzt != null ? String(product.delivery_cost_kzt) : '', supplier: product.supplier || '', storage_location: product.location_zone || '' });
+    setFormData({
+      ...emptyForm(),
+      ...product,
+      sku: product.sku || '',
+      purchase_price: product.purchase_price != null ? Number(product.purchase_price) : 0,
+      cny_price: product.cny_price != null ? String(product.cny_price) : '',
+      delivery_cost_kzt: product.delivery_cost_kzt != null ? String(product.delivery_cost_kzt) : '',
+      supplier: product.supplier || '',
+      storage_location: product.location_zone || '',
+    });
     setShowForm(true); setBarcodeLocked(true); setShowQrPanel(false); setFormError('');
     setSideProduct(null);
   };
@@ -628,16 +684,14 @@ const Products = () => {
   const profitPct = (row) => {
     const pp = Number(row.purchase_price) || 0;
     const sp = Number(row.sale_price) || 0;
-    if (row.profit_percent != null && row.profit_percent !== '') return Number(row.profit_percent).toFixed(1);
     if (pp <= 0) return null;
     return (((sp - pp) / pp) * 100).toFixed(1);
   };
 
-  const estPurchaseKzt = (optionalNum(formData.cny_price) || 0) * cnyRate + (optionalNum(formData.delivery_cost_kzt) || 0);
-  const profitPreview = estPurchaseKzt > 0 && num(formData.sale_price) > 0
-    ? (((num(formData.sale_price) - estPurchaseKzt) / estPurchaseKzt) * 100).toFixed(1)
-    : num(formData.purchase_price) > 0 && num(formData.sale_price) > 0
-      ? (((num(formData.sale_price) - num(formData.purchase_price)) / num(formData.purchase_price)) * 100).toFixed(1)
+  const effPurchasePreview = effectivePurchaseTenge(formData, cnyRate);
+  const profitPreview =
+    effPurchasePreview > 0 && num(formData.sale_price) > 0
+      ? (((num(formData.sale_price) - effPurchasePreview) / effPurchasePreview) * 100).toFixed(1)
       : '0';
 
   const staleCount = useMemo(() => products.filter(isStale).length, [products]);
@@ -725,12 +779,12 @@ const Products = () => {
           </button>
           <input ref={importFileRef} type="file" accept=".xlsx,.xlsm,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" style={{ display: 'none' }} onChange={(e) => { const f = e.target.files?.[0]; if (f) importMutation.mutate(f); e.target.value = ''; }} />
           {isSpeechRecognitionSupported() && (
-            <button type="button" onClick={voiceListening ? stopVoice : listenForAddProductPhrase} style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '9px 14px', borderRadius: 12, border: '1px solid var(--border)', background: voiceListening ? 'rgba(239,68,68,0.1)' : 'var(--surface)', fontWeight: 600, fontSize: 13, cursor: 'pointer', color: voiceListening ? 'var(--danger)' : 'var(--text)', transition: 'var(--transition)' }}>
+            <button type="button" onClick={voiceListening ? stopVoice : listenForAddProductPhrase} style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '9px 14px', borderRadius: 12, border: '1px solid var(--border)', background: voiceListening ? '#fee2e2' : 'var(--surface)', fontWeight: 600, fontSize: 13, cursor: 'pointer', color: voiceListening ? 'var(--danger)' : 'var(--text)', transition: 'var(--transition)' }}>
               {voiceListening ? <FiMicOff size={15} /> : <FiMic size={15} />}
               Голос
             </button>
           )}
-          <button type="button" onClick={openNew} style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '9px 16px', borderRadius: 12, border: 'none', background: 'linear-gradient(135deg, #6366f1, #7c3aed)', color: '#fff', fontWeight: 600, fontSize: 13, cursor: 'pointer', boxShadow: '0 6px 20px rgba(99,102,241,0.35)' }}>
+          <button type="button" onClick={openNew} style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '9px 16px', borderRadius: 12, border: '1px solid #4f46e5', background: 'linear-gradient(135deg, #6366f1, #7c3aed)', color: '#fff', fontWeight: 600, fontSize: 13, cursor: 'pointer', boxShadow: 'none', willChange: 'transform' }}>
             <FiPlus size={16} strokeWidth={2.5} /> Добавить товар
           </button>
         </div>
@@ -760,7 +814,7 @@ const Products = () => {
             )}
           </div>
           {showSuggestions && searchSuggestions.length > 0 && (
-            <div style={{ position: 'absolute', top: 'calc(100% + 4px)', left: 0, right: 0, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, boxShadow: 'var(--shadow-lg)', zIndex: 50, overflow: 'hidden' }}>
+            <div style={{ position: 'absolute', top: 'calc(100% + 4px)', left: 0, right: 0, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, boxShadow: 'none', zIndex: 50, overflow: 'hidden' }}>
               {searchSuggestions.map((s, i) => (
                 <button
                   key={`${s.label}-${i}`}
@@ -783,47 +837,51 @@ const Products = () => {
             <button key={cat} type="button" className={`catalog-chip ${selectedCategory === cat && !showStale ? 'catalog-chip-active' : ''}`} onClick={() => { setSelectedCategory(cat); setShowStale(false); }}>{cat}</button>
           ))}
           <button type="button" className={`catalog-chip ${showStale ? 'catalog-chip-stale' : 'catalog-chip-stale-off'}`} onClick={() => { setShowStale((s) => !s); setSelectedCategory(''); }}>
-            <FiClock size={13} style={{ marginRight: 5 }} />Залежалось {staleCount > 0 && <span style={{ marginLeft: 4, background: showStale ? 'rgba(255,255,255,0.28)' : 'rgba(251,191,36,0.35)', borderRadius: 8, padding: '1px 6px', fontSize: 11 }}>{staleCount}</span>}
+            <FiClock size={13} style={{ marginRight: 5 }} />Залежалось {staleCount > 0 && <span style={{ marginLeft: 4, background: showStale ? '#fbbf24' : '#fde047', border: '1px solid', borderColor: showStale ? '#d97706' : '#f59e0b', borderRadius: 8, padding: '1px 6px', fontSize: 11 }}>{staleCount}</span>}
           </button>
         </div>
       </div>
 
-      {/* ── Table ── */}
-      <div className="products-table-scroll" style={{ marginBottom: 0 }}>
+      {/* ── Table (виртуальный скролл: в DOM только видимые строки + буфер) ── */}
+      <div
+        ref={tableScrollRef}
+        className="products-table-scroll"
+        style={{ marginBottom: 0 }}
+        onScroll={handleTableScroll}
+      >
         {displayProducts.length === 0 ? (
           <div style={{ padding: '48px 16px', textAlign: 'center', color: 'var(--text-muted)' }}>
             <FiPackage size={36} style={{ marginBottom: 12, opacity: 0.4 }} />
             <div style={{ fontSize: 15, fontWeight: 600 }}>{search || selectedCategory || showStale ? 'Ничего не найдено по фильтрам' : 'Добавьте первый товар'}</div>
           </div>
         ) : (
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
-            <thead>
-              <tr style={{ background: 'var(--bg-secondary)' }}>
+          <table className="products-catalog-table">
+            <thead className="products-catalog-thead">
+              <tr>
                 {['Штрих-код', 'Название', 'Марка', 'Категория', 'Закуп', 'Продажа', 'Прибыль', 'Место', 'Остаток', ''].map((h) => (
-                  <th key={h} style={{ padding: '11px 14px', textAlign: 'left', fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', whiteSpace: 'nowrap', boxShadow: '0 1px 0 var(--border)' }}>{h}</th>
+                  <th key={h}>{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
-              {displayProducts.map((row) => {
+              {catalogVirtual.padTop > 0 && (
+                <tr aria-hidden="true" style={{ height: catalogVirtual.padTop, pointerEvents: 'none' }}>
+                  <td colSpan={10} style={{ padding: 0, border: 'none', height: catalogVirtual.padTop, lineHeight: 0 }} />
+                </tr>
+              )}
+              {catalogVirtual.slice.map((row) => {
                 const qty = Number(row.quantity) || 0;
                 const stale = isStale(row);
                 const pp = profitPct(row);
                 const ppNum = pp ? parseFloat(pp) : null;
                 const catColor = getCatColor(row.category);
-                const isHovered = hoveredRowId === row.id;
+                const rowCls = `products-catalog-row${stale && showStale ? ' products-catalog-row--stale' : ''}`;
                 return (
                   <tr
                     key={row.id}
+                    className={rowCls}
+                    style={{ height: CATALOG_ROW_HEIGHT }}
                     onClick={() => setSideProduct(row)}
-                    onMouseEnter={() => setHoveredRowId(row.id)}
-                    onMouseLeave={() => setHoveredRowId(null)}
-                    style={{
-                      cursor: 'pointer',
-                      borderBottom: '1px solid var(--border-light)',
-                      background: stale && showStale ? 'rgba(251,191,36,0.08)' : isHovered ? 'rgba(99,102,241,0.05)' : 'transparent',
-                      transition: 'background 0.18s',
-                    }}
                   >
                     <td style={{ padding: '12px 14px', fontFamily: 'ui-monospace,monospace', fontSize: 12, color: 'var(--text-muted)', fontWeight: 600, whiteSpace: 'nowrap' }}>{row.barcode || row.sku || '—'}</td>
                     <td style={{ padding: '12px 14px', fontWeight: 700, color: 'var(--text)', minWidth: 140, maxWidth: 220 }}>
@@ -832,28 +890,33 @@ const Products = () => {
                     <td style={{ padding: '12px 14px', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>{row.brand || <span style={{ color: 'var(--text-muted)' }}>—</span>}</td>
                     <td style={{ padding: '12px 14px' }}>
                       {row.category
-                        ? <span style={{ display: 'inline-flex', alignItems: 'center', borderRadius: 999, padding: '3px 10px', fontSize: 12, fontWeight: 600, background: catColor.bg, color: catColor.color, whiteSpace: 'nowrap' }}>{row.category}</span>
+                        ? <span style={{ display: 'inline-flex', alignItems: 'center', borderRadius: 999, padding: '3px 10px', fontSize: 12, fontWeight: 600, background: catColor.bg, color: catColor.color, whiteSpace: 'nowrap', border: '1px solid var(--border-light)' }}>{row.category}</span>
                         : <span style={{ color: 'var(--text-muted)' }}>—</span>}
                     </td>
                     <td style={{ padding: '12px 14px', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>{Number(row.purchase_price || 0).toLocaleString('ru-RU')} ₸</td>
                     <td style={{ padding: '12px 14px', fontWeight: 700, color: 'var(--text)', whiteSpace: 'nowrap' }}>{Number(row.sale_price || 0).toLocaleString('ru-RU')} ₸</td>
                     <td style={{ padding: '12px 14px' }}>
                       {ppNum != null
-                        ? <span style={{ display: 'inline-flex', alignItems: 'center', borderRadius: 999, padding: '3px 10px', fontSize: 12, fontWeight: 700, background: ppNum >= 50 ? 'rgba(16,185,129,0.14)' : 'rgba(245,158,11,0.14)', color: ppNum >= 50 ? '#047857' : '#b45309', whiteSpace: 'nowrap' }}>{pp}%</span>
+                        ? <span style={{ display: 'inline-flex', alignItems: 'center', borderRadius: 999, padding: '3px 10px', fontSize: 12, fontWeight: 700, background: ppNum >= 50 ? '#d1fae5' : '#fef3c7', color: ppNum >= 50 ? '#047857' : '#b45309', whiteSpace: 'nowrap', border: '1px solid var(--border-light)' }}>{pp}%</span>
                         : <span style={{ color: 'var(--text-muted)' }}>—</span>}
                     </td>
                     <td style={{ padding: '12px 14px', fontFamily: 'ui-monospace,monospace', fontWeight: 600, fontSize: 12, color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>{row.location_zone || '—'}</td>
                     <td style={{ padding: '12px 14px', fontWeight: 700, color: qty === 0 ? 'var(--danger)' : qty <= 5 ? '#d97706' : 'var(--success)', whiteSpace: 'nowrap' }}>{qty} шт</td>
                     <td style={{ padding: '12px 10px', textAlign: 'right' }}>
-                      <div style={{ display: 'flex', gap: 4, justifyContent: 'flex-end', alignItems: 'center', opacity: isHovered ? 1 : 0, transition: 'opacity 0.15s', pointerEvents: isHovered ? 'auto' : 'none' }}>
+                      <div className="products-catalog-row-actions">
                         <button type="button" onClick={(e) => { e.stopPropagation(); handleEdit(row); }} title="Редактировать" style={{ width: 32, height: 32, borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--primary)', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}><FiEdit2 size={14} /></button>
                         <button type="button" onClick={(e) => openPrintForRow(row, e)} title="Этикетка" style={{ width: 32, height: 32, borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-secondary)', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}><FiTag size={14} /></button>
-                        <button type="button" onClick={(e) => openDeleteConfirm(row, e)} title="Удалить" style={{ width: 32, height: 32, borderRadius: 10, border: '1px solid rgba(239,68,68,0.3)', background: 'rgba(239,68,68,0.08)', color: 'var(--danger)', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}><FiTrash2 size={14} /></button>
+                        <button type="button" onClick={(e) => openDeleteConfirm(row, e)} title="Удалить" style={{ width: 32, height: 32, borderRadius: 10, border: '1px solid #fecaca', background: '#fee2e2', color: 'var(--danger)', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}><FiTrash2 size={14} /></button>
                       </div>
                     </td>
                   </tr>
                 );
               })}
+              {catalogVirtual.padBottom > 0 && (
+                <tr aria-hidden="true" style={{ height: catalogVirtual.padBottom, pointerEvents: 'none' }}>
+                  <td colSpan={10} style={{ padding: 0, border: 'none', height: catalogVirtual.padBottom, lineHeight: 0 }} />
+                </tr>
+              )}
             </tbody>
           </table>
         )}
@@ -889,8 +952,8 @@ const Products = () => {
 
       {/* ── Scanner: not found modal ── */}
       {scanNotFound && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.48)', backdropFilter: 'blur(6px)', zIndex: 500, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
-          <div style={{ width: '100%', maxWidth: 360, background: 'var(--surface)', borderRadius: 24, boxShadow: 'var(--shadow-xl)', overflow: 'hidden', animation: 'sheetUp 0.22s ease-out' }}>
+        <div style={{ position: 'fixed', inset: 0, background: '#6b7280', zIndex: 500, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
+          <div style={{ width: '100%', maxWidth: 360, background: 'var(--surface)', borderRadius: 24, border: '1px solid var(--border)', boxShadow: 'none', overflow: 'hidden', animation: 'sheetUp 0.22s ease-out' }}>
             <div style={{ padding: '28px 24px 20px', textAlign: 'center' }}>
               <div style={{ fontSize: 40, marginBottom: 12 }}>🔍</div>
               <div style={{ fontSize: 18, fontWeight: 800, color: 'var(--text)', marginBottom: 8 }}>Товар не найден</div>
@@ -927,8 +990,8 @@ const Products = () => {
       {/* ── Side Sheet ── */}
       {sideProduct && (
         <>
-          <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.38)', backdropFilter: 'blur(3px)', zIndex: 300 }} onClick={() => setSideProduct(null)} />
-          <div style={{ position: 'fixed', right: 0, top: 0, bottom: 0, width: 'min(420px, 100vw)', background: 'var(--surface)', backdropFilter: 'saturate(180%) blur(24px)', boxShadow: '-20px 0 60px rgba(0,0,0,0.15)', zIndex: 301, overflow: 'auto', display: 'flex', flexDirection: 'column', animation: 'slideInRight 0.25s ease-out' }}>
+          <div style={{ position: 'fixed', inset: 0, background: '#9ca3af', zIndex: 300 }} onClick={() => setSideProduct(null)} />
+          <div style={{ position: 'fixed', right: 0, top: 0, bottom: 0, width: 'min(420px, 100vw)', background: 'var(--surface)', borderLeft: '1px solid var(--border)', boxShadow: 'none', zIndex: 301, overflow: 'auto', display: 'flex', flexDirection: 'column', animation: 'slideInRight 0.25s ease-out', willChange: 'transform' }}>
             {/* Header */}
             <div style={{ padding: '20px 22px 16px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, background: 'var(--surface)', position: 'sticky', top: 0, zIndex: 10 }}>
               <div style={{ minWidth: 0 }}>
@@ -971,7 +1034,7 @@ const Products = () => {
             <div style={{ padding: '14px 22px 22px', borderTop: '1px solid var(--border)', display: 'flex', gap: 10, background: 'var(--surface)', position: 'sticky', bottom: 0 }}>
               <button type="button" onClick={() => handleEdit(sideProduct)} style={{ flex: 1, padding: '13px', borderRadius: 14, border: 'none', background: 'linear-gradient(135deg, #6366f1, #7c3aed)', color: '#fff', fontWeight: 700, fontSize: 14, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}><FiEdit2 size={16} />Редактировать</button>
               <button type="button" onClick={() => openPrintForRow(sideProduct)} style={{ padding: '13px 16px', borderRadius: 14, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-secondary)', fontWeight: 600, fontSize: 14, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8 }}><FiTag size={16} /></button>
-              <button type="button" onClick={(e) => openDeleteConfirm(sideProduct, e)} style={{ padding: '13px 16px', borderRadius: 14, border: '1px solid rgba(239,68,68,0.3)', background: 'rgba(239,68,68,0.1)', color: 'var(--danger)', fontWeight: 600, fontSize: 14, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8 }}><FiTrash2 size={16} /></button>
+              <button type="button" onClick={(e) => openDeleteConfirm(sideProduct, e)} style={{ padding: '13px 16px', borderRadius: 14, border: '1px solid #fecaca', background: '#fee2e2', color: 'var(--danger)', fontWeight: 600, fontSize: 14, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8 }}><FiTrash2 size={16} /></button>
             </div>
           </div>
         </>
@@ -979,12 +1042,12 @@ const Products = () => {
 
       {/* ── Delete Math Confirm ── */}
       {deleteModal && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(6px)', zIndex: 500, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
-          <div style={{ width: '100%', maxWidth: 380, background: 'var(--surface)', borderRadius: 24, boxShadow: 'var(--shadow-xl)', overflow: 'hidden', animation: 'sheetUp 0.22s ease-out' }}>
+        <div style={{ position: 'fixed', inset: 0, background: '#6b7280', zIndex: 500, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
+          <div style={{ width: '100%', maxWidth: 380, background: 'var(--surface)', borderRadius: 24, border: '1px solid var(--border)', boxShadow: 'none', overflow: 'hidden', animation: 'sheetUp 0.22s ease-out' }}>
             <div style={{ padding: '22px 22px 0' }}>
               <div style={{ fontSize: 17, fontWeight: 800, color: 'var(--text)', marginBottom: 8 }}>Удалить товар?</div>
               <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 10, wordBreak: 'break-word' }}>«{deleteModal.product.name}»</div>
-              <div style={{ padding: '10px 14px', borderRadius: 12, background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.2)', fontSize: 13, color: 'var(--danger)', fontWeight: 600, marginBottom: 16 }}>⚠️ Операция необратима</div>
+              <div style={{ padding: '10px 14px', borderRadius: 12, background: '#fee2e2', border: '1px solid #fecaca', fontSize: 13, color: 'var(--danger)', fontWeight: 600, marginBottom: 16 }}>⚠️ Операция необратима</div>
               <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 10 }}>
                 Введите ответ: <strong style={{ color: 'var(--text)', fontSize: 15 }}>{deleteModal.problem} = ?</strong>
               </div>
@@ -1003,7 +1066,7 @@ const Products = () => {
             <div style={{ padding: '0 22px 22px', display: 'flex', gap: 10 }}>
               <button type="button" onClick={() => setDeleteModal(null)} style={{ flex: 1, padding: '13px', borderRadius: 14, border: '1px solid var(--border)', background: 'var(--surface)', fontWeight: 600, fontSize: 14, cursor: 'pointer', color: 'var(--text-secondary)' }}>Отмена</button>
               <button type="button" disabled={deleteModal.input !== deleteModal.answer || deleteMutation.isPending} onClick={() => deleteMutation.mutate(deleteModal.product.id)}
-                style={{ flex: 1, padding: '13px', borderRadius: 14, border: 'none', background: deleteModal.input === deleteModal.answer ? 'var(--danger)' : 'rgba(239,68,68,0.3)', color: '#fff', fontWeight: 700, fontSize: 14, cursor: deleteModal.input === deleteModal.answer ? 'pointer' : 'not-allowed', transition: 'background 0.2s' }}>
+                style={{ flex: 1, padding: '13px', borderRadius: 14, border: '1px solid', borderColor: deleteModal.input === deleteModal.answer ? '#b91c1c' : '#fca5a5', background: deleteModal.input === deleteModal.answer ? 'var(--danger)' : '#fecaca', color: '#fff', fontWeight: 700, fontSize: 14, cursor: deleteModal.input === deleteModal.answer ? 'pointer' : 'not-allowed', transition: 'background-color 0.2s, border-color 0.2s' }}>
                 {deleteMutation.isPending ? '…' : 'Удалить'}
               </button>
             </div>
@@ -1013,8 +1076,8 @@ const Products = () => {
 
       {/* ── Print suggest after create ── */}
       {showPrintSuggest && savedProduct && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', backdropFilter: 'blur(5px)', zIndex: 400, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
-          <div style={{ width: '100%', maxWidth: 340, background: 'var(--surface)', borderRadius: 24, boxShadow: 'var(--shadow-xl)', overflow: 'hidden', animation: 'sheetUp 0.22s ease-out' }}>
+        <div style={{ position: 'fixed', inset: 0, background: '#6b7280', zIndex: 400, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
+          <div style={{ width: '100%', maxWidth: 340, background: 'var(--surface)', borderRadius: 24, border: '1px solid var(--border)', boxShadow: 'none', overflow: 'hidden', animation: 'sheetUp 0.22s ease-out' }}>
             <div style={{ padding: '24px 22px 8px', textAlign: 'center' }}>
               <div style={{ fontSize: 32, marginBottom: 10 }}>🏷️</div>
               <div style={{ fontSize: 17, fontWeight: 800, color: 'var(--text)', marginBottom: 8 }}>Распечатать этикетку?</div>
@@ -1103,12 +1166,65 @@ const Products = () => {
           </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-            <Input label="Закуп (¥ юань)" type="number" step="0.01" min="0" placeholder="0" value={formData.cny_price} onChange={(e) => setFormData({ ...formData, cny_price: e.target.value })} style={formData.id ? { border: '1px solid var(--primary)' } : {}} />
-            <Input label="Доставка (₸)" type="number" step="0.01" min="0" placeholder="0" value={formData.delivery_cost_kzt} onChange={(e) => setFormData({ ...formData, delivery_cost_kzt: e.target.value })} style={formData.id ? { border: '1px solid var(--primary)' } : {}} />
+            <Input
+              label="Закуп (¥ юань)"
+              type="number"
+              step="0.01"
+              min="0"
+              placeholder="0"
+              value={formData.cny_price}
+              onChange={(e) => {
+                const v = e.target.value;
+                setFormData((prev) => {
+                  const next = { ...prev, cny_price: v };
+                  const cny = optionalNum(v);
+                  const del = optionalNum(prev.delivery_cost_kzt) || 0;
+                  if (cny != null && cny > 0) {
+                    next.purchase_price = Number(cny) * cnyRate + del;
+                  }
+                  return next;
+                });
+              }}
+              style={formData.id ? { border: '1px solid var(--primary)' } : {}}
+            />
+            <Input
+              label="Доставка (₸)"
+              type="number"
+              step="0.01"
+              min="0"
+              placeholder="0"
+              value={formData.delivery_cost_kzt}
+              onChange={(e) => {
+                const v = e.target.value;
+                setFormData((prev) => {
+                  const next = { ...prev, delivery_cost_kzt: v };
+                  const cny = optionalNum(prev.cny_price);
+                  const del = optionalNum(v) || 0;
+                  if (cny != null && cny > 0) {
+                    next.purchase_price = Number(cny) * cnyRate + del;
+                  }
+                  return next;
+                });
+              }}
+              style={formData.id ? { border: '1px solid var(--primary)' } : {}}
+            />
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <Input
+              label="Закуп (₸)"
+              type="number"
+              step="0.01"
+              min="0"
+              value={formData.purchase_price ?? 0}
+              onChange={(e) => setFormData({ ...formData, purchase_price: parseFloat(e.target.value) || 0 })}
+              style={formData.id ? { border: '1px solid var(--primary)' } : {}}
+            />
             <Input label="Продажа (₸) *" type="number" step="0.01" min="0" value={formData.sale_price || 0} onChange={(e) => setFormData({ ...formData, sale_price: parseFloat(e.target.value) || 0 })} style={formData.id ? { border: '1px solid var(--primary)' } : {}} />
-            <Input label="Поставщик" placeholder="По желанию" value={formData.supplier || ''} onChange={(e) => setFormData({ ...formData, supplier: e.target.value })} style={formData.id ? { border: '1px solid var(--primary)' } : {}} />
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <div style={{ gridColumn: '1 / -1' }}>
+              <Input label="Поставщик" placeholder="По желанию" value={formData.supplier || ''} onChange={(e) => setFormData({ ...formData, supplier: e.target.value })} style={formData.id ? { border: '1px solid var(--primary)' } : {}} />
+            </div>
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
             <Input label="Количество" type="number" min="0" value={formData.quantity || 0} onChange={(e) => setFormData({ ...formData, quantity: parseInt(e.target.value, 10) || 0 })} style={formData.id ? { border: '1px solid var(--primary)' } : {}} />
@@ -1118,8 +1234,21 @@ const Products = () => {
           <TextArea label="Доп. информация" placeholder="По желанию" value={formData.description || ''} onChange={(e) => setFormData({ ...formData, description: e.target.value })} />
 
           <div style={{ padding: '12px 14px', borderRadius: 'var(--radius-ios)', background: 'var(--ios-grouped-bg)', border: '1px solid var(--border)', fontSize: 14, fontWeight: 600, color: 'var(--text-secondary)' }}>
-            Прибыль: <span style={{ color: parseFloat(profitPreview) >= 50 ? 'var(--success)' : '#d97706', fontSize: 16 }}>{profitPreview}%</span>
-            <span style={{ fontWeight: 500, fontSize: 12, marginLeft: 8, color: 'var(--text-muted)' }}>· закуп ≈ {Math.round(estPurchaseKzt).toLocaleString('ru-RU')} ₸ по курсу {cnyRate}</span>
+            Прибыль:{' '}
+            <span
+              style={{
+                color: parseFloat(profitPreview) < 0 ? 'var(--danger)' : parseFloat(profitPreview) >= 50 ? 'var(--success)' : '#d97706',
+                fontSize: 16,
+              }}
+            >
+              {profitPreview}%
+            </span>
+            <span style={{ fontWeight: 500, fontSize: 12, marginLeft: 8, color: 'var(--text-muted)' }}>
+              · закуп для расчёта: {Math.round(effPurchasePreview).toLocaleString('ru-RU')} ₸
+              {(optionalNum(formData.cny_price) || 0) > 0 && num(formData.purchase_price) <= 0 && (
+                <span> (из ¥ × курс {cnyRate})</span>
+              )}
+            </span>
           </div>
         </form>
       </Modal>

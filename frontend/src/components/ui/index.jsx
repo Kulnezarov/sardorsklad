@@ -335,9 +335,10 @@ export const Card = ({ children, clickable = false, style, ...props }) => (
       borderRadius: 'var(--radius-lg)',
       border: '1px solid var(--border)',
       padding: '20px',
-      boxShadow: 'var(--shadow-md)',
+      boxShadow: 'none',
       transition: 'var(--transition)',
       cursor: clickable ? 'pointer' : 'default',
+      willChange: clickable ? 'transform' : undefined,
       ...style
     }}
     {...props}
@@ -489,8 +490,7 @@ export const Modal = ({
       style={{
         position: 'fixed',
         inset: 0,
-        background: 'rgba(0, 0, 0, 0.4)',
-        backdropFilter: 'blur(3px)',
+        background: '#6b7280',
         display: 'flex',
         alignItems: 'flex-start',
         justifyContent: 'center',
@@ -507,7 +507,8 @@ export const Modal = ({
           maxWidth: width,
           background: 'var(--surface)',
           borderRadius: 'var(--radius-lg)',
-          boxShadow: 'var(--shadow-2xl)',
+          border: '1px solid var(--border)',
+          boxShadow: 'none',
           overflow: 'hidden',
         }}
         onClick={(event) => event.stopPropagation()}

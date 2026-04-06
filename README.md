@@ -94,7 +94,7 @@ pip install -r requirements.txt
 
 # Copy and configure environment
 cp .env.example .env
-# Edit .env: DATABASE_URL, SECRET_KEY, GEMINI_API_KEY (опционально)
+# Edit .env: DATABASE_URL, SECRET_KEY
 
 # Start the server
 uvicorn main:app --host 0.0.0.0 --port 8000 --reload
@@ -122,7 +122,7 @@ The application will be available at `http://localhost:5173`
 ## Environment Variables
 
 ### Backend (.env)
-См. `backend/.env.example`: `DATABASE_URL`, `SECRET_KEY`, `ORIGINS`, `REDIS_URL`, `GEMINI_API_KEY`.
+См. `backend/.env.example`: `DATABASE_URL`, `SECRET_KEY`, `ORIGINS`, `REDIS_URL`.
 
 ### Frontend (.env)
 См. `frontend/.env.example`: `VITE_API_URL` (или `auto` для того же хоста + порт API).
@@ -362,7 +362,7 @@ APP_ORIGIN=https://app.yourdomain.com
 VITE_API_URL=https://app.yourdomain.com/api/v1
 ```
 
-В `backend/.env`: `SECRET_KEY`, `GEMINI_API_KEY` (опционально). `DATABASE_URL` на VPS задаётся в `docker-compose.vps.yml` (PostgreSQL в том же compose); при необходимости переопределите `POSTGRES_PASSWORD` в `.env` в корне или в переменных окружения хоста.
+В `backend/.env`: `SECRET_KEY`. `DATABASE_URL` на VPS задаётся в `docker-compose.vps.yml` (PostgreSQL в том же compose); при необходимости переопределите `POSTGRES_PASSWORD` в `.env` в корне или в переменных окружения хоста.
 
 #### 5) Start production stack
 
