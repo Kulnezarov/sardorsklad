@@ -9,7 +9,10 @@ export function ean13Checksum12(d12) {
   return String((10 - (sum % 10)) % 10);
 }
 
-/** Random 13-digit EAN-13 (valid checksum). */
+/**
+ * Случайный 13-значный EAN-13 (валидная контрольная цифра).
+ * Только цифры — без букв (автогенерация в каталоге / резерве).
+ */
 export function generateEAN13() {
   const arr = new Uint8Array(12);
   if (typeof crypto !== 'undefined' && crypto.getRandomValues) {

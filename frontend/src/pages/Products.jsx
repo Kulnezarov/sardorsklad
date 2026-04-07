@@ -52,6 +52,20 @@ function productMatchesScan(p, code) {
   return (pb && pb === c) || (ps && ps === c);
 }
 
+/**
+ * Ручной ввод штрих-кода: те же символы, что и у сканера (0–9, A–Z, a–z, -).
+ * Длина до 50 (как в БД). Автогенерация через generateEAN13 — только цифры.
+ */
+function sanitizeBarcodeFieldInput(raw) {
+  const s = String(raw ?? '').replace(/[\s\r\n\t\u0000]+/g, '');
+  let out = '';
+  for (let i = 0; i < s.length && out.length < 50; i += 1) {
+    const c = s[i];
+    if (/[0-9A-Za-z\-]/.test(c)) out += c;
+  }
+  return out;
+}
+
 const CAT_COLORS = [
   { bg: '#e8e8fc', color: '#4338ca' },
   { bg: '#d1fae5', color: '#047857' },
@@ -237,12 +251,14 @@ const Products = () => {
     }
   }, [location.state, location.pathname, navigate]);
 
-  // Barcode canvas
+  // Barcode canvas (CODE128: цифры и латиница; автогенерация EAN-13 — только цифры)
   useEffect(() => {
     if (!showForm || !formData.barcode || !barcodeCanvasRef.current) return;
+    const v = String(formData.barcode).trim();
+    if (!v) return;
     try {
-      JsBarcode(barcodeCanvasRef.current, String(formData.barcode).replace(/\D/g, '').slice(0, 13) || '0', { format: 'CODE128', displayValue: true, width: 2, height: 56, margin: 6 });
-    } catch { try { JsBarcode(barcodeCanvasRef.current, String(formData.barcode), { format: 'CODE128', displayValue: true, width: 2, height: 56, margin: 6 }); } catch (_) {} }
+      JsBarcode(barcodeCanvasRef.current, v, { format: 'CODE128', displayValue: true, width: 2, height: 56, margin: 6 });
+    } catch (_) {}
   }, [showForm, formData.barcode]);
 
   const {
@@ -1142,7 +1158,18 @@ const Products = () => {
           <div>
             <span style={{ display: 'block', marginBottom: 8, fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>Штрих-код</span>
             <div style={{ display: 'flex', gap: 8, alignItems: 'stretch', flexWrap: 'wrap' }}>
-              <input className="ios-input" style={{ flex: 1, minWidth: 160, border: formData.id ? '1px solid var(--primary)' : '1px solid var(--border)' }} value={formData.barcode || ''} readOnly={barcodeLocked} onChange={(e) => !barcodeLocked && setFormData({ ...formData, barcode: e.target.value.replace(/\D/g, '').slice(0, 13) })} inputMode="numeric" placeholder="Генерируется автоматически" />
+              <input
+                className="ios-input"
+                style={{ flex: 1, minWidth: 160, border: formData.id ? '1px solid var(--primary)' : '1px solid var(--border)' }}
+                value={formData.barcode || ''}
+                readOnly={barcodeLocked}
+                onChange={(e) => !barcodeLocked && setFormData({ ...formData, barcode: sanitizeBarcodeFieldInput(e.target.value) })}
+                inputMode="text"
+                autoCapitalize="characters"
+                autoCorrect="off"
+                spellCheck={false}
+                placeholder="Авто: 13 цифр EAN-13; вручную/сканер: цифры, латиница, дефис"
+              />
               <button type="button" className="topbar-theme-toggle" title={barcodeLocked ? 'Разблокировать' : 'Замкнуть'} onClick={() => setBarcodeLocked((v) => !v)} style={{ padding: '0 12px', display: 'inline-flex', alignItems: 'center', gap: 6 }}>{barcodeLocked ? <FiUnlock size={17} /> : <FiLock size={17} />}<span style={{ fontSize: 12, fontWeight: 600 }}>{barcodeLocked ? 'Разблок.' : 'Замкнуть'}</span></button>
               <button type="button" className="topbar-theme-toggle" title="Новый EAN-13" disabled={barcodeLocked} onClick={() => setFormData({ ...formData, barcode: generateEAN13() })} style={{ padding: '0 10px', opacity: barcodeLocked ? 0.4 : 1 }}><FiRefreshCw size={17} /></button>
               <button type="button" className="topbar-theme-toggle" title="Показать QR" onClick={() => setShowQrPanel((s) => !s)} style={{ padding: '0 10px', background: showQrPanel ? 'var(--primary-light)' : undefined }}><FiMaximize2 size={17} /></button>
