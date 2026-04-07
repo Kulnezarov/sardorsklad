@@ -2217,7 +2217,7 @@ textarea {
 
   .products-table-scroll {
     max-height: min(52vh, 420px);
-    margin-bottom: 4px;
+    margin-bottom: calc(72px + env(safe-area-inset-bottom, 0px) + 8px);
   }
 }
 
@@ -3043,11 +3043,20 @@ textarea {
   overflow: hidden;
 }
 
+/* Запас под фиксированный catalog-dock, чтобы таблица чека и блоки не уезжали под бар */
+.page-ios.sales-page.sales-page-with-dock {
+  padding-bottom: calc(76px + env(safe-area-inset-bottom, 0px));
+  box-sizing: border-box;
+}
+
 @media (max-width: 768px) {
   .page-ios.sales-page {
     height: auto;
     overflow: visible;
-    padding-bottom: 100px;
+  }
+
+  .page-ios.sales-page.sales-page-with-dock {
+    padding-bottom: calc(92px + env(safe-area-inset-bottom, 0px));
   }
 }
 

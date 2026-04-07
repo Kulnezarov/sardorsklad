@@ -49,6 +49,8 @@ const Sales = () => {
   const [showSuccess, setShowSuccess] = useState(false);
   const [successAmount, setSuccessAmount] = useState(0);
   const [editingPrice, setEditingPrice] = useState(null); // cart item index
+  /** Строка во время редактирования цены (не num() на каждый символ — иначе нельзя набрать число) */
+  const [priceEditText, setPriceEditText] = useState('');
 
   const searchRef = useRef(null);
   const barcodeRef = useRef(null);
@@ -126,8 +128,17 @@ const Sales = () => {
     });
   };
 
-  const updatePrice = (idx, price) => {
-    setCart((prev) => { const updated = [...prev]; updated[idx] = { ...updated[idx], unitPrice: num(price) }; return updated; });
+  const commitPriceEdit = (idx) => {
+    const v = num(priceEditText);
+    if (v < 0) return;
+    setCart((prev) => {
+      if (!prev[idx]) return prev;
+      const updated = [...prev];
+      updated[idx] = { ...updated[idx], unitPrice: v };
+      return updated;
+    });
+    setEditingPrice(null);
+    setPriceEditText('');
   };
 
   const total = useMemo(() => cart.reduce((s, i) => s + i.unitPrice * i.quantity, 0), [cart]);
@@ -198,7 +209,7 @@ const Sales = () => {
 
   /* ─── RENDER ─── */
   return (
-    <div className="page-ios sales-page" style={{ position: 'relative' }}>
+    <div className="page-ios sales-page sales-page-with-dock" style={{ position: 'relative' }}>
 
       {/* ── Scan confirmation modal ── */}
       {scannedResult && (
@@ -398,16 +409,29 @@ const Sales = () => {
                         {editingPrice === idx ? (
                           <input
                             autoFocus
-                            type="number"
-                            min="0"
-                            value={item.unitPrice}
-                            onChange={(e) => updatePrice(idx, e.target.value)}
-                            onBlur={() => setEditingPrice(null)}
-                            onKeyDown={(e) => e.key === 'Enter' && setEditingPrice(null)}
-                            style={{ width: 80, padding: '4px 8px', borderRadius: 8, border: '1px solid var(--primary)', background: 'var(--surface)', fontSize: 13, fontWeight: 700, textAlign: 'right', color: 'var(--primary)' }}
+                            type="text"
+                            inputMode="decimal"
+                            autoComplete="off"
+                            value={priceEditText}
+                            onChange={(e) => setPriceEditText(e.target.value.replace(',', '.'))}
+                            onBlur={() => commitPriceEdit(idx)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') {
+                                e.preventDefault();
+                                commitPriceEdit(idx);
+                              }
+                            }}
+                            style={{ width: 88, padding: '6px 8px', borderRadius: 8, border: '1px solid var(--primary)', background: 'var(--surface)', fontSize: 13, fontWeight: 700, textAlign: 'right', color: 'var(--primary)', position: 'relative', zIndex: 50 }}
                           />
                         ) : (
-                          <button type="button" onClick={() => setEditingPrice(idx)} style={{ display: 'flex', alignItems: 'center', gap: 4, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)', fontWeight: 600, fontSize: 12, padding: '4px 6px', borderRadius: 8 }}>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setPriceEditText(String(item.unitPrice ?? ''));
+                              setEditingPrice(idx);
+                            }}
+                            style={{ display: 'flex', alignItems: 'center', gap: 4, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)', fontWeight: 600, fontSize: 12, padding: '4px 6px', borderRadius: 8 }}
+                          >
                             <FiEdit2 size={11} />
                             <span>{formatMoney(item.unitPrice)} ₸</span>
                           </button>
