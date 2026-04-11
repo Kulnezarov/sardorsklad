@@ -34,6 +34,7 @@ async def lifespan(app: FastAPI):
     Startup:
     - Create database tables
     - Initialize default settings
+    - Telegram: ежедневный отчёт (если заданы TELEGRAM_BOT_TOKEN и TELEGRAM_CHAT_ID)
 
     Shutdown:
     - Close database connections
@@ -41,6 +42,7 @@ async def lifespan(app: FastAPI):
     """
     # STARTUP
     logger.info("Starting SkladPro API...")
+    telegram_sched = None
 
     try:
         # Сначала миграции (в т.ч. переименование legacy sales), затем create_all для новых таблиц
@@ -59,6 +61,13 @@ async def lifespan(app: FastAPI):
         db.close()
 
         bootstrap_admin.ensure_default_admin()
+
+        try:
+            from services.telegram_daily import setup_telegram_scheduler
+
+            telegram_sched = setup_telegram_scheduler()
+        except Exception as te:
+            logger.warning("Telegram scheduler не запущен: %s", te)
 
         logger.info("✓ SkladPro API startup complete")
 
@@ -81,6 +90,13 @@ async def lifespan(app: FastAPI):
 
     # SHUTDOWN
     logger.info("Shutting down SkladPro API...")
+
+    try:
+        from services.telegram_daily import shutdown_telegram_scheduler
+
+        shutdown_telegram_scheduler(telegram_sched)
+    except Exception as e:
+        logger.warning("Telegram scheduler shutdown: %s", e)
 
     try:
         database.engine.dispose()
