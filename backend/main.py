@@ -68,6 +68,12 @@ async def lifespan(app: FastAPI):
             telegram_sched = setup_telegram_scheduler()
         except Exception as te:
             logger.warning("Telegram scheduler не запущен: %s", te)
+        try:
+            from services.telegram_commands import setup_telegram_command_poller
+
+            setup_telegram_command_poller()
+        except Exception as te:
+            logger.warning("Telegram команды (polling) не запущены: %s", te)
 
         logger.info("✓ SkladPro API startup complete")
 
@@ -92,8 +98,10 @@ async def lifespan(app: FastAPI):
     logger.info("Shutting down SkladPro API...")
 
     try:
+        from services.telegram_commands import shutdown_telegram_command_poller
         from services.telegram_daily import shutdown_telegram_scheduler
 
+        shutdown_telegram_command_poller()
         shutdown_telegram_scheduler(telegram_sched)
     except Exception as e:
         logger.warning("Telegram scheduler shutdown: %s", e)

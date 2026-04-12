@@ -105,6 +105,32 @@ def build_daily_report_text(db: Session, tz_name: str) -> str:
     return text
 
 
+def post_telegram_html_to_chat(chat_id: str | int, text: str) -> bool:
+    """Одно сообщение в указанный чат (для ответов на команды бота)."""
+    token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+    if not token:
+        return False
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    try:
+        r = httpx.post(
+            url,
+            json={
+                "chat_id": chat_id,
+                "text": text,
+                "parse_mode": "HTML",
+                "disable_web_page_preview": True,
+            },
+            timeout=45.0,
+        )
+        if r.status_code != 200:
+            logger.error("Telegram API chat=%s %s: %s", chat_id, r.status_code, r.text[:500])
+            return False
+        return True
+    except Exception as e:
+        logger.exception("Telegram send failed: %s", e)
+        return False
+
+
 def send_telegram_html(text: str) -> bool:
     token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
     raw_chats = os.getenv("TELEGRAM_CHAT_ID", "").strip()
@@ -114,27 +140,11 @@ def send_telegram_html(text: str) -> bool:
     chat_ids = [c.strip() for c in raw_chats.split(",") if c.strip()]
     if not chat_ids:
         return False
-    url = f"https://api.telegram.org/bot{token}/sendMessage"
     ok_all = True
-    try:
-        for chat_id in chat_ids:
-            r = httpx.post(
-                url,
-                json={
-                    "chat_id": chat_id,
-                    "text": text,
-                    "parse_mode": "HTML",
-                    "disable_web_page_preview": True,
-                },
-                timeout=45.0,
-            )
-            if r.status_code != 200:
-                logger.error("Telegram API chat=%s %s: %s", chat_id, r.status_code, r.text[:500])
-                ok_all = False
-        return ok_all
-    except Exception as e:
-        logger.exception("Telegram send failed: %s", e)
-        return False
+    for chat_id in chat_ids:
+        if not post_telegram_html_to_chat(chat_id, text):
+            ok_all = False
+    return ok_all
 
 
 def run_daily_report_job():

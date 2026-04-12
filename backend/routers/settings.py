@@ -1,6 +1,8 @@
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 
+import os
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import desc, func
 from sqlalchemy.orm import Session, joinedload
@@ -8,6 +10,7 @@ from sqlalchemy.orm import Session, joinedload
 import models
 import schemas
 from database import get_db
+from dependencies import get_current_user
 
 router = APIRouter(prefix="/api/v1/settings", tags=["settings"])
 
@@ -235,6 +238,33 @@ def get_cny_rate(db: Session = Depends(get_db)):
         "currency_to": "KZT",
         "updated_at": settings.updated_at.isoformat() if settings.updated_at else None,
     }
+
+
+@router.post("/telegram/test")
+def telegram_send_test(_user: models.User = Depends(get_current_user)):
+    """
+    Сразу отправить тест в Telegram (проверка TELEGRAM_BOT_TOKEN и TELEGRAM_CHAT_ID).
+    Авторизация: Bearer JWT как у остального API.
+    """
+    if not os.getenv("TELEGRAM_BOT_TOKEN", "").strip():
+        raise HTTPException(
+            status_code=400,
+            detail="TELEGRAM_BOT_TOKEN не задан в окружении контейнера backend (.env)",
+        )
+    if not os.getenv("TELEGRAM_CHAT_ID", "").strip():
+        raise HTTPException(status_code=400, detail="TELEGRAM_CHAT_ID не задан")
+
+    from services.telegram_daily import send_telegram_html
+
+    ok = send_telegram_html(
+        "<b>SkladPro</b>\n\n✅ Тест: бот и chat_id настроены, сообщения доходят."
+    )
+    if not ok:
+        raise HTTPException(
+            status_code=502,
+            detail="Telegram API вернул ошибку — проверьте токен, chat_id и логи: docker logs skladpro-backend",
+        )
+    return {"ok": True, "message": "Тестовое сообщение отправлено в Telegram"}
 
 
 @router.put("/exchange/cny-rate")
