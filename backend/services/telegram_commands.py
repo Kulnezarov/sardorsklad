@@ -1,11 +1,10 @@
 """
 Команды бота в Telegram (long polling): склад, категории, поиск, отчёт за сегодня.
-Работает без HTTPS webhook. Отвечает только чатам из TELEGRAM_CHAT_ID.
+Если chat_id не совпал с TELEGRAM_CHAT_ID — на /help и др. команды приходит подсказка с вашим id.
 """
 from __future__ import annotations
 
 import html
-import logging
 import os
 import threading
 import time
@@ -16,9 +15,10 @@ from sqlalchemy import func, or_
 
 import models
 from database import SessionLocal
+from config.logger import setup_logger
 from services.telegram_daily import build_daily_report_text, post_telegram_html_to_chat
 
-logger = logging.getLogger(__name__)
+logger = setup_logger("skladpro")
 
 _poller_thread: Optional[threading.Thread] = None
 _stop = threading.Event()
@@ -28,7 +28,7 @@ def _allowed_chat_ids() -> Set[int]:
     out: Set[int] = set()
     raw = os.getenv("TELEGRAM_CHAT_ID", "").strip()
     for part in raw.split(","):
-        part = part.strip()
+        part = part.strip().strip("\ufeff")
         if not part:
             continue
         try:
@@ -57,8 +57,24 @@ def _split_html_chunks(text: str, limit: int = 3800) -> list[str]:
 
 def _reply(chat_id: int, text: str) -> None:
     for chunk in _split_html_chunks(text):
-        post_telegram_html_to_chat(chat_id, chunk)
+        if not post_telegram_html_to_chat(chat_id, chunk):
+            logger.error("Telegram: sendMessage не удался (chat_id=%s)", chat_id)
         time.sleep(0.05)
+
+
+def _reply_wrong_chat_onboarding(chat_id: int, allowed: Set[int]) -> None:
+    """Подсказка, если TELEGRAM_CHAT_ID не совпал или список пуст."""
+    listed = ", ".join(str(x) for x in sorted(allowed)) if allowed else "(в .env пусто — задайте TELEGRAM_CHAT_ID)"
+    text = (
+        "<b>SkladPro</b>\n\n"
+        f"Ваш <code>chat_id</code>: <code>{chat_id}</code>\n\n"
+        "Вставьте <b>именно это число</b> в <code>TELEGRAM_CHAT_ID</code> в файле "
+        "<code>backend/.env</code> на сервере (без пробелов и кавычек). "
+        "Несколько чатов — через запятую.\n\n"
+        f"Сейчас в доступе числа: {html.escape(listed)}\n\n"
+        "Затем: <code>docker compose … up -d backend</code> (перезапуск backend)."
+    )
+    _reply(chat_id, text)
 
 
 def _cmd_help() -> str:
@@ -232,8 +248,7 @@ def _dispatch(chat_id: int, text: str) -> None:
 
 def _poll_loop():
     token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
-    allowed = _allowed_chat_ids()
-    if not token or not allowed:
+    if not token:
         return
 
     base = f"https://api.telegram.org/bot{token}"
@@ -248,15 +263,23 @@ def _poll_loop():
     except Exception as e:
         logger.warning("Telegram: не удалось сбросить очередь getUpdates: %s", e)
 
-    logger.info("Telegram: long polling команд запущен (разрешённые chat_id: %s)", len(allowed))
+    logger.info("Telegram: long polling команд запущен")
 
     while not _stop.is_set():
+        allowed = _allowed_chat_ids()
         try:
             r = httpx.get(
                 f"{base}/getUpdates",
                 params={"offset": offset, "timeout": 30},
                 timeout=40.0,
             )
+            if r.status_code == 409:
+                logger.error(
+                    "Telegram getUpdates 409: этот бот уже опрашивается в другом месте "
+                    "(второй сервер, скрипт или контейнер). Остановите дубликат — иначе ответов не будет."
+                )
+                time.sleep(10)
+                continue
             if r.status_code != 200:
                 logger.warning("Telegram getUpdates: %s %s", r.status_code, r.text[:200])
                 time.sleep(3)
@@ -273,13 +296,19 @@ def _poll_loop():
                 cid = chat.get("id")
                 if cid is None:
                     continue
-                if int(cid) not in allowed:
-                    logger.debug("Telegram: игнор чата %s (нет в TELEGRAM_CHAT_ID)", cid)
-                    continue
                 text = msg.get("text") or ""
                 if not text:
                     continue
-                _dispatch(int(cid), text)
+                cid_int = int(cid)
+                if cid_int not in allowed:
+                    if text.strip().startswith("/"):
+                        logger.info(
+                            "Telegram: chat_id=%s не в TELEGRAM_CHAT_ID — отправляю подсказку",
+                            cid_int,
+                        )
+                        _reply_wrong_chat_onboarding(cid_int, allowed)
+                    continue
+                _dispatch(cid_int, text)
         except Exception as e:
             if not _stop.is_set():
                 logger.exception("Telegram poll error: %s", e)
@@ -291,10 +320,28 @@ def setup_telegram_command_poller():
     if os.getenv("TELEGRAM_COMMANDS", "true").lower() not in ("1", "true", "yes"):
         logger.info("Telegram: команды выключены (TELEGRAM_COMMANDS=false)")
         return
-    if not os.getenv("TELEGRAM_BOT_TOKEN", "").strip():
+    token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+    if not token:
         return
-    if not _allowed_chat_ids():
+
+    try:
+        r = httpx.get(f"https://api.telegram.org/bot{token}/getMe", timeout=15.0)
+        j = r.json()
+        if r.status_code != 200 or not j.get("ok"):
+            logger.error("Telegram: TELEGRAM_BOT_TOKEN неверен или сеть: %s", r.text[:300])
+            return
+        un = j.get("result", {}).get("username") or "?"
+        logger.info("Telegram: токен ок, бот @%s", un)
+    except Exception as e:
+        logger.error("Telegram: не удалось вызвать getMe: %s", e)
         return
+
+    allowed = _allowed_chat_ids()
+    if not allowed:
+        logger.warning(
+            "TELEGRAM_CHAT_ID пуст — на любую команду /… бот ответит подсказкой с вашим chat_id; "
+            "добавьте id в .env и перезапустите backend."
+        )
 
     if _poller_thread is not None and _poller_thread.is_alive():
         return

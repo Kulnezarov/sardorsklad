@@ -6,7 +6,6 @@
 from __future__ import annotations
 
 import html
-import logging
 import os
 from datetime import datetime, time, timedelta
 from decimal import Decimal
@@ -16,9 +15,11 @@ import httpx
 from sqlalchemy.orm import Session, joinedload
 
 import models
+from config.logger import setup_logger
 from database import SessionLocal
 
-logger = logging.getLogger(__name__)
+# Тот же логгер, что и в main.py — иначе сообщения не видны в docker logs
+logger = setup_logger("skladpro")
 
 _scheduler = None
 
