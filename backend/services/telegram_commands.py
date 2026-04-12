@@ -1,6 +1,7 @@
 """
-Команды бота в Telegram (long polling): склад, категории, поиск, отчёт за сегодня.
-Если chat_id не совпал с TELEGRAM_CHAT_ID — на /help и др. команды приходит подсказка с вашим id.
+Команды бота в Telegram (long polling): кнопки, склад (только просмотр),
+«нужно заказать» (wish_items pending), заказы в пути.
+Изменение товаров на складе через бота недоступно.
 """
 from __future__ import annotations
 
@@ -8,20 +9,46 @@ import html
 import os
 import threading
 import time
-from typing import Optional, Set
+from typing import Callable, Dict, Optional, Set
 
 import httpx
-from sqlalchemy import func, or_
+from sqlalchemy import desc, func, or_
 
 import models
-from database import SessionLocal
 from config.logger import setup_logger
+from database import SessionLocal
 from services.telegram_daily import build_daily_report_text, post_telegram_html_to_chat
 
 logger = setup_logger("skladpro")
 
 _poller_thread: Optional[threading.Thread] = None
 _stop = threading.Event()
+
+_state_lock = threading.Lock()
+_pending_wish_name: Set[int] = set()
+_pending_stock_search: Set[int] = set()
+
+# ── Кнопки ReplyKeyboard (точное совпадение текста) ─────────────────────────
+BTN_STOCK_CATS = "📦 Категории склада"
+BTN_STOCK_SEARCH = "🔍 Поиск по складу"
+BTN_WISH_LIST = "📋 Нужно заказать"
+BTN_WISH_ADD = "➕ Добавить в список"
+BTN_REPORT = "📊 Отчёт за сегодня"
+BTN_IN_TRANSIT = "🚚 Заказано / в пути"
+BTN_HELP = "ℹ️ Помощь"
+
+
+def _main_menu_markup() -> dict:
+    return {
+        "keyboard": [
+            [{"text": BTN_STOCK_CATS}, {"text": BTN_STOCK_SEARCH}],
+            [{"text": BTN_WISH_LIST}, {"text": BTN_WISH_ADD}],
+            [{"text": BTN_REPORT}, {"text": BTN_IN_TRANSIT}],
+            [{"text": BTN_HELP}],
+        ],
+        "resize_keyboard": True,
+        "input_field_placeholder": "Кнопки меню или команды /help",
+    }
 
 
 def _allowed_chat_ids() -> Set[int]:
@@ -55,15 +82,22 @@ def _split_html_chunks(text: str, limit: int = 3800) -> list[str]:
     return chunks
 
 
-def _reply(chat_id: int, text: str) -> None:
-    for chunk in _split_html_chunks(text):
-        if not post_telegram_html_to_chat(chat_id, chunk):
+def _reply(chat_id: int, text: str, reply_markup: Optional[dict] = None) -> None:
+    chunks = _split_html_chunks(text)
+    for i, chunk in enumerate(chunks):
+        mk = reply_markup if i == len(chunks) - 1 else None
+        if not post_telegram_html_to_chat(chat_id, chunk, reply_markup=mk):
             logger.error("Telegram: sendMessage не удался (chat_id=%s)", chat_id)
         time.sleep(0.05)
 
 
+def _clear_states(chat_id: int) -> None:
+    with _state_lock:
+        _pending_wish_name.discard(chat_id)
+        _pending_stock_search.discard(chat_id)
+
+
 def _reply_wrong_chat_onboarding(chat_id: int, allowed: Set[int]) -> None:
-    """Подсказка, если TELEGRAM_CHAT_ID не совпал или список пуст."""
     listed = ", ".join(str(x) for x in sorted(allowed)) if allowed else "(в .env пусто — задайте TELEGRAM_CHAT_ID)"
     text = (
         "<b>SkladPro</b>\n\n"
@@ -77,15 +111,35 @@ def _reply_wrong_chat_onboarding(chat_id: int, allowed: Set[int]) -> None:
     _reply(chat_id, text)
 
 
+def _welcome_text() -> str:
+    return (
+        "<b>SkladPro</b>\n\n"
+        "Я помогаю смотреть склад и списки заказов.\n\n"
+        "• <b>Склад</b> — только просмотр: остатки, закуп ₸, поиск. "
+        "<b>Менять товары здесь нельзя</b> (только через сайт).\n"
+        "• <b>Нужно заказать</b> — позиции со статусом «ещё не заказано».\n"
+        "• <b>Добавить в список</b> — новая строка в «нужно заказать».\n"
+        "• <b>Заказано / в пути</b> — заказы у поставщика.\n\n"
+        "Выберите кнопку ниже 👇"
+    )
+
+
 def _cmd_help() -> str:
     return (
-        "<b>SkladPro — команды</b>\n\n"
-        "/отчет — продажи и прибыль за сегодня (по часовому поясу из настроек)\n"
-        "/категории — список категорий и остатки\n"
-        "/кат название — товары в категории (часть названия)\n"
-        "/поиск текст — поиск по имени или артикулу (SKU)\n"
-        "/help — это сообщение"
+        "<b>Команды</b> (дублируют кнопки)\n\n"
+        "/отчет — продажи за сегодня\n"
+        "/категории — категории склада\n"
+        "/кат слово — товары категории (закуп + остаток)\n"
+        "/поиск текст — по складу\n"
+        "/заказать название — в список «нужно заказать»\n"
+        "/отмена — сбросить ввод\n"
+        "/start — меню с кнопками"
     )
+
+
+def _fmt_kzt(v) -> str:
+    n = float(v or 0)
+    return f"{n:,.0f}".replace(",", " ")
 
 
 def _handle_categories(db) -> str:
@@ -100,19 +154,27 @@ def _handle_categories(db) -> str:
         .order_by(func.count(models.Product.id).desc())
         .all()
     )
-    lines = ["<b>Категории на складе</b>\n"]
+    lines = ["<b>Категории на складе</b> <i>(только просмотр)</i>\n"]
     if not rows:
         return "<i>Нет активных товаров.</i>"
     for cat, cnt, qty in rows:
         label = html.escape(str(cat or "Без категории"))
         lines.append(f"• {label} — <b>{int(qty or 0)}</b> шт, позиций: {cnt}")
+    lines.append("\n<i>Для списка товаров с закупом:</i> <code>/кат название</code>")
     return "\n".join(lines)
 
 
 def _sanitize_like(s: str, max_len: int = 80) -> str:
-    """Убираем символы шаблона LIKE."""
     s = (s or "").strip()[:max_len]
     return "".join(c for c in s if c not in "%_")
+
+
+def _line_product_readonly(p: models.Product) -> str:
+    nm = html.escape((p.name or "—")[:75])
+    sku = html.escape(str(p.sku or "—"))
+    q = int(p.quantity or 0)
+    buy = _fmt_kzt(p.purchase_price)
+    return f"• {nm}\n  <b>{q}</b> шт · закуп <b>{buy}</b> ₸ · SKU <code>{sku}</code>"
 
 
 def _handle_cat(db, arg: str) -> str:
@@ -146,23 +208,21 @@ def _handle_cat(db, arg: str) -> str:
             models.Product.category == cat,
         )
         .order_by(models.Product.name.asc())
-        .limit(45)
+        .limit(40)
         .all()
     )
-    lines = [f"<b>{html.escape(cat)}</b>\n"]
+    lines = [f"<b>{html.escape(cat)}</b> <i>(просмотр)</i>\n"]
     for p in prods:
-        nm = html.escape((p.name or "—")[:80])
-        sku = html.escape(str(p.sku or ""))
-        lines.append(f"• {nm} — <b>{int(p.quantity or 0)}</b> шт, SKU: <code>{sku}</code>")
-    if len(prods) >= 45:
-        lines.append("\n<i>Показаны первые 45 позиций.</i>")
+        lines.append(_line_product_readonly(p))
+    if len(prods) >= 40:
+        lines.append("\n<i>Показаны первые 40 позиций.</i>")
     return "\n".join(lines)
 
 
 def _handle_search(db, arg: str) -> str:
     arg = _sanitize_like(arg, max_len=120)
     if len(arg) < 2:
-        return "Минимум 2 символа: <code>/поиск 123</code>"
+        return "Минимум 2 символа для поиска."
 
     like = f"%{arg}%"
     prods = (
@@ -172,19 +232,78 @@ def _handle_search(db, arg: str) -> str:
             or_(models.Product.name.ilike(like), models.Product.sku.ilike(like)),
         )
         .order_by(models.Product.quantity.desc())
-        .limit(25)
+        .limit(20)
         .all()
     )
     if not prods:
         return f"<i>По запросу «{html.escape(arg)}» ничего не найдено.</i>"
-    lines = [f"<b>Поиск:</b> {html.escape(arg)}\n"]
+    lines = [f"<b>Поиск склада:</b> {html.escape(arg)} <i>(просмотр)</i>\n"]
     for p in prods:
-        nm = html.escape((p.name or "—")[:70])
-        cat = html.escape(str(p.category or "—"))
-        lines.append(
-            f"• {nm}\n  <b>{int(p.quantity or 0)}</b> шт · {cat} · SKU <code>{html.escape(str(p.sku or ''))}</code>"
-        )
+        lines.append(_line_product_readonly(p))
     return "\n".join(lines)
+
+
+def _handle_wish_pending(db) -> str:
+    items = (
+        db.query(models.WishItem)
+        .filter(models.WishItem.status == "pending")
+        .order_by(desc(models.WishItem.created_at))
+        .limit(50)
+        .all()
+    )
+    if not items:
+        return "<b>Нужно заказать</b>\n\n<i>Список пуст. Кнопка «➕ Добавить в список» или /заказать название</i>"
+    lines = ["<b>Нужно заказать</b> <i>(ещё не переведено в «заказано»)</i>\n"]
+    for it in items:
+        nm = html.escape((it.name or "—")[:120])
+        br = html.escape(str(it.brand or ""))
+        extra = f" · {br}" if br else ""
+        lines.append(f"• #{it.id} {nm}{extra}")
+    if len(items) >= 50:
+        lines.append("\n<i>Показаны последние 50.</i>")
+    return "\n".join(lines)
+
+
+def _handle_in_transit(db) -> str:
+    orders = (
+        db.query(models.PurchaseOrder)
+        .filter(models.PurchaseOrder.status.in_(("in_transit", "partial")))
+        .order_by(desc(models.PurchaseOrder.ordered_at))
+        .limit(35)
+        .all()
+    )
+    if not orders:
+        return "<b>Заказано / в пути</b>\n\n<i>Нет активных заказов со статусом в пути.</i>"
+    lines = ["<b>Заказано / в пути</b>\n"]
+    for o in orders:
+        nm = html.escape((o.name or "—")[:70])
+        st = html.escape(str(o.status or ""))
+        qo = int(o.quantity_ordered or 0)
+        qr = int(o.quantity_received or 0)
+        lines.append(f"• #{o.id} {nm}\n  {st} · заказано <b>{qo}</b> · получено <b>{qr}</b>")
+    return "\n".join(lines)
+
+
+def _commit_wish_item(chat_id: int, name: str) -> None:
+    with _state_lock:
+        _pending_wish_name.discard(chat_id)
+    name = name.strip()
+    if len(name) < 2:
+        with _state_lock:
+            _pending_wish_name.add(chat_id)
+        _reply(chat_id, "Слишком коротко. Введите название или /отмена", _main_menu_markup())
+        return
+    db = SessionLocal()
+    try:
+        w = models.WishItem(name=name[:255], status="pending")
+        db.add(w)
+        db.commit()
+        _reply(chat_id, f"В списке «нужно заказать»: <b>{html.escape(name[:200])}</b>", _main_menu_markup())
+    except Exception:
+        logger.exception("Telegram: wish item create")
+        _reply(chat_id, "<b>Ошибка</b> при записи в базу.", _main_menu_markup())
+    finally:
+        db.close()
 
 
 def _parse_command(text: str) -> tuple[str, str]:
@@ -197,13 +316,17 @@ def _parse_command(text: str) -> tuple[str, str]:
     return cmd, arg
 
 
-def _dispatch(chat_id: int, text: str) -> None:
+def _dispatch_command(chat_id: int, text: str) -> None:
     cmd, arg = _parse_command(text)
     if not cmd:
         return
 
+    if cmd in ("/отмена", "/cancel"):
+        _clear_states(chat_id)
+        _reply(chat_id, "Ок, отменено.", _main_menu_markup())
+        return
+
     aliases = {
-        "/start": "/help",
         "/help": "/help",
         "/?": "/help",
         "/отчет": "/report",
@@ -216,34 +339,175 @@ def _dispatch(chat_id: int, text: str) -> None:
         "/cat": "/cat",
         "/поиск": "/search",
         "/search": "/search",
+        "/заказать": "/wishadd",
+        "/wish": "/wishadd",
     }
     cmd = aliases.get(cmd, cmd)
 
     db = SessionLocal()
     try:
-        if cmd in ("/help",):
-            _reply(chat_id, _cmd_help())
+        if cmd in ("/start",):
+            _clear_states(chat_id)
+            _reply(chat_id, _welcome_text(), _main_menu_markup())
             return
+        if cmd in ("/help",):
+            _clear_states(chat_id)
+            _reply(chat_id, _cmd_help(), _main_menu_markup())
+            return
+        _clear_states(chat_id)
         if cmd in ("/report",):
             tz_name = os.getenv("TELEGRAM_REPORT_TZ", "Asia/Almaty")
-            body = build_daily_report_text(db, tz_name)
-            _reply(chat_id, body)
+            _reply(chat_id, build_daily_report_text(db, tz_name), _main_menu_markup())
             return
         if cmd in ("/categories",):
-            _reply(chat_id, _handle_categories(db))
+            _reply(chat_id, _handle_categories(db), _main_menu_markup())
             return
         if cmd in ("/cat",):
-            _reply(chat_id, _handle_cat(db, arg))
+            _reply(chat_id, _handle_cat(db, arg), _main_menu_markup())
             return
         if cmd in ("/search",):
-            _reply(chat_id, _handle_search(db, arg))
+            if len(arg) < 2:
+                _reply(chat_id, "Использование: <code>/поиск текст</code>", _main_menu_markup())
+                return
+            _reply(chat_id, _handle_search(db, arg), _main_menu_markup())
             return
-        _reply(chat_id, "Неизвестная команда. /help")
+        if cmd in ("/wishadd",):
+            if len(arg.strip()) < 2:
+                _reply(chat_id, "Использование: <code>/заказать Название детали</code>", _main_menu_markup())
+                return
+            w = models.WishItem(name=arg.strip()[:255], status="pending")
+            db.add(w)
+            db.commit()
+            _reply(
+                chat_id,
+                f"В списке «нужно заказать»: <b>{html.escape(arg.strip()[:200])}</b>",
+                _main_menu_markup(),
+            )
+            return
+        _reply(chat_id, "Неизвестная команда. /help", _main_menu_markup())
     except Exception:
         logger.exception("Telegram command dispatch error")
-        _reply(chat_id, "<b>Ошибка</b> при обработке команды. Попробуйте позже.")
+        _reply(chat_id, "<b>Ошибка</b> при обработке. Попробуйте позже.", _main_menu_markup())
     finally:
         db.close()
+
+
+def _act_categories(chat_id: int) -> None:
+    _clear_states(chat_id)
+    db = SessionLocal()
+    try:
+        _reply(chat_id, _handle_categories(db), _main_menu_markup())
+    finally:
+        db.close()
+
+
+def _act_stock_search_prompt(chat_id: int) -> None:
+    _clear_states(chat_id)
+    with _state_lock:
+        _pending_stock_search.add(chat_id)
+    _reply(
+        chat_id,
+        "Введите запрос для поиска по <b>названию</b> или <b>SKU</b>.\n/отмена — отменить.",
+        _main_menu_markup(),
+    )
+
+
+def _act_wish_list(chat_id: int) -> None:
+    _clear_states(chat_id)
+    db = SessionLocal()
+    try:
+        _reply(chat_id, _handle_wish_pending(db), _main_menu_markup())
+    finally:
+        db.close()
+
+
+def _act_wish_add_prompt(chat_id: int) -> None:
+    _clear_states(chat_id)
+    with _state_lock:
+        _pending_wish_name.add(chat_id)
+    _reply(
+        chat_id,
+        "Введите <b>название детали</b> для списка «нужно заказать».\n/отмена — отменить.",
+        _main_menu_markup(),
+    )
+
+
+def _act_report(chat_id: int) -> None:
+    _clear_states(chat_id)
+    db = SessionLocal()
+    try:
+        tz_name = os.getenv("TELEGRAM_REPORT_TZ", "Asia/Almaty")
+        _reply(chat_id, build_daily_report_text(db, tz_name), _main_menu_markup())
+    finally:
+        db.close()
+
+
+def _act_in_transit(chat_id: int) -> None:
+    _clear_states(chat_id)
+    db = SessionLocal()
+    try:
+        _reply(chat_id, _handle_in_transit(db), _main_menu_markup())
+    finally:
+        db.close()
+
+
+def _act_help(chat_id: int) -> None:
+    _clear_states(chat_id)
+    _reply(chat_id, _cmd_help(), _main_menu_markup())
+
+
+_BUTTON_ACTIONS: Dict[str, Callable[[int], None]] = {
+    BTN_STOCK_CATS: _act_categories,
+    BTN_STOCK_SEARCH: _act_stock_search_prompt,
+    BTN_WISH_LIST: _act_wish_list,
+    BTN_WISH_ADD: _act_wish_add_prompt,
+    BTN_REPORT: _act_report,
+    BTN_IN_TRANSIT: _act_in_transit,
+    BTN_HELP: _act_help,
+}
+
+
+def _route_message(chat_id: int, text: str) -> None:
+    raw = (text or "").strip()
+    low = raw.lower()
+
+    if low in ("/отмена", "/cancel", "отмена"):
+        _clear_states(chat_id)
+        _reply(chat_id, "Ок, отменено.", _main_menu_markup())
+        return
+
+    if raw.startswith("/"):
+        _dispatch_command(chat_id, raw)
+        return
+
+    # Кнопки меню — раньше ожидания ввода текста (иначе «Категории» уйдёт в поиск)
+    if raw in _BUTTON_ACTIONS:
+        _BUTTON_ACTIONS[raw](chat_id)
+        return
+
+    with _state_lock:
+        in_wish = chat_id in _pending_wish_name
+        in_search = chat_id in _pending_stock_search
+
+    if in_wish:
+        _commit_wish_item(chat_id, raw)
+        return
+
+    if in_search:
+        with _state_lock:
+            _pending_stock_search.discard(chat_id)
+        db = SessionLocal()
+        try:
+            _reply(chat_id, _handle_search(db, raw), _main_menu_markup())
+        finally:
+            db.close()
+        return
+
+    _reply(
+        chat_id,
+        "Нажмите кнопку меню или отправьте команду, например <code>/help</code>",
+        _main_menu_markup(),
+    )
 
 
 def _poll_loop():
@@ -252,7 +516,6 @@ def _poll_loop():
         return
 
     base = f"https://api.telegram.org/bot{token}"
-    # Пропускаем накопившиеся апдейты при старте (не обрабатываем старую очередь)
     offset = 0
     try:
         r0 = httpx.get(f"{base}/getUpdates", params={"timeout": 0}, timeout=15.0)
@@ -308,7 +571,7 @@ def _poll_loop():
                         )
                         _reply_wrong_chat_onboarding(cid_int, allowed)
                     continue
-                _dispatch(cid_int, text)
+                _route_message(cid_int, text)
         except Exception as e:
             if not _stop.is_set():
                 logger.exception("Telegram poll error: %s", e)

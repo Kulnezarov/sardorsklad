@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import html
 import os
+from typing import Any, Optional
 from datetime import datetime, time, timedelta
 from decimal import Decimal
 from zoneinfo import ZoneInfo
@@ -106,21 +107,28 @@ def build_daily_report_text(db: Session, tz_name: str) -> str:
     return text
 
 
-def post_telegram_html_to_chat(chat_id: str | int, text: str) -> bool:
+def post_telegram_html_to_chat(
+    chat_id: str | int,
+    text: str,
+    reply_markup: Optional[dict[str, Any]] = None,
+) -> bool:
     """Одно сообщение в указанный чат (для ответов на команды бота)."""
     token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
     if not token:
         return False
     url = f"https://api.telegram.org/bot{token}/sendMessage"
     try:
+        payload: dict[str, Any] = {
+            "chat_id": chat_id,
+            "text": text,
+            "parse_mode": "HTML",
+            "disable_web_page_preview": True,
+        }
+        if reply_markup is not None:
+            payload["reply_markup"] = reply_markup
         r = httpx.post(
             url,
-            json={
-                "chat_id": chat_id,
-                "text": text,
-                "parse_mode": "HTML",
-                "disable_web_page_preview": True,
-            },
+            json=payload,
             timeout=45.0,
         )
         if r.status_code != 200:
