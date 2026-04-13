@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 import {
   FiSearch, FiGrid, FiShoppingCart, FiX, FiPlus, FiMinus,
-  FiEdit2, FiCheckCircle, FiTrash2, FiZap,
+  FiCheckCircle, FiTrash2, FiZap,
 } from 'react-icons/fi';
 import { saleApi, fetchAllProducts, productApi } from '../api/client';
 
@@ -48,9 +48,8 @@ const Sales = () => {
   const [scannedResult, setScannedResult] = useState(null); // { product, barcode, found }
   const [showSuccess, setShowSuccess] = useState(false);
   const [successAmount, setSuccessAmount] = useState(0);
-  const [editingPrice, setEditingPrice] = useState(null); // cart item index
-  /** Строка во время редактирования цены (не num() на каждый символ — иначе нельзя набрать число) */
-  const [priceEditText, setPriceEditText] = useState('');
+  /** Индекс позиции чека для карточки «подробнее» (марка, описание…) */
+  const [cartDetailIdx, setCartDetailIdx] = useState(null);
 
   const searchRef = useRef(null);
   const barcodeRef = useRef(null);
@@ -66,6 +65,10 @@ const Sales = () => {
       }
     } catch {}
   }, [cart]);
+
+  useEffect(() => {
+    if (cartDetailIdx != null && cartDetailIdx >= cart.length) setCartDetailIdx(null);
+  }, [cart.length, cartDetailIdx]);
 
   // Search with debounce
   useEffect(() => {
@@ -128,20 +131,7 @@ const Sales = () => {
     });
   };
 
-  const commitPriceEdit = (idx) => {
-    const v = num(priceEditText);
-    if (v < 0) return;
-    setCart((prev) => {
-      if (!prev[idx]) return prev;
-      const updated = [...prev];
-      updated[idx] = { ...updated[idx], unitPrice: v };
-      return updated;
-    });
-    setEditingPrice(null);
-    setPriceEditText('');
-  };
-
-  const total = useMemo(() => cart.reduce((s, i) => s + i.unitPrice * i.quantity, 0), [cart]);
+  const total = useMemo(() => cart.reduce((s, i) => s + num(i.product.sale_price) * i.quantity, 0), [cart]);
   const cartCount = useMemo(() => cart.reduce((s, i) => s + i.quantity, 0), [cart]);
 
   // Barcode scan — show confirmation instead of immediately adding
@@ -181,7 +171,7 @@ const Sales = () => {
     mutationFn: () => {
       if (cart.length === 0) throw new Error('Корзина пуста');
       return saleApi.create({
-        items: cart.map((i) => ({ product_id: i.product.id, quantity: i.quantity, unit_price: i.unitPrice })),
+        items: cart.map((i) => ({ product_id: i.product.id, quantity: i.quantity, unit_price: num(i.product.sale_price) })),
         payment_method: 'cash',
       });
     },
@@ -284,6 +274,60 @@ const Sales = () => {
           </div>
         </div>
       )}
+
+      {/* Карточка товара в чеке: марка и доп. сведения */}
+      {cartDetailIdx != null && cart[cartDetailIdx] && (() => {
+        const row = cart[cartDetailIdx];
+        const p = row.product;
+        const loc = [p.location_zone, p.location_row, p.location_shelf, p.location_position].filter(Boolean).join(' · ');
+        return (
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="cart-line-detail-title"
+            style={{ position: 'fixed', inset: 0, background: 'rgba(55, 65, 81, 0.45)', zIndex: 620, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}
+            onClick={() => setCartDetailIdx(null)}
+          >
+            <div
+              onClick={(e) => e.stopPropagation()}
+              style={{ width: '100%', maxWidth: 400, background: 'var(--surface)', borderRadius: 22, border: '1px solid var(--border)', boxShadow: 'none', maxHeight: '85vh', overflowY: 'auto' }}
+            >
+              <div style={{ padding: '20px 20px 14px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
+                <div style={{ minWidth: 0 }}>
+                  <div id="cart-line-detail-title" style={{ fontWeight: 800, fontSize: 17, color: 'var(--text)', lineHeight: 1.3 }}>{p.name}</div>
+                  {p.brand && <div style={{ fontSize: 14, color: 'var(--primary)', fontWeight: 700, marginTop: 6 }}>Марка: {p.brand}</div>}
+                </div>
+                <button type="button" onClick={() => setCartDetailIdx(null)} style={{ flexShrink: 0, width: 36, height: 36, borderRadius: 12, border: '1px solid var(--border)', background: 'var(--ios-grouped-bg)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-secondary)' }} aria-label="Закрыть"><FiX size={18} /></button>
+              </div>
+              <div style={{ padding: '14px 20px 20px', display: 'flex', flexDirection: 'column', gap: 12, fontSize: 13 }}>
+                {p.category && (
+                  <div><span style={{ color: 'var(--text-muted)', fontWeight: 600 }}>Категория: </span>{p.category}</div>
+                )}
+                {(p.sku || p.barcode) && (
+                  <div style={{ fontFamily: 'ui-monospace, monospace', wordBreak: 'break-all', lineHeight: 1.45 }}>
+                    {p.sku && <div><span style={{ color: 'var(--text-muted)', fontWeight: 600 }}>Артикул: </span>{p.sku}</div>}
+                    {p.barcode && <div><span style={{ color: 'var(--text-muted)', fontWeight: 600 }}>Штрих-код: </span>{p.barcode}</div>}
+                  </div>
+                )}
+                {p.supplier && (
+                  <div><span style={{ color: 'var(--text-muted)', fontWeight: 600 }}>Поставщик: </span>{p.supplier}</div>
+                )}
+                {loc && (
+                  <div><span style={{ color: 'var(--text-muted)', fontWeight: 600 }}>Место на складе: </span>{loc}</div>
+                )}
+                {p.description && (
+                  <div style={{ padding: '12px 14px', borderRadius: 14, background: 'var(--ios-grouped-bg)', border: '1px solid var(--border-light)', color: 'var(--text-secondary)', lineHeight: 1.5, whiteSpace: 'pre-wrap' }}>
+                    {p.description}
+                  </div>
+                )}
+                <div style={{ paddingTop: 4, fontWeight: 700, color: 'var(--text)' }}>
+                  Цена в чеке: {formatMoney(num(p.sale_price))} ₸ × {row.quantity} шт = {formatMoney(num(p.sale_price) * row.quantity)} ₸
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Success overlay */}
       {showSuccess && (
@@ -388,60 +432,37 @@ const Sales = () => {
               </div>
             ) : (
               <div style={{ padding: '8px 12px', display: 'flex', flexDirection: 'column', gap: 8 }}>
-                {cart.map((item, idx) => (
-                  <div key={`${item.product.id}-${idx}`} style={{ padding: '12px 14px', borderRadius: 16, background: 'var(--ios-grouped-bg)', border: '1px solid var(--border-light)' }}>
-                    <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8, marginBottom: 10 }}>
-                      <div style={{ minWidth: 0 }}>
-                        <div style={{ fontWeight: 700, fontSize: 13, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.product.name}</div>
-                        {item.product.brand && <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2, fontWeight: 500 }}>{item.product.brand}</div>}
+                {cart.map((item, idx) => {
+                  const lineUnit = num(item.product.sale_price);
+                  return (
+                    <div
+                      key={`${item.product.id}-${idx}`}
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => setCartDetailIdx(idx)}
+                      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setCartDetailIdx(idx); } }}
+                      style={{ padding: '12px 14px', borderRadius: 16, background: 'var(--ios-grouped-bg)', border: '1px solid var(--border-light)', cursor: 'pointer' }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8, marginBottom: 10 }}>
+                        <div style={{ minWidth: 0 }}>
+                          <div style={{ fontWeight: 700, fontSize: 13, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.product.name}</div>
+                          {item.product.brand && <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2, fontWeight: 500 }}>{item.product.brand}</div>}
+                          <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 4, fontWeight: 600 }}>Нажмите для подробностей</div>
+                        </div>
+                        <button type="button" onClick={(e) => { e.stopPropagation(); removeFromCart(idx); }} style={{ width: 26, height: 26, borderRadius: 8, border: '1px solid #fecaca', background: '#fee2e2', color: 'var(--danger)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}><FiX size={13} /></button>
                       </div>
-                      <button type="button" onClick={() => removeFromCart(idx)} style={{ width: 26, height: 26, borderRadius: 8, border: '1px solid #fecaca', background: '#fee2e2', color: 'var(--danger)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}><FiX size={13} /></button>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 4 }} onClick={(e) => e.stopPropagation()}>
+                          <button type="button" onClick={() => changeQty(idx, -1)} style={{ width: 30, height: 30, borderRadius: 9, border: '1px solid var(--border)', background: 'var(--surface)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-secondary)' }}><FiMinus size={13} /></button>
+                          <span style={{ width: 28, textAlign: 'center', fontWeight: 800, fontSize: 14, color: 'var(--text)' }}>{item.quantity}</span>
+                          <button type="button" onClick={() => changeQty(idx, 1)} style={{ width: 30, height: 30, borderRadius: 9, border: '1px solid var(--border)', background: 'var(--surface)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-secondary)' }}><FiPlus size={13} /></button>
+                        </div>
+                        <div style={{ fontWeight: 700, fontSize: 12, color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>{formatMoney(lineUnit)} ₸ / шт</div>
+                        <div style={{ fontWeight: 800, fontSize: 14, color: 'var(--text)', whiteSpace: 'nowrap' }}>{formatMoney(lineUnit * item.quantity)} ₸</div>
+                      </div>
                     </div>
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-                      {/* Qty */}
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                        <button type="button" onClick={() => changeQty(idx, -1)} style={{ width: 30, height: 30, borderRadius: 9, border: '1px solid var(--border)', background: 'var(--surface)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-secondary)' }}><FiMinus size={13} /></button>
-                        <span style={{ width: 28, textAlign: 'center', fontWeight: 800, fontSize: 14, color: 'var(--text)' }}>{item.quantity}</span>
-                        <button type="button" onClick={() => changeQty(idx, 1)} style={{ width: 30, height: 30, borderRadius: 9, border: '1px solid var(--border)', background: 'var(--surface)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-secondary)' }}><FiPlus size={13} /></button>
-                      </div>
-                      {/* Price */}
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                        {editingPrice === idx ? (
-                          <input
-                            autoFocus
-                            type="text"
-                            inputMode="decimal"
-                            autoComplete="off"
-                            value={priceEditText}
-                            onChange={(e) => setPriceEditText(e.target.value.replace(',', '.'))}
-                            onBlur={() => commitPriceEdit(idx)}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter') {
-                                e.preventDefault();
-                                commitPriceEdit(idx);
-                              }
-                            }}
-                            style={{ width: 88, padding: '6px 8px', borderRadius: 8, border: '1px solid var(--primary)', background: 'var(--surface)', fontSize: 13, fontWeight: 700, textAlign: 'right', color: 'var(--primary)', position: 'relative', zIndex: 50 }}
-                          />
-                        ) : (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setPriceEditText(String(item.unitPrice ?? ''));
-                              setEditingPrice(idx);
-                            }}
-                            style={{ display: 'flex', alignItems: 'center', gap: 4, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)', fontWeight: 600, fontSize: 12, padding: '4px 6px', borderRadius: 8 }}
-                          >
-                            <FiEdit2 size={11} />
-                            <span>{formatMoney(item.unitPrice)} ₸</span>
-                          </button>
-                        )}
-                      </div>
-                      {/* Line total */}
-                      <div style={{ fontWeight: 800, fontSize: 14, color: 'var(--text)', whiteSpace: 'nowrap' }}>{formatMoney(item.unitPrice * item.quantity)} ₸</div>
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>

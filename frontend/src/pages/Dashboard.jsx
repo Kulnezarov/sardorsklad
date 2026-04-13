@@ -108,6 +108,16 @@ const Dashboard = () => {
     navigate(`/products?${q.toString()}`);
   };
 
+  /** Резерв → «Нужно заказать»: автосохранение позиции с названием и категорией из карточки */
+  const goReserveOrder = (a) => {
+    const q = new URLSearchParams();
+    q.set('autoWish', '1');
+    q.set('name', a.name || '');
+    if (a.category) q.set('category', a.category);
+    if (a.brand) q.set('brand', a.brand);
+    navigate(`/reserve?${q.toString()}`);
+  };
+
   if (isLoading) {
     return <LoadingSpinner message="Загрузка…" />;
   }
@@ -225,7 +235,7 @@ const Dashboard = () => {
                                 <button
                                   type="button"
                                   className="dash-alert-action"
-                                  onClick={() => goProduct('out', a.id)}
+                                  onClick={() => goReserveOrder(a)}
                                 >
                                   Заказать
                                 </button>
@@ -245,7 +255,7 @@ const Dashboard = () => {
                                 <button
                                   type="button"
                                   className="dash-alert-action"
-                                  onClick={() => goProduct('low', a.id)}
+                                  onClick={() => goReserveOrder(a)}
                                 >
                                   Заказать
                                 </button>

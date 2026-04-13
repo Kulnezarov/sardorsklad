@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 import {
@@ -199,6 +200,8 @@ function Field({ label, children, required }) {
 ══════════════════════════════════════════════════════════════════════════════ */
 const Reserve = () => {
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
 
   // ── Tabs ──
   const [mainTab, setMainTab] = useState('wish');      // 'wish' | 'orders'
@@ -356,6 +359,47 @@ const Reserve = () => {
     mutationFn: (id) => poApi.delete(id),
     onSuccess: () => { queryClient.invalidateQueries(['purchase-orders']); toast.success('Удалено'); },
   });
+
+  /** Дашборд → «Заказать»: один раз создать позицию в «Нужно заказать» и убрать query (Strict Mode — sessionStorage lock). */
+  useEffect(() => {
+    if (searchParams.get('autoWish') !== '1') return;
+    const name = (searchParams.get('name') || '').trim();
+    const lockKey = `reserve-autowish:${typeof window !== 'undefined' ? `${window.location.pathname}${window.location.search}` : ''}`;
+    if (!name) {
+      navigate('/reserve', { replace: true });
+      return;
+    }
+    if (typeof window !== 'undefined' && sessionStorage.getItem(lockKey) === 'done') {
+      navigate('/reserve', { replace: true });
+      return;
+    }
+    if (typeof window !== 'undefined' && sessionStorage.getItem(lockKey) === 'pending') return;
+    if (typeof window !== 'undefined') sessionStorage.setItem(lockKey, 'pending');
+
+    const category = searchParams.get('category') || null;
+    const brand = searchParams.get('brand') || null;
+    const data = {
+      name,
+      brand: brand || null,
+      category: category || null,
+      notes: null,
+      photo_data: null,
+    };
+
+    wishApi
+      .create(data)
+      .then(() => {
+        queryClient.invalidateQueries(['wish-items']);
+        toast.success('Добавлено в «Нужно заказать»');
+        setMainTab('wish');
+        if (typeof window !== 'undefined') sessionStorage.setItem(lockKey, 'done');
+        navigate('/reserve', { replace: true });
+      })
+      .catch(() => {
+        if (typeof window !== 'undefined') sessionStorage.removeItem(lockKey);
+        toast.error('Не удалось добавить в список');
+      });
+  }, [searchParams, navigate, queryClient]);
 
   // ── Handlers ──
   const openAddWish = () => { setWishForm(emptyWish()); setEditWish(null); setShowWishModal(true); };

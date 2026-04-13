@@ -734,7 +734,7 @@ const Products = () => {
 
   /* ─────────── RENDER ─────────── */
   return (
-    <div className="products-page-shell"
+    <div className="products-page-shell products-page-desk-dock-space"
       style={{ padding: '10px 14px 0', maxWidth: '1440px', margin: '0 auto', paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}
     >
 

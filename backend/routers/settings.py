@@ -151,15 +151,36 @@ def get_dashboard_stats(db: Session = Depends(get_db)):
     )
 
     alert_out_of_stock = [
-        schemas.DashboardAlertItem(id=p.id, name=p.name, quantity=p.quantity, kind="out_of_stock")
+        schemas.DashboardAlertItem(
+            id=p.id,
+            name=p.name,
+            quantity=p.quantity,
+            kind="out_of_stock",
+            category=p.category,
+            brand=p.brand,
+        )
         for p in out_rows
     ]
     alert_low_stock = [
-        schemas.DashboardAlertItem(id=p.id, name=p.name, quantity=p.quantity, kind="low_stock")
+        schemas.DashboardAlertItem(
+            id=p.id,
+            name=p.name,
+            quantity=p.quantity,
+            kind="low_stock",
+            category=p.category,
+            brand=p.brand,
+        )
         for p in low_rows
     ]
     alert_stale = [
-        schemas.DashboardAlertItem(id=p.id, name=p.name, quantity=p.quantity, kind="stale")
+        schemas.DashboardAlertItem(
+            id=p.id,
+            name=p.name,
+            quantity=p.quantity,
+            kind="stale",
+            category=p.category,
+            brand=p.brand,
+        )
         for p in stale_rows
     ]
 

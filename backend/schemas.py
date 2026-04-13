@@ -406,6 +406,8 @@ class DashboardAlertItem(BaseModel):
     name: str
     quantity: int
     kind: str  # out_of_stock | low_stock | stale
+    category: Optional[str] = None
+    brand: Optional[str] = None
 
 
 class DashboardRecentSaleRow(BaseModel):

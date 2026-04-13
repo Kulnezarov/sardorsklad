@@ -2221,6 +2221,13 @@ textarea {
   }
 }
 
+/* Десктоп: больше запаса под фиксированный catalog-dock, чтобы нижние строки таблицы и кнопки не перекрывались */
+@media (min-width: 769px) {
+  .products-page-desk-dock-space .products-table-scroll {
+    margin-bottom: calc(100px + env(safe-area-inset-bottom, 0px));
+  }
+}
+
 /* ══════════════════════════════════════════════
    Catalog: stale chip variant
 ══════════════════════════════════════════════ */
