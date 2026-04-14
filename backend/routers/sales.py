@@ -9,8 +9,13 @@ from sqlalchemy.orm import Session
 import models
 import schemas
 from database import get_db
+from dependencies import require_manager_or_admin
 
-router = APIRouter(prefix="/api/v1/sales", tags=["sales"])
+router = APIRouter(
+    prefix="/api/v1/sales",
+    tags=["sales"],
+    dependencies=[Depends(require_manager_or_admin)],
+)
 
 
 @router.get("/", response_model=List[schemas.SaleResponse])

@@ -7,8 +7,13 @@ from typing import List, Optional
 import models
 import schemas
 from database import get_db
+from dependencies import require_manager_or_admin
 
-router = APIRouter(prefix="/api/v1/revisions", tags=["revisions"])
+router = APIRouter(
+    prefix="/api/v1/revisions",
+    tags=["revisions"],
+    dependencies=[Depends(require_manager_or_admin)],
+)
 
 
 @router.get("/", response_model=List[schemas.RevisionSessionResponse])

@@ -119,6 +119,53 @@ npm run dev
 
 The application will be available at `http://localhost:5173`
 
+## Public API for CHPARTS
+
+Public endpoints (without authorization):
+
+- `GET /api/v1/public/products`
+  - Query: `q`, `category_id`, `in_stock`, `limit`, `offset`
+  - Returns only safe fields: `id`, `name`, `sale_price`, `quantity`, `category_id`, `image_url`
+- `POST /api/v1/public/orders`
+  - Payload:
+    - `customer_name`
+    - `customer_phone`
+    - `comment` (optional)
+    - `items`: `[{ product_id, quantity }]`
+  - Response: `{ ok: true, reserve_id }`
+  - Errors:
+    - `400` invalid payload
+    - `404` product not found
+    - `409` not enough stock
+
+Private endpoints (JWT + role `manager`/`admin`):
+
+- `/api/v1/products/*`
+- `/api/v1/categories/*`
+- `/api/v1/brands/*`
+- `/api/v1/orders/*`
+
+### Next.js integration (chparts.kz)
+
+- Set `NEXT_PUBLIC_API_BASE_URL` to backend base, for example `https://sklad.kz`
+- Use:
+  - `GET ${NEXT_PUBLIC_API_BASE_URL}/api/v1/public/products`
+  - `POST ${NEXT_PUBLIC_API_BASE_URL}/api/v1/public/orders`
+
+### Telegram for website orders
+
+Set in backend `.env`:
+
+- `TELEGRAM_BOT_TOKEN`
+- `TELEGRAM_CHAT_ID` (single id or comma-separated ids)
+- `ADMIN_BASE_URL=https://sklad.kz`
+
+When new website order is created:
+
+- it is saved in warehouse orders (`source=website`)
+- telegram message is sent to managers
+- if Telegram is unavailable, order creation still succeeds and failed notification can be retried via `POST /api/v1/orders/notifications/retry`
+
 ## Environment Variables
 
 ### Backend (.env)

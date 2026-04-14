@@ -15,9 +15,15 @@ from sqlalchemy.orm import Session
 import models
 import schemas
 from database import SessionLocal, get_db
+from dependencies import require_manager_or_admin
+from services.audit import write_audit_log
 from services.excel_products import export_products_xlsx, import_products_from_xlsx
 
-router = APIRouter(prefix="/api/v1/products", tags=["products"])
+router = APIRouter(
+    prefix="/api/v1/products",
+    tags=["products"],
+    dependencies=[Depends(require_manager_or_admin)],
+)
 
 
 def build_generated_sku(db: Session) -> str:
@@ -240,7 +246,11 @@ def get_product(product_id: int, db: Session = Depends(get_db)):
 
 
 @router.post("/", response_model=schemas.ProductResponse, status_code=status.HTTP_201_CREATED)
-def create_product(product: schemas.ProductCreate, db: Session = Depends(get_db)):
+def create_product(
+    product: schemas.ProductCreate,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_manager_or_admin),
+):
     payload = product.model_dump()
     payload["sku"] = payload.get("sku") or build_generated_sku(db)
 
@@ -274,6 +284,14 @@ def create_product(product: schemas.ProductCreate, db: Session = Depends(get_db)
             },
         )
     )
+    write_audit_log(
+        db,
+        user_id=current_user.id,
+        action="CREATE_PRODUCT",
+        entity_type="product",
+        entity_id=db_product.id,
+        payload={"name": db_product.name, "sku": db_product.sku},
+    )
 
     try:
         db.commit()
@@ -288,7 +306,12 @@ def create_product(product: schemas.ProductCreate, db: Session = Depends(get_db)
 
 
 @router.put("/{product_id}", response_model=schemas.ProductResponse)
-def update_product(product_id: int, product_update: schemas.ProductUpdate, db: Session = Depends(get_db)):
+def update_product(
+    product_id: int,
+    product_update: schemas.ProductUpdate,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_manager_or_admin),
+):
     db_product = db.query(models.Product).filter(models.Product.id == product_id).first()
     if not db_product:
         raise HTTPException(status_code=404, detail="Product not found")
@@ -338,6 +361,14 @@ def update_product(product_id: int, product_update: schemas.ProductUpdate, db: S
             },
         )
     )
+    write_audit_log(
+        db,
+        user_id=current_user.id,
+        action="UPDATE_PRODUCT",
+        entity_type="product",
+        entity_id=product_id,
+        payload=update_data,
+    )
 
     try:
         db.commit()
@@ -352,7 +383,11 @@ def update_product(product_id: int, product_update: schemas.ProductUpdate, db: S
 
 
 @router.delete("/{product_id}")
-def delete_product(product_id: int, db: Session = Depends(get_db)):
+def delete_product(
+    product_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_manager_or_admin),
+):
     db_product = db.query(models.Product).filter(models.Product.id == product_id).first()
     if not db_product:
         raise HTTPException(status_code=404, detail="Product not found")
@@ -362,6 +397,14 @@ def delete_product(product_id: int, db: Session = Depends(get_db)):
         return JSONResponse({"ok": True, "already_inactive": True})
 
     db_product.is_active = False
+    write_audit_log(
+        db,
+        user_id=current_user.id,
+        action="DELETE_PRODUCT",
+        entity_type="product",
+        entity_id=product_id,
+        payload={"soft_delete": True},
+    )
     db.add(
         models.History(
             product_id=product_id,

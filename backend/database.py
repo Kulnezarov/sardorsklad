@@ -121,6 +121,9 @@ def ensure_schema_updates():
     product_alters = [
         ("products.barcode", "ALTER TABLE products ADD COLUMN IF NOT EXISTS barcode VARCHAR(50)"),
         ("products.brand", "ALTER TABLE products ADD COLUMN IF NOT EXISTS brand VARCHAR(100)"),
+        ("products.category_id", "ALTER TABLE products ADD COLUMN IF NOT EXISTS category_id INTEGER"),
+        ("products.brand_id", "ALTER TABLE products ADD COLUMN IF NOT EXISTS brand_id INTEGER"),
+        ("products.image_url", "ALTER TABLE products ADD COLUMN IF NOT EXISTS image_url TEXT"),
         ("products.purchase_price", "ALTER TABLE products ADD COLUMN IF NOT EXISTS purchase_price NUMERIC(10, 2) DEFAULT 0 NOT NULL"),
         ("products.sale_price", "ALTER TABLE products ADD COLUMN IF NOT EXISTS sale_price NUMERIC(10, 2) DEFAULT 0 NOT NULL"),
         ("products.cny_price", "ALTER TABLE products ADD COLUMN IF NOT EXISTS cny_price NUMERIC(10, 2)"),
@@ -138,6 +141,44 @@ def ensure_schema_updates():
     ]
     for label, sql in product_alters:
         _exec_schema_sql(sql, label)
+
+    _exec_schema_sql("CREATE INDEX IF NOT EXISTS idx_products_category_id ON products(category_id)", "products.idx_category_id")
+    _exec_schema_sql("CREATE INDEX IF NOT EXISTS idx_products_brand_id ON products(brand_id)", "products.idx_brand_id")
+
+    _exec_schema_sql(
+        """
+        DO $$
+        BEGIN
+          IF NOT EXISTS (
+            SELECT 1 FROM pg_constraint WHERE conname = 'fk_products_category_id'
+          ) THEN
+            ALTER TABLE products
+            ADD CONSTRAINT fk_products_category_id
+            FOREIGN KEY (category_id) REFERENCES categories(id) ON DELETE SET NULL;
+          END IF;
+        EXCEPTION WHEN undefined_table THEN
+          NULL;
+        END $$;
+        """,
+        "products.fk_category_id",
+    )
+    _exec_schema_sql(
+        """
+        DO $$
+        BEGIN
+          IF NOT EXISTS (
+            SELECT 1 FROM pg_constraint WHERE conname = 'fk_products_brand_id'
+          ) THEN
+            ALTER TABLE products
+            ADD CONSTRAINT fk_products_brand_id
+            FOREIGN KEY (brand_id) REFERENCES brands(id) ON DELETE SET NULL;
+          END IF;
+        EXCEPTION WHEN undefined_table THEN
+          NULL;
+        END $$;
+        """,
+        "products.fk_brand_id",
+    )
 
     # Старая схема: одна колонка price → purchase_price и sale_price
     _exec_schema_sql(
@@ -212,6 +253,36 @@ def ensure_schema_updates():
         END $$;
         """,
         "history.add_check",
+    )
+
+    reserve_alters = [
+        ("reserves.source", "ALTER TABLE reserves ADD COLUMN IF NOT EXISTS source VARCHAR(30) DEFAULT 'manual' NOT NULL"),
+        ("reserves.total_amount", "ALTER TABLE reserves ADD COLUMN IF NOT EXISTS total_amount NUMERIC(12, 2)"),
+        ("reserves.updated_at", "ALTER TABLE reserves ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT now() NOT NULL"),
+    ]
+    for label, sql in reserve_alters:
+        _exec_schema_sql(sql, label)
+    _exec_schema_sql("CREATE INDEX IF NOT EXISTS idx_reserves_source ON reserves(source)", "reserves.idx_source")
+
+    reserve_item_alters = [
+        ("reserve_items.quantity", "ALTER TABLE reserve_items ADD COLUMN IF NOT EXISTS quantity INTEGER"),
+        ("reserve_items.sale_price_snapshot", "ALTER TABLE reserve_items ADD COLUMN IF NOT EXISTS sale_price_snapshot NUMERIC(10, 2)"),
+        ("reserve_items.line_total", "ALTER TABLE reserve_items ADD COLUMN IF NOT EXISTS line_total NUMERIC(12, 2)"),
+    ]
+    for label, sql in reserve_item_alters:
+        _exec_schema_sql(sql, label)
+    _exec_schema_sql(
+        "UPDATE reserve_items SET quantity = quantity_ordered WHERE quantity IS NULL",
+        "reserve_items.fill_quantity",
+    )
+
+    _exec_schema_sql(
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS role VARCHAR(20) DEFAULT 'manager' NOT NULL",
+        "users.role",
+    )
+    _exec_schema_sql(
+        "CREATE INDEX IF NOT EXISTS idx_users_role ON users(role)",
+        "users.idx_role",
     )
 
 

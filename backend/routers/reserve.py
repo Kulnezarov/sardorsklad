@@ -9,8 +9,13 @@ import time
 import models
 import schemas
 from database import get_db
+from dependencies import require_manager_or_admin
 
-router = APIRouter(prefix="/api/v1/reserves", tags=["reserves"])
+router = APIRouter(
+    prefix="/api/v1/reserves",
+    tags=["reserves"],
+    dependencies=[Depends(require_manager_or_admin)],
+)
 
 
 # ============================================================================

@@ -13,8 +13,12 @@ import time
 import models
 import schemas
 from database import get_db
+from dependencies import require_manager_or_admin
 
-router = APIRouter(tags=["wish_orders"])
+router = APIRouter(
+    tags=["wish_orders"],
+    dependencies=[Depends(require_manager_or_admin)],
+)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

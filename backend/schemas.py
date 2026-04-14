@@ -36,7 +36,10 @@ class ProductBase(BaseModel):
     barcode: Optional[str] = Field(None, max_length=50)
     brand: Optional[str] = Field(None, max_length=100)
     category: Optional[str] = Field(None, max_length=100)
+    category_id: Optional[int] = Field(None, ge=1)
+    brand_id: Optional[int] = Field(None, ge=1)
     description: Optional[str] = None
+    image_url: Optional[str] = None
     purchase_price: Money10_2
     sale_price: Money10_2
     cny_price: Optional[Money10_2] = None
@@ -200,10 +203,12 @@ class ReserveResponse(BaseModel):
     order_code: str
     customer_name: str
     customer_phone: Optional[str]
+    source: Optional[str] = None
     status: str
     items: List[ReserveItemResponse]
     total_amount_cny: Decimal
     total_amount_kzt: Decimal
+    total_amount: Optional[Decimal] = None
     cny_rate: float
     created_at: datetime
     expected_arrival: Optional[datetime]
@@ -469,6 +474,7 @@ class UserPublic(BaseModel):
     id: int
     email: str
     full_name: Optional[str] = None
+    role: str = "manager"
 
     model_config = {"from_attributes": True}
 
@@ -477,3 +483,89 @@ class AuthTokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
     user: UserPublic
+
+
+class CategoryBase(BaseModel):
+    name: str = Field(..., min_length=1, max_length=120)
+    slug: Optional[str] = Field(None, min_length=1, max_length=140)
+    is_active: bool = True
+
+
+class CategoryCreate(CategoryBase):
+    pass
+
+
+class CategoryUpdate(BaseModel):
+    name: Optional[str] = Field(None, min_length=1, max_length=120)
+    slug: Optional[str] = Field(None, min_length=1, max_length=140)
+    is_active: Optional[bool] = None
+
+
+class CategoryResponse(BaseModel):
+    id: int
+    name: str
+    slug: str
+    is_active: bool
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class BrandBase(BaseModel):
+    name: str = Field(..., min_length=1, max_length=120)
+    slug: Optional[str] = Field(None, min_length=1, max_length=140)
+    is_active: bool = True
+
+
+class BrandCreate(BrandBase):
+    pass
+
+
+class BrandUpdate(BaseModel):
+    name: Optional[str] = Field(None, min_length=1, max_length=120)
+    slug: Optional[str] = Field(None, min_length=1, max_length=140)
+    is_active: Optional[bool] = None
+
+
+class BrandResponse(BaseModel):
+    id: int
+    name: str
+    slug: str
+    is_active: bool
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class PublicProductResponse(BaseModel):
+    id: int
+    name: str
+    sale_price: Decimal
+    quantity: int
+    category_id: Optional[int] = None
+    image_url: Optional[str] = None
+
+    model_config = {"from_attributes": True}
+
+
+class PublicOrderItemCreate(BaseModel):
+    product_id: int
+    quantity: int = Field(..., gt=0)
+
+
+class PublicOrderCreate(BaseModel):
+    customer_name: str = Field(..., min_length=1, max_length=255)
+    customer_phone: str = Field(..., min_length=5, max_length=30)
+    comment: Optional[str] = Field(None, max_length=2000)
+    items: List[PublicOrderItemCreate] = Field(..., min_length=1)
+
+
+class PublicOrderCreateResponse(BaseModel):
+    ok: bool = True
+    reserve_id: int
+
+
+class OrderStatusUpdate(BaseModel):
+    status: str = Field(..., min_length=2, max_length=80)

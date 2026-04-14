@@ -10,9 +10,13 @@ from sqlalchemy.orm import Session, joinedload
 import models
 import schemas
 from database import get_db
-from dependencies import get_current_user
+from dependencies import get_current_user, require_manager_or_admin
 
-router = APIRouter(prefix="/api/v1/settings", tags=["settings"])
+router = APIRouter(
+    prefix="/api/v1/settings",
+    tags=["settings"],
+    dependencies=[Depends(require_manager_or_admin)],
+)
 
 
 def get_or_create_settings(db: Session):

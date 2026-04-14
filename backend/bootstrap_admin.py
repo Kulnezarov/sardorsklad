@@ -30,6 +30,7 @@ def ensure_default_admin() -> None:
             email=email,
             hashed_password=hash_password(password),
             full_name=os.getenv("ADMIN_FULL_NAME", "Administrator"),
+            role="admin",
         )
         db.add(user)
         db.commit()

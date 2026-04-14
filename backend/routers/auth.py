@@ -29,6 +29,7 @@ def register(payload: schemas.UserRegister, db: Session = Depends(get_db)):
         email=payload.email.lower(),
         hashed_password=hash_password(payload.password),
         full_name=payload.full_name,
+        role="manager",
     )
     db.add(user)
     db.commit()

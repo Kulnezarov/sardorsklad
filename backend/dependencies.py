@@ -26,3 +26,22 @@ def get_current_user(
     if not user or not user.is_active:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
     return user
+
+
+def require_roles(*allowed_roles: str):
+    normalized = {r.lower() for r in allowed_roles}
+
+    def _checker(current_user: models.User = Depends(get_current_user)) -> models.User:
+        role = (current_user.role or "manager").lower()
+        if role not in normalized:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
+        return current_user
+
+    return _checker
+
+
+def require_manager_or_admin(current_user: models.User = Depends(get_current_user)) -> models.User:
+    role = (current_user.role or "manager").lower()
+    if role not in {"manager", "admin"}:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
+    return current_user

@@ -42,6 +42,7 @@ class User(Base):
     email = Column(String(255), unique=True, nullable=False, index=True)
     hashed_password = Column(String(255), nullable=False)
     full_name = Column(String(255), nullable=True)
+    role = Column(String(20), default="manager", nullable=False, index=True)
     is_active = Column(Boolean, default=True, nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
@@ -49,7 +50,36 @@ class User(Base):
 
 
 # ============================================================================
-# TABLE 1: PRODUCTS
+# TABLE 1: CATEGORIES / BRANDS
+# ============================================================================
+class Category(Base):
+    __tablename__ = "categories"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(120), nullable=False, unique=True, index=True)
+    slug = Column(String(140), nullable=False, unique=True, index=True)
+    is_active = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    products = relationship("Product", back_populates="category_rel")
+
+
+class Brand(Base):
+    __tablename__ = "brands"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(120), nullable=False, unique=True, index=True)
+    slug = Column(String(140), nullable=False, unique=True, index=True)
+    is_active = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    products = relationship("Product", back_populates="brand_rel")
+
+
+# ============================================================================
+# TABLE 2: PRODUCTS
 # ============================================================================
 class Product(Base):
     __tablename__ = "products"
@@ -60,7 +90,10 @@ class Product(Base):
     barcode = Column(String(50), unique=True, nullable=True, index=True)
     category = Column(String(100), nullable=True, index=True)
     brand = Column(String(100), nullable=True, index=True)
+    category_id = Column(Integer, ForeignKey("categories.id", ondelete="SET NULL"), nullable=True, index=True)
+    brand_id = Column(Integer, ForeignKey("brands.id", ondelete="SET NULL"), nullable=True, index=True)
     description = Column(Text, nullable=True)
+    image_url = Column(Text, nullable=True)
     purchase_price = Column(Numeric(10, 2), nullable=False, default=0)
     sale_price = Column(Numeric(10, 2), nullable=False, default=0)
     cny_price = Column(Numeric(10, 2), nullable=True)
@@ -92,6 +125,8 @@ class Product(Base):
     # Status flags
     is_active = Column(Boolean, default=True, nullable=False)
     # Relationships
+    category_rel = relationship("Category", back_populates="products")
+    brand_rel = relationship("Brand", back_populates="products")
     sales_items = relationship("SaleItem", back_populates="product", cascade="all, delete-orphan")
     reserve_items = relationship("ReserveItem", back_populates="product", cascade="all, delete-orphan")
     history = relationship("History", back_populates="product", cascade="all, delete-orphan")
@@ -106,7 +141,7 @@ class Product(Base):
 
 
 # ============================================================================
-# TABLE 2: SALES (Чеки/Квитанции)
+# TABLE 3: SALES (Чеки/Квитанции)
 # ============================================================================
 class Sale(Base):
     __tablename__ = "sales"
@@ -151,7 +186,7 @@ class SaleItem(Base):
 
 
 # ============================================================================
-# TABLE 3: RESERVES (Заказы/Резервы)
+# TABLE 4: RESERVES (Заказы/Резервы)
 # ============================================================================
 class Reserve(Base):
     __tablename__ = "reserves"
@@ -162,6 +197,7 @@ class Reserve(Base):
     # Заказчик
     customer_name = Column(String(255), nullable=False)
     customer_phone = Column(String(20), nullable=True)
+    source = Column(String(30), default="manual", nullable=False, index=True)
 
     # Статус
     status = Column(String(20), default=ReserveStatus.PENDING, nullable=False, index=True)
@@ -169,10 +205,12 @@ class Reserve(Base):
     # Деньги
     total_amount_cny = Column(Numeric(12, 2), nullable=False)  # Сумма в юанях
     total_amount_kzt = Column(Numeric(12, 2), nullable=False)  # Сумма в тенге
+    total_amount = Column(Numeric(12, 2), nullable=True)
     cny_rate = Column(Float, nullable=False)  # Текущий курс на момент заказа
 
     # Сроки
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
     expected_arrival = Column(DateTime(timezone=True), nullable=True)
     completed_at = Column(DateTime(timezone=True), nullable=True)
 
@@ -198,9 +236,12 @@ class ReserveItem(Base):
     product_name = Column(String(255), nullable=False)
     quantity_ordered = Column(Integer, nullable=False)
     quantity_received = Column(Integer, default=0, nullable=False)
+    quantity = Column(Integer, nullable=True)
 
     price_cny = Column(Numeric(10, 2), nullable=False)
     price_kzt = Column(Numeric(10, 2), nullable=False)
+    sale_price_snapshot = Column(Numeric(10, 2), nullable=True)
+    line_total = Column(Numeric(12, 2), nullable=True)
 
     # Relationships
     reserve = relationship("Reserve", back_populates="items")
@@ -241,8 +282,20 @@ class History(Base):
     )
 
 
+class AuditLog(Base):
+    __tablename__ = "audit_log"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    action = Column(String(80), nullable=False, index=True)
+    entity_type = Column(String(80), nullable=False, index=True)
+    entity_id = Column(Integer, nullable=True, index=True)
+    payload_json = Column(JSONB, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False, index=True)
+
+
 # ============================================================================
-# TABLE 5: REVISIONS (Ревизия/Инвентаризация)
+# TABLE 6: REVISIONS (Ревизия/Инвентаризация)
 # ============================================================================
 class RevisionSession(Base):
     __tablename__ = "revision_sessions"
@@ -292,7 +345,7 @@ class RevisionItem(Base):
 
 
 # ============================================================================
-# TABLE 6: SETTINGS (Настройки)
+# TABLE 7: SETTINGS (Настройки)
 # ============================================================================
 class Settings(Base):
     __tablename__ = "settings"
@@ -322,7 +375,7 @@ class Settings(Base):
 
 
 # ============================================================================
-# TABLE 7: WISH ITEMS (Список желаемых товаров — "Нужно заказать")
+# TABLE 8: WISH ITEMS (Список желаемых товаров — "Нужно заказать")
 # ============================================================================
 class WishItem(Base):
     __tablename__ = "wish_items"
@@ -348,7 +401,7 @@ class WishItem(Base):
 
 
 # ============================================================================
-# TABLE 8: PURCHASE ORDERS (Заказы у поставщиков — "В пути")
+# TABLE 9: PURCHASE ORDERS (Заказы у поставщиков — "В пути")
 # ============================================================================
 class PurchaseOrder(Base):
     __tablename__ = "purchase_orders"
@@ -389,7 +442,7 @@ class PurchaseOrder(Base):
 
 
 # ============================================================================
-# TABLE 9: DASHBOARD STATS (Вычисляемые статистики)
+# TABLE 10: DASHBOARD STATS (Вычисляемые статистики)
 # ============================================================================
 class DashboardStats(Base):
     __tablename__ = "dashboard_stats"
@@ -422,7 +475,7 @@ class DashboardStats(Base):
 
 
 # ============================================================================
-# TABLE 8: NOTIFICATIONS (Уведомления)
+# TABLE 11: NOTIFICATIONS (Уведомления)
 # ============================================================================
 class Notification(Base):
     __tablename__ = "notifications"
@@ -449,3 +502,18 @@ class Notification(Base):
         Index('idx_notifications_created_at', 'created_at'),
         Index('idx_notifications_reference', 'reference_type', 'reference_id'),
     )
+
+
+class TelegramNotification(Base):
+    __tablename__ = "telegram_notifications"
+
+    id = Column(Integer, primary_key=True, index=True)
+    reserve_id = Column(Integer, ForeignKey("reserves.id", ondelete="CASCADE"), nullable=False, index=True)
+    notification_type = Column(String(50), nullable=False, default="new_order")
+    payload_json = Column(JSONB, nullable=True)
+    status = Column(String(20), nullable=False, default="pending", index=True)  # pending/sent/failed
+    attempts = Column(Integer, nullable=False, default=0)
+    error_message = Column(Text, nullable=True)
+    sent_at = Column(DateTime(timezone=True), nullable=True)
+    last_attempt_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)

@@ -13,6 +13,8 @@ import ProductFound from './pages/ProductFound';
 import Reserve from './pages/Reserve';
 import History from './pages/History';
 import Settings from './pages/Settings';
+import Orders from './pages/Orders';
+import Categories from './pages/Categories';
 
 class ErrorBoundary extends Component {
   constructor(props) { super(props); this.state = { hasError: false, error: null }; }
@@ -57,6 +59,8 @@ function AppShell() {
               <Route path="/sales" element={<Sales />} />
               <Route path="/sales/found" element={<ProductFound />} />
               <Route path="/reserve" element={<Reserve />} />
+              <Route path="/orders" element={<Orders />} />
+              <Route path="/categories" element={<Categories />} />
               <Route path="/history" element={<History />} />
               <Route path="/astra" element={<Navigate to="/dashboard" replace />} />
               <Route path="/settings" element={<Settings />} />

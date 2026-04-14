@@ -186,6 +186,32 @@ export const reserveApi = {
   getCnyRate: () => apiClient.get('/api/v1/reserves/exchange/cny-rate'),
 }
 
+export const orderApi = {
+  getAll: (params = {}) => apiClient.get('/api/v1/orders', { params }),
+  getById: (id) => apiClient.get(`/api/v1/orders/${id}`),
+  updateStatus: (id, data) => apiClient.put(`/api/v1/orders/${id}/status`, data),
+  retryNotifications: () => apiClient.post('/api/v1/orders/notifications/retry'),
+}
+
+export const categoryApi = {
+  getAll: () => apiClient.get('/api/v1/categories'),
+  create: (data) => apiClient.post('/api/v1/categories', data),
+  update: (id, data) => apiClient.put(`/api/v1/categories/${id}`, data),
+  delete: (id) => apiClient.delete(`/api/v1/categories/${id}`),
+}
+
+export const brandApi = {
+  getAll: () => apiClient.get('/api/v1/brands'),
+  create: (data) => apiClient.post('/api/v1/brands', data),
+  update: (id, data) => apiClient.put(`/api/v1/brands/${id}`, data),
+  delete: (id) => apiClient.delete(`/api/v1/brands/${id}`),
+}
+
+export const publicApi = {
+  getProducts: (params = {}) => apiClient.get('/api/v1/public/products', { params }),
+  createOrder: (data) => apiClient.post('/api/v1/public/orders', data),
+}
+
 // ============================================================================
 // HISTORY API
 // ============================================================================

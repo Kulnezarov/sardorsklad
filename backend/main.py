@@ -15,6 +15,7 @@ import bootstrap_admin
 from fastapi.middleware.cors import CORSMiddleware
 from routers import auth, products, sales, reserve, history, revision, settings
 from routers import wish_orders
+from routers import public, categories, orders
 from config.logger import setup_logger
 
 # ============================================================================
@@ -182,7 +183,7 @@ ORIGINS = [
     o.strip()
     for o in os.getenv(
         "ORIGINS",
-        "http://localhost:5173,http://localhost:3000,http://127.0.0.1:5173,"
+        "https://sklad.kz,https://chparts.kz,http://chparts.kz,http://localhost:5173,http://localhost:3000,http://127.0.0.1:5173,"
         "http://194.32.142.253,http://194.32.142.253:5173",
     ).split(",")
     if o.strip()
@@ -256,6 +257,10 @@ app.include_router(history.router)
 app.include_router(revision.router)
 app.include_router(settings.router)
 app.include_router(wish_orders.router)
+app.include_router(public.router)
+app.include_router(categories.router)
+app.include_router(categories.brands_router)
+app.include_router(orders.router)
 
 
 # ============================================================================
@@ -317,7 +322,7 @@ def api_info():
 # ============================================================================
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ORIGINS,
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
