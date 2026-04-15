@@ -5,7 +5,7 @@ import toast from 'react-hot-toast';
 import {
   FiLogOut, FiBox, FiPrinter, FiX,
   FiAlertTriangle, FiRefreshCw, FiLoader, FiTrash2,
-  FiSun, FiMoon, FiShoppingBag, FiClock, FiSettings,
+  FiSun, FiMoon, FiShoppingBag, FiClock, FiSettings, FiSave,
 } from 'react-icons/fi';
 import { settingsApi } from '../api/settings';
 import { historyApi } from '../api/history';
@@ -35,8 +35,7 @@ const Settings = () => {
   const [showClearHistoryConfirm, setShowClearHistoryConfirm] = useState(false);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
-  const saveTimer = useRef(null);
-  /** Не перезаписывать форму при каждом refetch после автосохранения — иначе поле курса «вылетает» при вводе */
+  /** Однократная подстановка формы с сервера при открытии страницы */
   const didHydrateFromServer = useRef(false);
 
   /* ── query ── */
@@ -61,27 +60,50 @@ const Settings = () => {
     });
   }, [settingsData]);
 
-  /* ── auto-save mutation ── */
+  const formToPayload = (f) => ({
+    store_name: f.store_name,
+    scan_auto_increment: f.scan_auto_increment,
+    history_auto_clean_days: f.history_auto_clean_days,
+    label_size: f.label_size,
+    dark_mode: f.dark_mode,
+    cny_rate: Number(f.cny_rate) || 0,
+    low_stock_threshold: Math.max(1, parseInt(f.low_stock_threshold, 10) || 1),
+    delivery_kzt_per_kg: Math.max(0.01, Number(f.delivery_kzt_per_kg) || 0.01),
+  });
+
+  const applyServerSettings = (d) => {
+    if (!d) return;
+    setForm({
+      ...defaultSettings,
+      ...d,
+      cny_rate: Number(d.cny_rate ?? defaultSettings.cny_rate),
+      low_stock_threshold: Number(d.low_stock_threshold ?? defaultSettings.low_stock_threshold),
+      history_auto_clean_days: Number(d.history_auto_clean_days ?? defaultSettings.history_auto_clean_days),
+      delivery_kzt_per_kg: Number(d.delivery_kzt_per_kg ?? defaultSettings.delivery_kzt_per_kg),
+    });
+  };
+
+  /* ── сохранение только по кнопке (без автосохранения — иначе поля «вылетают» при вводе) ── */
   const saveMut = useMutation({
     mutationFn: (data) => settingsApi.updateSettings(data),
-    onSuccess: () => {
+    onSuccess: (res) => {
+      const d = res?.data;
+      if (d) {
+        applyServerSettings(d);
+        qc.setQueryData(['settings'], d);
+      }
       toast.success('Сохранено ✓', { duration: 1500 });
       qc.invalidateQueries({ queryKey: ['settings-row'] });
     },
     onError: () => toast.error('Не удалось сохранить'),
   });
 
-  const autoSave = (newForm) => {
-    clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(() => {
-      saveMut.mutate(newForm);
-    }, 1200);
+  const handleChange = (field, value) => {
+    setForm((prev) => ({ ...prev, [field]: value }));
   };
 
-  const handleChange = (field, value) => {
-    const next = { ...form, [field]: value };
-    setForm(next);
-    autoSave(next);
+  const handleSaveSettings = () => {
+    saveMut.mutate(formToPayload(form));
   };
 
   /* ── CNY rate fetch ── */
@@ -90,10 +112,8 @@ const Settings = () => {
     try {
       const rate = await fetchCnyRate();
       if (rate) {
-        const next = { ...form, cny_rate: rate };
-        setForm(next);
-        saveMut.mutate(next);
-        toast.success(`Курс обновлён: 1 CNY = ${rate} KZT`);
+        setForm((prev) => ({ ...prev, cny_rate: rate }));
+        toast.success(`Курс подставлен: 1 CNY = ${rate} KZT. Нажмите «Сохранить».`);
       } else {
         toast.error('Не удалось получить курс');
       }
@@ -217,11 +237,35 @@ const Settings = () => {
       <div className="settings-content">
 
         {/* Page title */}
-        <div style={{ marginBottom: 24 }}>
-          <div style={{ fontSize: 26, fontWeight: 900, color: 'var(--text)' }}>Настройки</div>
-          <div style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 4 }}>
-            Изменения сохраняются автоматически
+        <div style={{ marginBottom: 24, display: 'flex', flexWrap: 'wrap', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
+          <div>
+            <div style={{ fontSize: 26, fontWeight: 900, color: 'var(--text)' }}>Настройки</div>
+            <div style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 4 }}>
+              Изменения применяются после нажатия «Сохранить»
+            </div>
           </div>
+          <button
+            type="button"
+            onClick={handleSaveSettings}
+            disabled={saveMut.isPending}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 8,
+              padding: '12px 20px',
+              borderRadius: 14,
+              border: '1px solid #4f46e5',
+              background: 'linear-gradient(135deg, #6366f1, #7c3aed)',
+              color: '#fff',
+              fontWeight: 800,
+              fontSize: 14,
+              cursor: saveMut.isPending ? 'not-allowed' : 'pointer',
+              opacity: saveMut.isPending ? 0.75 : 1,
+            }}
+          >
+            {saveMut.isPending ? <FiLoader size={18} style={{ animation: 'spin 1s linear infinite' }} /> : <FiSave size={18} />}
+            Сохранить
+          </button>
         </div>
 
         {/* ── Section 1: Магазин ── */}
@@ -491,8 +535,9 @@ const Settings = () => {
         title="Сбросить настройки"
         message="Все настройки будут сброшены до значений по умолчанию. Действие необратимо."
         onConfirm={() => {
+          const payload = formToPayload(defaultSettings);
           setForm(defaultSettings);
-          saveMut.mutate(defaultSettings);
+          saveMut.mutate(payload);
           setShowResetConfirm(false);
         }}
         confirmLabel="Сбросить"
