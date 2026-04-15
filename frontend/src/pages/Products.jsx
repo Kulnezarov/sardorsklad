@@ -106,6 +106,7 @@ function buildPayload(formData, cnyRate = 65) {
   const cny = optionalNum(formData.cny_price);
   const purchase = effectivePurchaseTenge(formData, cnyRate);
   return {
+    id: formData.id ?? null,
     name: formData.name.trim(),
     sku: skuTrim || undefined,
     barcode: formData.barcode?.trim() || null,
@@ -411,7 +412,12 @@ const Products = () => {
 
   /* mutations */
   const saveMutation = useMutation({
-    mutationFn: (payload) => { const id = formRef.current?.id; return id ? productApi.update(id, payload) : productApi.create(payload); },
+    mutationFn: (payload) => {
+      const id = payload?.id ?? formRef.current?.id;
+      const body = { ...payload };
+      delete body.id;
+      return id ? productApi.update(id, body) : productApi.create(body);
+    },
     onSuccess: (res) => {
       const wasEdit = Boolean(formRef.current?.id);
       toast.success(wasEdit ? '✓ Товар обновлён' : '✓ Товар создан');
@@ -421,9 +427,14 @@ const Products = () => {
       resetForm();
     },
     onError: (err) => {
-      const message = err.response?.data?.detail || 'Ошибка при сохранении товара';
+      const detail = err.response?.data?.detail;
+      const message = typeof detail === 'string'
+        ? detail
+        : Array.isArray(detail)
+          ? detail.map((x) => `${x?.loc?.join?.('.') || 'field'}: ${x?.msg || 'invalid'}`).join('; ')
+          : 'Ошибка при сохранении товара';
       toast.error(`✕ ${message}`);
-      setFormError(typeof message === 'string' ? message : 'Ошибка при сохранении');
+      setFormError(message);
     },
   });
 

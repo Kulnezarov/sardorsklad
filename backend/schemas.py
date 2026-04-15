@@ -54,9 +54,17 @@ class ProductBase(BaseModel):
     location_zone: Optional[str] = Field(None, max_length=50)
     supplier: Optional[str] = Field(None, max_length=255)
 
-    @field_validator('purchase_price', 'sale_price', 'cny_price', 'delivery_cost_kzt', 'profit_percent', mode='before')
+    @field_validator('purchase_price', 'sale_price', mode='before')
     @classmethod
-    def convert_decimal(cls, value):
+    def required_money_fields(cls, value):
+        """Пустое/null для обязательных цен → 0, иначе Pydantic даёт 422 (None не подходит Money10_2)."""
+        if value is None or value == "":
+            return Decimal("0")
+        return Decimal(str(value))
+
+    @field_validator('cny_price', 'delivery_cost_kzt', 'profit_percent', mode='before')
+    @classmethod
+    def optional_money_fields(cls, value):
         if value is None or value == "":
             return None
         return Decimal(str(value))
