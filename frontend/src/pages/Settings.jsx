@@ -23,6 +23,83 @@ const defaultSettings = {
   delivery_kzt_per_kg: 800,
 };
 
+/** Стабильные ссылки на компоненты — если объявить внутри Settings, при каждом вводе
+ *  создаётся новый тип и React размонтирует строки настроек → поле теряет фокус. */
+const Pills = ({ options, value, onChange }) => (
+  <div style={{ display: 'flex', gap: 8 }}>
+    {options.map((opt) => (
+      <button
+        key={opt.value}
+        type="button"
+        onClick={() => onChange(opt.value)}
+        style={{
+          flex: 1, padding: '10px 14px', borderRadius: 12,
+          border: value === opt.value ? '2px solid var(--primary)' : '1px solid var(--border)',
+          background: value === opt.value ? 'var(--primary-light)' : 'var(--bg-secondary)',
+          color: value === opt.value ? 'var(--primary)' : 'var(--text)',
+          fontWeight: 700, fontSize: 13, cursor: 'pointer',
+          transition: 'all 0.15s', textAlign: 'center',
+        }}
+      >
+        {opt.label}
+      </button>
+    ))}
+  </div>
+);
+
+const Toggle = ({ value, onChange }) => (
+  <button
+    type="button"
+    onClick={() => onChange(!value)}
+    className={`ios-toggle ${value ? 'on' : ''}`}
+  />
+);
+
+const Row = ({ label, description, children }) => (
+  <div className="settings-row">
+    <div style={{ flex: 1 }}>
+      <div style={{ fontWeight: 600, fontSize: 15, color: 'var(--text)', marginBottom: description ? 2 : 0 }}>
+        {label}
+      </div>
+      {description && (
+        <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>{description}</div>
+      )}
+    </div>
+    <div style={{ flexShrink: 0 }}>{children}</div>
+  </div>
+);
+
+const ConfirmModal = ({ isOpen, onClose, title, message, onConfirm, confirmLabel = 'Удалить', confirmColor = 'var(--danger)' }) => {
+  if (!isOpen) return null;
+  return createPortal(
+    <div className="reserve-modal-overlay" onClick={onClose}>
+      <div className="reserve-modal-box" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 400 }}>
+        <div className="reserve-modal-header">
+          <div style={{ fontWeight: 800, fontSize: 17, color: 'var(--text)' }}>{title}</div>
+          <button type="button" onClick={onClose} style={{ width: 32, height: 32, borderRadius: 10, border: '1px solid var(--border)', background: 'var(--bg-secondary)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)' }}>
+            <FiX size={16} />
+          </button>
+        </div>
+        <div className="reserve-modal-body">
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: 14, borderRadius: 14, background: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.2)', marginBottom: 20 }}>
+            <FiAlertTriangle size={20} style={{ color: '#f59e0b', flexShrink: 0 }} />
+            <div style={{ fontSize: 13, color: '#b45309', fontWeight: 500 }}>{message}</div>
+          </div>
+          <div style={{ display: 'flex', gap: 10 }}>
+            <button type="button" onClick={onClose} style={{ flex: 1, padding: '12px', borderRadius: 14, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontWeight: 700, fontSize: 14, cursor: 'pointer' }}>
+              Отмена
+            </button>
+            <button type="button" onClick={onConfirm} style={{ flex: 1, padding: '12px', borderRadius: 14, border: 'none', background: confirmColor, color: '#fff', fontWeight: 700, fontSize: 14, cursor: 'pointer' }}>
+              {confirmLabel}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+};
+
 /* ═══════════════════════════════════════════════
    MAIN COMPONENT
 ═══════════════════════════════════════════════ */
@@ -139,84 +216,6 @@ const Settings = () => {
     setLabelType(t);
     localStorage.setItem('label_type', t);
     toast.success('Сохранено ✓', { duration: 1500 });
-  };
-
-  /* ── Pills helper ── */
-  const Pills = ({ options, value, onChange }) => (
-    <div style={{ display: 'flex', gap: 8 }}>
-      {options.map((opt) => (
-        <button
-          key={opt.value}
-          onClick={() => onChange(opt.value)}
-          style={{
-            flex: 1, padding: '10px 14px', borderRadius: 12,
-            border: value === opt.value ? '2px solid var(--primary)' : '1px solid var(--border)',
-            background: value === opt.value ? 'var(--primary-light)' : 'var(--bg-secondary)',
-            color: value === opt.value ? 'var(--primary)' : 'var(--text)',
-            fontWeight: 700, fontSize: 13, cursor: 'pointer',
-            transition: 'all 0.15s', textAlign: 'center',
-          }}
-        >
-          {opt.label}
-        </button>
-      ))}
-    </div>
-  );
-
-  /* ── Toggle ── */
-  const Toggle = ({ value, onChange }) => (
-    <button
-      type="button"
-      onClick={() => onChange(!value)}
-      className={`ios-toggle ${value ? 'on' : ''}`}
-    />
-  );
-
-  /* ── Setting row ── */
-  const Row = ({ label, description, children }) => (
-    <div className="settings-row">
-      <div style={{ flex: 1 }}>
-        <div style={{ fontWeight: 600, fontSize: 15, color: 'var(--text)', marginBottom: description ? 2 : 0 }}>
-          {label}
-        </div>
-        {description && (
-          <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>{description}</div>
-        )}
-      </div>
-      <div style={{ flexShrink: 0 }}>{children}</div>
-    </div>
-  );
-
-  /* ── Modal ── */
-  const ConfirmModal = ({ isOpen, onClose, title, message, onConfirm, confirmLabel = 'Удалить', confirmColor = 'var(--danger)' }) => {
-    if (!isOpen) return null;
-    return createPortal(
-      <div className="reserve-modal-overlay" onClick={onClose}>
-        <div className="reserve-modal-box" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 400 }}>
-          <div className="reserve-modal-header">
-            <div style={{ fontWeight: 800, fontSize: 17, color: 'var(--text)' }}>{title}</div>
-            <button type="button" onClick={onClose} style={{ width: 32, height: 32, borderRadius: 10, border: '1px solid var(--border)', background: 'var(--bg-secondary)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)' }}>
-              <FiX size={16} />
-            </button>
-          </div>
-          <div className="reserve-modal-body">
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: 14, borderRadius: 14, background: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.2)', marginBottom: 20 }}>
-              <FiAlertTriangle size={20} style={{ color: '#f59e0b', flexShrink: 0 }} />
-              <div style={{ fontSize: 13, color: '#b45309', fontWeight: 500 }}>{message}</div>
-            </div>
-            <div style={{ display: 'flex', gap: 10 }}>
-              <button onClick={onClose} style={{ flex: 1, padding: '12px', borderRadius: 14, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontWeight: 700, fontSize: 14, cursor: 'pointer' }}>
-                Отмена
-              </button>
-              <button onClick={onConfirm} style={{ flex: 1, padding: '12px', borderRadius: 14, border: 'none', background: confirmColor, color: '#fff', fontWeight: 700, fontSize: 14, cursor: 'pointer' }}>
-                {confirmLabel}
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>,
-      document.body,
-    );
   };
 
   if (isLoading) {
