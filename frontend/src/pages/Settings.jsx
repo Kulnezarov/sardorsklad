@@ -20,6 +20,7 @@ const defaultSettings = {
   dark_mode: false,
   cny_rate: 65,
   low_stock_threshold: 5,
+  delivery_kzt_per_kg: 800,
 };
 
 /* ═══════════════════════════════════════════════
@@ -35,6 +36,8 @@ const Settings = () => {
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
   const saveTimer = useRef(null);
+  /** Не перезаписывать форму при каждом refetch после автосохранения — иначе поле курса «вылетает» при вводе */
+  const didHydrateFromServer = useRef(false);
 
   /* ── query ── */
   const { data: settingsData, isLoading } = useQuery({
@@ -46,13 +49,15 @@ const Settings = () => {
   });
 
   useEffect(() => {
-    if (!settingsData) return;
+    if (!settingsData || didHydrateFromServer.current) return;
+    didHydrateFromServer.current = true;
     setForm({
       ...defaultSettings,
       ...settingsData,
       cny_rate: Number(settingsData.cny_rate ?? defaultSettings.cny_rate),
       low_stock_threshold: Number(settingsData.low_stock_threshold ?? defaultSettings.low_stock_threshold),
       history_auto_clean_days: Number(settingsData.history_auto_clean_days ?? defaultSettings.history_auto_clean_days),
+      delivery_kzt_per_kg: Number(settingsData.delivery_kzt_per_kg ?? defaultSettings.delivery_kzt_per_kg),
     });
   }, [settingsData]);
 
@@ -61,7 +66,7 @@ const Settings = () => {
     mutationFn: (data) => settingsApi.updateSettings(data),
     onSuccess: () => {
       toast.success('Сохранено ✓', { duration: 1500 });
-      qc.invalidateQueries({ queryKey: ['settings'] });
+      qc.invalidateQueries({ queryKey: ['settings-row'] });
     },
     onError: () => toast.error('Не удалось сохранить'),
   });
@@ -279,6 +284,7 @@ const Settings = () => {
                   }}
                 />
                 <button
+                  type="button"
                   onClick={handleFetchRate}
                   disabled={rateLoading}
                   style={{
@@ -292,6 +298,27 @@ const Settings = () => {
                   Обновить
                 </button>
               </div>
+            </Row>
+
+            <div className="settings-divider" />
+
+            <Row
+              label="Доставка: ₸ за 1 кг"
+              description="Используется в карточке товара: вес (кг) × этот тариф = сумма доставки в ₸"
+            >
+              <input
+                type="number"
+                min="0.01"
+                step="1"
+                value={form.delivery_kzt_per_kg}
+                onChange={(e) => handleChange('delivery_kzt_per_kg', Math.max(0.01, Number(e.target.value) || 0))}
+                style={{
+                  width: 90, padding: '8px 12px', borderRadius: 10,
+                  border: '1px solid var(--border)', background: 'var(--bg-secondary)',
+                  fontSize: 14, color: 'var(--text)', outline: 'none', textAlign: 'center',
+                  fontFamily: 'inherit',
+                }}
+              />
             </Row>
 
             <div className="settings-divider" />

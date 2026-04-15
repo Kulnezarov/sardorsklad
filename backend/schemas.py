@@ -44,6 +44,7 @@ class ProductBase(BaseModel):
     sale_price: Money10_2
     cny_price: Optional[Money10_2] = None
     delivery_cost_kzt: Optional[Money10_2] = None
+    delivery_weight_kg: Optional[Money10_2] = None
     profit_percent: Optional[Percent5_2] = None
     quantity: int = Field(0, ge=0)
     min_quantity: Optional[int] = Field(0, ge=0)
@@ -62,7 +63,7 @@ class ProductBase(BaseModel):
             return Decimal("0")
         return Decimal(str(value))
 
-    @field_validator('cny_price', 'delivery_cost_kzt', 'profit_percent', mode='before')
+    @field_validator('cny_price', 'delivery_cost_kzt', 'delivery_weight_kg', 'profit_percent', mode='before')
     @classmethod
     def optional_money_fields(cls, value):
         if value is None or value == "":
@@ -85,6 +86,7 @@ class ProductUpdate(BaseModel):
     sale_price: Optional[Money10_2] = None
     cny_price: Optional[Money10_2] = None
     delivery_cost_kzt: Optional[Money10_2] = None
+    delivery_weight_kg: Optional[Money10_2] = None
     profit_percent: Optional[Percent5_2] = None
     quantity: Optional[int] = Field(None, ge=0)
     min_quantity: Optional[int] = Field(None, ge=0)
@@ -96,7 +98,7 @@ class ProductUpdate(BaseModel):
     supplier: Optional[str] = Field(None, max_length=255)
     is_active: Optional[bool] = None
 
-    @field_validator('purchase_price', 'sale_price', 'cny_price', 'delivery_cost_kzt', 'profit_percent', mode='before')
+    @field_validator('purchase_price', 'sale_price', 'cny_price', 'delivery_cost_kzt', 'delivery_weight_kg', 'profit_percent', mode='before')
     @classmethod
     def convert_decimal(cls, value):
         if value is None or value == "":
@@ -397,6 +399,7 @@ class SettingsUpdate(BaseModel):
     dark_mode: Optional[bool] = None
     cny_rate: Optional[float] = Field(None, gt=0)
     low_stock_threshold: Optional[int] = Field(None, gt=0)
+    delivery_kzt_per_kg: Optional[float] = Field(None, gt=0)
 
 
 class SettingsResponse(BaseModel):
@@ -408,6 +411,7 @@ class SettingsResponse(BaseModel):
     dark_mode: bool
     cny_rate: float
     low_stock_threshold: int
+    delivery_kzt_per_kg: float = 800.0
     created_at: datetime
     updated_at: datetime
 

@@ -98,6 +98,7 @@ class Product(Base):
     sale_price = Column(Numeric(10, 2), nullable=False, default=0)
     cny_price = Column(Numeric(10, 2), nullable=True)
     delivery_cost_kzt = Column(Numeric(10, 2), nullable=True)
+    delivery_weight_kg = Column(Numeric(12, 4), nullable=True)
     # В PostgreSQL колонка может быть GENERATED — не передаём значение из приложения
     profit_percent = Column(
         Numeric(5, 2),
@@ -362,6 +363,8 @@ class Settings(Base):
     # Финансы
     cny_rate = Column(Numeric(10, 2), default=65.0, nullable=False)
     low_stock_threshold = Column(Integer, default=5, nullable=False)
+    # Тариф доставки: 1 кг = N ₸ (для связки «доставка ↔ вес» в карточке товара)
+    delivery_kzt_per_kg = Column(Numeric(10, 2), default=800.0, nullable=False)
     
     # Метаданные
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)

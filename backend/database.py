@@ -128,6 +128,7 @@ def ensure_schema_updates():
         ("products.sale_price", "ALTER TABLE products ADD COLUMN IF NOT EXISTS sale_price NUMERIC(10, 2) DEFAULT 0 NOT NULL"),
         ("products.cny_price", "ALTER TABLE products ADD COLUMN IF NOT EXISTS cny_price NUMERIC(10, 2)"),
         ("products.delivery_cost_kzt", "ALTER TABLE products ADD COLUMN IF NOT EXISTS delivery_cost_kzt NUMERIC(10, 2)"),
+        ("products.delivery_weight_kg", "ALTER TABLE products ADD COLUMN IF NOT EXISTS delivery_weight_kg NUMERIC(12, 4)"),
         ("products.min_quantity", "ALTER TABLE products ADD COLUMN IF NOT EXISTS min_quantity INTEGER DEFAULT 0"),
         ("products.max_quantity", "ALTER TABLE products ADD COLUMN IF NOT EXISTS max_quantity INTEGER"),
         ("products.location_row", "ALTER TABLE products ADD COLUMN IF NOT EXISTS location_row VARCHAR(10)"),
@@ -283,6 +284,21 @@ def ensure_schema_updates():
     _exec_schema_sql(
         "CREATE INDEX IF NOT EXISTS idx_users_role ON users(role)",
         "users.idx_role",
+    )
+
+    _exec_schema_sql(
+        """
+        DO $$
+        BEGIN
+          IF EXISTS (
+            SELECT 1 FROM information_schema.tables
+            WHERE table_schema = 'public' AND table_name = 'settings'
+          ) THEN
+            ALTER TABLE settings ADD COLUMN IF NOT EXISTS delivery_kzt_per_kg NUMERIC(10, 2) DEFAULT 800 NOT NULL;
+          END IF;
+        END $$;
+        """,
+        "settings.delivery_kzt_per_kg",
     )
 
 

@@ -85,12 +85,27 @@ function getCatColor(cat) {
 
 const emptyForm = () => ({
   id: null, name: '', sku: '', barcode: '', brand: '', category: '',
-  purchase_price: 0, sale_price: 0, cny_price: '', delivery_cost_kzt: '',
+  purchase_price: 0, sale_price: 0, cny_price: '', delivery_cost_kzt: '', delivery_weight_kg: '',
   quantity: 0, min_quantity: 0, description: '', supplier: '', storage_location: '',
 });
 
 const num = (v) => { if (v === '' || v == null) return 0; const n = parseFloat(String(v).replace(',', '.')); return Number.isFinite(n) ? n : 0; };
 const optionalNum = (v) => { if (v === '' || v == null) return null; const n = parseFloat(String(v).replace(',', '.')); return Number.isFinite(n) ? n : null; };
+
+const roundMoneyKzt = (n) => (Number.isFinite(n) ? Math.round(n * 100) / 100 : null);
+const roundKgVal = (n) => (Number.isFinite(n) ? Math.round(n * 1000) / 1000 : null);
+
+function formatSideDeliveryKg(product, ratePerKg) {
+  if (product?.delivery_weight_kg != null && Number(product.delivery_weight_kg) > 0) {
+    return `${Number(product.delivery_weight_kg)} кг`;
+  }
+  const d = optionalNum(product?.delivery_cost_kzt);
+  if (d != null && d > 0 && ratePerKg > 0) {
+    const kg = roundKgVal(d / ratePerKg);
+    return kg != null ? `${kg} кг` : '—';
+  }
+  return '—';
+}
 
 /** Единая логика закупа в ₸: сначала поле «Закуп (₸)», иначе из ¥×курс+доставка (как при сохранении). */
 function effectivePurchaseTenge(formData, cnyRate = 65) {
@@ -119,6 +134,7 @@ function buildPayload(formData, cnyRate = 65) {
     sale_price: num(formData.sale_price),
     cny_price: cny,
     delivery_cost_kzt: optionalNum(formData.delivery_cost_kzt),
+    delivery_weight_kg: optionalNum(formData.delivery_weight_kg),
     quantity: parseInt(formData.quantity, 10) || 0,
     min_quantity: parseInt(formData.min_quantity, 10) || 0,
   };
@@ -232,10 +248,11 @@ const Products = () => {
 
   const { data: settingsRow } = useQuery({
     queryKey: ['settings-row'],
-    queryFn: async () => { try { const r = await settingsApi.getSettings(); return r.data; } catch { return { cny_rate: 65 }; } },
+    queryFn: async () => { try { const r = await settingsApi.getSettings(); return r.data; } catch { return { cny_rate: 65, delivery_kzt_per_kg: 800 }; } },
     staleTime: 120000,
   });
   const cnyRate = Number(settingsRow?.cny_rate) || 65;
+  const deliveryKztPerKg = Number(settingsRow?.delivery_kzt_per_kg) || 800;
 
   // Voice: open form on openVoiceAdd from nav
   // Also handles openAdd + barcode from Sales page scanner
@@ -660,6 +677,13 @@ const Products = () => {
   }, []);
 
   const handleEdit = (product) => {
+    const rate = Number(settingsRow?.delivery_kzt_per_kg) || 800;
+    const delNum = product.delivery_cost_kzt != null ? Number(product.delivery_cost_kzt) : null;
+    let wKg = product.delivery_weight_kg != null ? String(product.delivery_weight_kg) : '';
+    if (!wKg && delNum != null && delNum > 0 && rate > 0) {
+      const kg = roundKgVal(delNum / rate);
+      wKg = kg != null ? String(kg) : '';
+    }
     setFormData({
       ...emptyForm(),
       ...product,
@@ -667,6 +691,7 @@ const Products = () => {
       purchase_price: product.purchase_price != null ? Number(product.purchase_price) : 0,
       cny_price: product.cny_price != null ? String(product.cny_price) : '',
       delivery_cost_kzt: product.delivery_cost_kzt != null ? String(product.delivery_cost_kzt) : '',
+      delivery_weight_kg: wKg,
       supplier: product.supplier || '',
       storage_location: product.location_zone || '',
     });
@@ -1038,6 +1063,7 @@ const Products = () => {
                   ['Поставщик', sideProduct.supplier || '—'],
                   ['Закуп (₸)', `${Number(sideProduct.purchase_price || 0).toLocaleString('ru-RU')} ₸`],
                   ['Доставка', sideProduct.delivery_cost_kzt ? `${Number(sideProduct.delivery_cost_kzt).toLocaleString('ru-RU')} ₸` : '—'],
+                  ['Вес (доставка)', formatSideDeliveryKg(sideProduct, deliveryKztPerKg)],
                   ['Продажа (₸)', `${Number(sideProduct.sale_price || 0).toLocaleString('ru-RU')} ₸`],
                   ['Прибыль', profitPct(sideProduct) ? `${profitPct(sideProduct)}%` : '—'],
                   ['Место', sideProduct.location_zone || '—', true],
@@ -1225,6 +1251,14 @@ const Products = () => {
               }}
               style={formData.id ? { border: '1px solid var(--primary)' } : {}}
             />
+            <div style={{ fontSize: 12, color: 'var(--text-muted)', alignSelf: 'end', paddingBottom: 10, lineHeight: 1.45 }}>
+              Доставка: 1 кг = <strong style={{ color: 'var(--text)' }}>{deliveryKztPerKg.toLocaleString('ru-RU')} ₸</strong>
+              <br />
+              <span style={{ fontSize: 11 }}>Меняется в «Настройки»</span>
+            </div>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
             <Input
               label="Доставка (₸)"
               type="number"
@@ -1236,8 +1270,43 @@ const Products = () => {
                 const v = e.target.value;
                 setFormData((prev) => {
                   const next = { ...prev, delivery_cost_kzt: v };
+                  const d = optionalNum(v);
+                  if (d != null && d > 0 && deliveryKztPerKg > 0) {
+                    const kg = roundKgVal(d / deliveryKztPerKg);
+                    next.delivery_weight_kg = kg != null ? String(kg) : '';
+                  } else if (v === '' || v == null) {
+                    next.delivery_weight_kg = '';
+                  }
                   const cny = optionalNum(prev.cny_price);
                   const del = optionalNum(v) || 0;
+                  if (cny != null && cny > 0) {
+                    next.purchase_price = Number(cny) * cnyRate + del;
+                  }
+                  return next;
+                });
+              }}
+              style={formData.id ? { border: '1px solid var(--primary)' } : {}}
+            />
+            <Input
+              label="Вес под доставку (кг)"
+              type="number"
+              step="0.001"
+              min="0"
+              placeholder="0"
+              value={formData.delivery_weight_kg}
+              onChange={(e) => {
+                const v = e.target.value;
+                setFormData((prev) => {
+                  const next = { ...prev, delivery_weight_kg: v };
+                  const w = optionalNum(v);
+                  if (w != null && w > 0 && deliveryKztPerKg > 0) {
+                    const m = roundMoneyKzt(w * deliveryKztPerKg);
+                    next.delivery_cost_kzt = m != null ? String(m) : '';
+                  } else if (v === '' || v == null) {
+                    next.delivery_cost_kzt = '';
+                  }
+                  const cny = optionalNum(prev.cny_price);
+                  const del = optionalNum(next.delivery_cost_kzt) || 0;
                   if (cny != null && cny > 0) {
                     next.purchase_price = Number(cny) * cnyRate + del;
                   }
