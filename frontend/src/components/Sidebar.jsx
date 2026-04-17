@@ -7,7 +7,6 @@ import {
   FiClock,
   FiSettings,
   FiList,
-  FiTag,
 } from 'react-icons/fi';
 
 const Sidebar = ({ isOpen, onClose }) => {
@@ -18,7 +17,6 @@ const Sidebar = ({ isOpen, onClose }) => {
     { path: '/products', label: 'Склад', Icon: FiPackage },
     { path: '/reserve', label: 'Резерв', Icon: FiShoppingCart },
     { path: '/orders', label: 'Заказы', Icon: FiList },
-    { path: '/categories', label: 'Категории', Icon: FiTag },
     { path: '/history', label: 'История', Icon: FiClock },
     { path: '/settings', label: 'Настройки', Icon: FiSettings },
   ];

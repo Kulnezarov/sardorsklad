@@ -9,7 +9,6 @@ const titles = {
   '/sales': 'Продажи',
   '/reserve': 'Резерв',
   '/orders': 'Заказы',
-  '/categories': 'Категории',
   '/history': 'История',
   '/revision': 'Ревизия',
   '/settings': 'Настройки',

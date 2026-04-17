@@ -1215,6 +1215,22 @@ const Products = () => {
             {showQrPanel && formData.barcode && <div style={{ marginTop: 10, display: 'flex', justifyContent: 'center', padding: 14, borderRadius: 'var(--radius-ios)', background: '#fff', border: '1px solid var(--border)' }}><QRCodeSVG value={String(formData.barcode)} size={156} level="M" /></div>}
           </div>
 
+          <div style={{ marginTop: 4 }}>
+            <span style={{ display: 'block', marginBottom: 8, fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>Артикул (SKU)</span>
+            <input
+              className="ios-input"
+              placeholder="Внутренний артикул, OEM — отдельно от штрих-кода"
+              value={formData.sku || ''}
+              onChange={(e) => setFormData({ ...formData, sku: e.target.value })}
+              autoCapitalize="characters"
+              spellCheck={false}
+              style={{ width: '100%', border: formData.id ? '1px solid var(--primary)' : '1px solid var(--border)' }}
+            />
+            <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 6, lineHeight: 1.4 }}>
+              Учётный код для поиска и витрины; штрих-код выше — для сканера и этикетки.
+            </div>
+          </div>
+
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
             <Input label="Название *" placeholder="Например: Мотор" value={formData.name} onChange={(e) => setFormData({ ...formData, name: e.target.value })} style={formData.id ? { border: '1px solid var(--primary)' } : {}} />
             <Input label="Марка" placeholder="Bosch, Changan…" value={formData.brand || ''} onChange={(e) => setFormData({ ...formData, brand: e.target.value })} style={formData.id ? { border: '1px solid var(--primary)' } : {}} />
