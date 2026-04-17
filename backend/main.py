@@ -183,7 +183,9 @@ ORIGINS = [
     o.strip()
     for o in os.getenv(
         "ORIGINS",
-        "https://sklad.kz,https://chparts.kz,http://chparts.kz,http://localhost:5173,http://localhost:3000,http://127.0.0.1:5173,"
+        "http://localhost:3000,http://localhost:3001,http://127.0.0.1:3000,"
+        "https://chparts.kz,http://chparts.kz,https://sklad.kz,http://sklad.kz,"
+        "http://localhost:5173,http://127.0.0.1:5173,"
         "http://194.32.142.253,http://194.32.142.253:5173",
     ).split(",")
     if o.strip()

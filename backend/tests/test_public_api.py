@@ -13,11 +13,20 @@ class FakeQuery:
     def __init__(self, rows):
         self.rows = rows
 
+    def outerjoin(self, *args, **kwargs):
+        return self
+
     def filter(self, *args, **kwargs):
         return self
 
     def with_for_update(self):
         return self
+
+    def with_entities(self, *args, **kwargs):
+        return self
+
+    def scalar(self):
+        return len(self.rows)
 
     def order_by(self, *args, **kwargs):
         return self
@@ -44,11 +53,15 @@ class FakeDB:
             SimpleNamespace(
                 id=1,
                 name="Амортизатор",
+                sku="ART-1",
+                barcode=None,
                 sale_price=Decimal("1000"),
                 quantity=5,
                 category_id=2,
                 image_url="https://img/1.jpg",
                 is_active=True,
+                category_rel=None,
+                brand_rel=None,
             )
         ]
         self._reserves = []
@@ -92,8 +105,26 @@ def test_public_products_returns_safe_fields():
     client = make_client(db)
     res = client.get("/api/v1/public/products")
     assert res.status_code == 200
-    row = res.json()[0]
-    assert sorted(row.keys()) == ["category_id", "id", "image_url", "name", "quantity", "sale_price"]
+    body = res.json()
+    assert "items" in body and "total" in body
+    assert body["total"] == 1
+    row = body["items"][0]
+    assert "purchase_price" not in row and "cny_price" not in row
+    assert sorted(row.keys()) == sorted(
+        [
+            "id",
+            "name",
+            "sale_price",
+            "quantity",
+            "category_id",
+            "image_url",
+            "category_name",
+            "brand_id",
+            "brand_name",
+            "article",
+            "oem",
+        ]
+    )
 
 
 def test_public_order_create_success():

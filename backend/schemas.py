@@ -1,7 +1,7 @@
 from datetime import datetime
 from decimal import Decimal
 from enum import Enum
-from typing import Any, List, Optional
+from typing import Any, List, Literal, Optional
 
 from pydantic import BaseModel, EmailStr, Field, condecimal, field_validator
 
@@ -552,14 +552,35 @@ class BrandResponse(BaseModel):
 
 
 class PublicProductResponse(BaseModel):
+    """Только поля для витрины — без закупки, маржи, внутренних локаций."""
     id: int
     name: str
     sale_price: Decimal
     quantity: int
     category_id: Optional[int] = None
     image_url: Optional[str] = None
+    category_name: Optional[str] = None
+    brand_id: Optional[int] = None
+    brand_name: Optional[str] = None
+    article: Optional[str] = None  # артикул (sku)
+    oem: Optional[str] = None  # штрихкод / OEM при наличии
 
     model_config = {"from_attributes": True}
+
+
+class PublicProductListResponse(BaseModel):
+    items: List[PublicProductResponse]
+    total: int
+
+
+class PublicCategoryItem(BaseModel):
+    id: int
+    name: str
+
+
+class PublicBrandItem(BaseModel):
+    id: int
+    name: str
 
 
 class PublicOrderItemCreate(BaseModel):
@@ -570,8 +591,13 @@ class PublicOrderItemCreate(BaseModel):
 class PublicOrderCreate(BaseModel):
     customer_name: str = Field(..., min_length=1, max_length=255)
     customer_phone: str = Field(..., min_length=5, max_length=30)
-    comment: Optional[str] = Field(None, max_length=2000)
+    comment: Optional[str] = Field(None, max_length=4000)
     items: List[PublicOrderItemCreate] = Field(..., min_length=1)
+    delivery_type: Optional[Literal["pickup", "city", "post"]] = None
+    delivery_address: Optional[str] = Field(None, max_length=1000)
+    delivery_city: Optional[str] = Field(None, max_length=255)
+    delivery_details: Optional[str] = Field(None, max_length=2000)
+    payment_type: Optional[Literal["card", "cash"]] = None
 
 
 class PublicOrderCreateResponse(BaseModel):
