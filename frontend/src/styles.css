@@ -3957,6 +3957,48 @@ textarea {
   align-items: center;
   gap: 6px;
 }
+.orders-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 18px;
+}
+.orders-btn-issue,
+.orders-btn-cancel {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px 20px;
+  border-radius: 12px;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  border: none;
+  transition: opacity 0.15s, transform 0.1s;
+}
+.orders-btn-issue:disabled,
+.orders-btn-cancel:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.orders-btn-issue {
+  background: linear-gradient(135deg, #22c55e, #16a34a);
+  color: #fff;
+  box-shadow: 0 2px 8px rgba(34, 197, 94, 0.35);
+}
+.orders-btn-issue:hover:not(:disabled) {
+  filter: brightness(1.05);
+}
+.orders-btn-cancel {
+  background: var(--surface);
+  color: var(--text);
+  border: 1.5px solid var(--border);
+}
+.orders-btn-cancel:hover:not(:disabled) {
+  background: var(--ios-grouped-bg);
+}
+
 .orders-detail-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));

@@ -28,7 +28,7 @@ def _send_message(token: str, chat_id: str, text: str) -> None:
 
 def _build_order_text(order: models.Reserve, admin_base_url: str) -> str:
     lines = [
-        "🛒 Новый заказ с сайта",
+        "🛒 Новый заказ",
         f"ID: #{order.id}",
         f"Дата: {datetime.now(timezone.utc).astimezone().strftime('%Y-%m-%d %H:%M')}",
         f"Клиент: {order.customer_name}",

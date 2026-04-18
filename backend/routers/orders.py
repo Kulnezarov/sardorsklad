@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -17,6 +17,16 @@ router = APIRouter(
     tags=["orders"],
     dependencies=[Depends(require_manager_or_admin)],
 )
+
+# Согласовано с витриной: новый заказ → «Выдано» (списание) или «Отменен»
+STATUS_NEW = "Новый заказ"
+STATUS_NEW_LEGACY = "Новый заказ с сайта"  # старые записи до переименования
+STATUS_ISSUED = "Выдано"
+STATUS_CANCELLED = "Отменен"
+
+
+def _is_new_order_status(s: str) -> bool:
+    return s in (STATUS_NEW, STATUS_NEW_LEGACY)
 
 
 @router.get("/", response_model=list[schemas.ReserveResponse])
@@ -67,11 +77,101 @@ def update_order_status(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(require_manager_or_admin),
 ):
-    order = db.query(models.Reserve).filter(models.Reserve.id == order_id).first()
+    new_status = payload.status.strip()
+    order = (
+        db.query(models.Reserve)
+        .options(joinedload(models.Reserve.items))
+        .filter(models.Reserve.id == order_id)
+        .first()
+    )
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
+
     prev = order.status
-    order.status = payload.status.strip()
+
+    if new_status == prev:
+        return order
+
+    if new_status == STATUS_ISSUED:
+        if not _is_new_order_status(prev):
+            raise HTTPException(
+                status_code=400,
+                detail="Выдать можно только заказ в статусе «Новый заказ»",
+            )
+        for it in order.items:
+            qty = it.quantity if it.quantity is not None else it.quantity_ordered
+            if qty and qty > 0 and not it.product_id:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Позиция «{it.product_name}» не привязана к товару — выдача невозможна",
+                )
+
+        product_ids = list({it.product_id for it in order.items if it.product_id})
+        products = (
+            db.query(models.Product)
+            .filter(models.Product.id.in_(product_ids))
+            .with_for_update()
+            .all()
+        )
+        by_id = {p.id: p for p in products}
+
+        for it in order.items:
+            if not it.product_id:
+                continue
+            p = by_id.get(it.product_id)
+            if not p:
+                raise HTTPException(status_code=404, detail=f"Товар id={it.product_id} не найден")
+            qty = it.quantity if it.quantity is not None else it.quantity_ordered
+            if qty <= 0:
+                continue
+            if (p.quantity or 0) < qty:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Недостаточно «{p.name}» на складе: есть {p.quantity}, нужно {qty}",
+                )
+
+        now = datetime.now(timezone.utc)
+        for it in order.items:
+            if not it.product_id:
+                continue
+            qty = it.quantity if it.quantity is not None else it.quantity_ordered
+            if qty <= 0:
+                continue
+            p = by_id[it.product_id]
+            p.quantity = max(0, (p.quantity or 0) - qty)
+            p.last_sale_date = now
+            db.add(
+                models.History(
+                    product_id=p.id,
+                    operation_type=models.OperationType.SOLD.value,
+                    quantity_change=-qty,
+                    reference_type="reserve",
+                    reference_id=order.id,
+                    details={
+                        "message": f"Выдача заказа {order.order_code}",
+                        "order_id": order.id,
+                        "by_user_id": current_user.id,
+                    },
+                )
+            )
+
+        order.status = STATUS_ISSUED
+        order.completed_at = now
+
+    elif new_status == STATUS_CANCELLED:
+        if not _is_new_order_status(prev):
+            raise HTTPException(
+                status_code=400,
+                detail="Отменить можно только заказ в статусе «Новый заказ»",
+            )
+        order.status = STATUS_CANCELLED
+
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail='Укажите статус «Выдано» (списать товар со склада) или «Отменен»',
+        )
+
     write_audit_log(
         db,
         user_id=current_user.id,
@@ -90,8 +190,12 @@ def update_order_status(
         )
     )
     db.commit()
-    db.refresh(order)
-    return order
+    return (
+        db.query(models.Reserve)
+        .options(joinedload(models.Reserve.items))
+        .filter(models.Reserve.id == order_id)
+        .first()
+    )
 
 
 @router.post("/notifications/retry")

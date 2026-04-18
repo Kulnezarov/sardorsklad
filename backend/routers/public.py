@@ -14,7 +14,7 @@ from services.telegram_orders import send_new_order_notification
 
 router = APIRouter(prefix="/api/v1/public", tags=["public"])
 
-SITE_NEW_ORDER_STATUS = "Новый заказ с сайта"
+SITE_NEW_ORDER_STATUS = "Новый заказ"
 
 # Синтетические id для категорий/брендов только из текстовых полей товара (без FK в справочники)
 LEGACY_CATEGORY_ID_BASE = 10_000_000

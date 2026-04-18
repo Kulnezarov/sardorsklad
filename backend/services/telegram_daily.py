@@ -1,5 +1,5 @@
 """
-Ежедневный отчёт в Telegram: выручка, оценка прибыли, чеки, топ товаров по штукам.
+Ежедневный отчёт в Telegram: продажи за календарный день (выручка, чеки, топ по штукам).
 Включение: TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID в окружении.
 Токен выдаёт @BotFather; chat_id — после /start у бота (см. docs/telegram-bot.md).
 """
@@ -81,13 +81,13 @@ def build_daily_report_text(db: Session, tz_name: str) -> str:
             agg[name]["subtotal"] += sub
 
     lines = [
-        f"📊 <b>SkladPro — отчёт за {day_label}</b>",
-        f"🕐 День по часовому поясу: {tz_name}",
+        f"📊 <b>Продажи за {day_label}</b> · SkladPro",
+        f"🕐 Часовой пояс: {tz_name}",
         "",
         f"💰 <b>Выручка:</b> {_money_kzt(total_revenue)} ₸",
         f"📈 <b>Оценка прибыли:</b> {_money_kzt(total_profit)} ₸",
         f"🧾 <b>Чеков:</b> {receipts}",
-        f"📦 <b>Всего позиций (шт):</b> {total_units}",
+        f"📦 <b>Всего единиц (шт):</b> {total_units}",
     ]
 
     if receipts == 0:

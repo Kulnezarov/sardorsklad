@@ -9,17 +9,13 @@ import {
   FiHash,
   FiShoppingBag,
   FiLayers,
+  FiCheck,
+  FiX,
 } from 'react-icons/fi';
 import { orderApi } from '../api/client';
 
-const STATUSES = [
-  'Новый заказ с сайта',
-  'В обработке',
-  'Подтвержден',
-  'Отгружен',
-  'Завершен',
-  'Отменен',
-];
+/** Фильтр по точному статусу в API (старые заказы могут иметь «Новый заказ с сайта») */
+const FILTER_STATUSES = ['', 'Новый заказ', 'Новый заказ с сайта', 'Выдано', 'Отменен'];
 
 const money = (v) => Number(v || 0).toLocaleString('ru-RU', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
 
@@ -32,16 +28,23 @@ const sourceLabel = (s) => {
   return s || '—';
 };
 
+/** В интерфейсе старый статус показываем как «Новый заказ» */
+const displayStatus = (s) => (s === 'Новый заказ с сайта' ? 'Новый заказ' : s);
+
+const isPendingOrder = (o) => o && (o.status === 'Новый заказ' || o.status === 'Новый заказ с сайта');
+
 function statusClass(status) {
-  const m = {
-    'Новый заказ с сайта': 'orders-status--new',
-    'В обработке': 'orders-status--progress',
-    Подтвержден: 'orders-status--ok',
-    Отгружен: 'orders-status--ship',
-    Завершен: 'orders-status--done',
-    Отменен: 'orders-status--cancel',
-  };
-  return m[status] || 'orders-status--muted';
+  if (status === 'Новый заказ' || status === 'Новый заказ с сайта') return 'orders-status--new';
+  if (status === 'Выдано') return 'orders-status--done';
+  if (status === 'Отменен') return 'orders-status--cancel';
+  return 'orders-status--muted';
+}
+
+function errMessage(err) {
+  const d = err?.response?.data?.detail;
+  if (typeof d === 'string') return d;
+  if (Array.isArray(d)) return d.map((x) => x.msg || x).join(', ');
+  return 'Не удалось выполнить действие';
 }
 
 export default function Orders() {
@@ -68,13 +71,17 @@ export default function Orders() {
     return { count: list.length, sum, site };
   }, [orders]);
 
-  const updateStatus = useMutation({
+  const statusMut = useMutation({
     mutationFn: ({ id, nextStatus }) => orderApi.updateStatus(id, { status: nextStatus }),
-    onSuccess: () => {
-      toast.success('Статус обновлен');
+    onSuccess: (_, vars) => {
+      toast.success(
+        vars.nextStatus === 'Выдано' ? 'Заказ выдан, товар списан со склада' : 'Заказ отменён',
+      );
       queryClient.invalidateQueries({ queryKey: ['orders'] });
+      queryClient.invalidateQueries({ queryKey: ['products'] });
+      queryClient.invalidateQueries({ queryKey: ['products-stats'] });
     },
-    onError: () => toast.error('Не удалось обновить статус'),
+    onError: (err) => toast.error(errMessage(err)),
   });
 
   const retryTelegram = () => {
@@ -91,6 +98,17 @@ export default function Orders() {
     return Number(p) * Number(q);
   };
 
+  const handleIssue = () => {
+    if (!selectedOrder) return;
+    statusMut.mutate({ id: selectedOrder.id, nextStatus: 'Выдано' });
+  };
+
+  const handleCancel = () => {
+    if (!selectedOrder) return;
+    if (!window.confirm('Отменить заказ? Со склада ничего не списывается.')) return;
+    statusMut.mutate({ id: selectedOrder.id, nextStatus: 'Отменен' });
+  };
+
   return (
     <div className="page-ios orders-page">
       <header className="orders-header">
@@ -99,7 +117,9 @@ export default function Orders() {
             <FiList className="orders-title-icon" aria-hidden />
             Заказы
           </h1>
-          <p className="orders-subtitle">Заказы с витрины и оформленные вручную. Статусы и уведомления в Telegram.</p>
+          <p className="orders-subtitle">
+            Новые заказы обрабатывайте кнопками «Выдано» (списание со склада) или «Отменить».
+          </p>
         </div>
         <button type="button" className="orders-btn-ghost" onClick={retryTelegram}>
           <FiRefreshCw size={16} aria-hidden />
@@ -137,10 +157,10 @@ export default function Orders() {
           <label className="orders-field">
             <span className="orders-field-label">Статус</span>
             <select className="ios-input" value={status} onChange={(e) => setStatus(e.target.value)}>
-              <option value="">Все статусы</option>
-              {STATUSES.map((s) => (
+              <option value="">Все</option>
+              {FILTER_STATUSES.filter(Boolean).map((s) => (
                 <option key={s} value={s}>
-                  {s}
+                  {s === 'Новый заказ с сайта' ? 'Новый заказ (старые)' : s}
                 </option>
               ))}
             </select>
@@ -173,7 +193,7 @@ export default function Orders() {
                     <FiHash size={14} aria-hidden />
                     {o.order_code || `#${o.id}`}
                   </span>
-                  <span className={`orders-status-pill ${statusClass(o.status)}`}>{o.status}</span>
+                  <span className={`orders-status-pill ${statusClass(o.status)}`}>{displayStatus(o.status)}</span>
                 </div>
                 <div className="orders-list-name">{o.customer_name}</div>
                 <div className="orders-list-meta">
@@ -202,10 +222,35 @@ export default function Orders() {
                     <span>
                       <FiCalendar size={14} aria-hidden /> {fmtWhen(selectedOrder.created_at)}
                     </span>
-                    <span className={`orders-status-pill ${statusClass(selectedOrder.status)}`}>{selectedOrder.status}</span>
+                    <span className={`orders-status-pill ${statusClass(selectedOrder.status)}`}>
+                      {displayStatus(selectedOrder.status)}
+                    </span>
                   </div>
                 </div>
               </div>
+
+              {isPendingOrder(selectedOrder) && (
+                <div className="orders-actions">
+                  <button
+                    type="button"
+                    className="orders-btn-issue"
+                    onClick={handleIssue}
+                    disabled={statusMut.isPending}
+                  >
+                    <FiCheck size={18} aria-hidden />
+                    Выдано
+                  </button>
+                  <button
+                    type="button"
+                    className="orders-btn-cancel"
+                    onClick={handleCancel}
+                    disabled={statusMut.isPending}
+                  >
+                    <FiX size={18} aria-hidden />
+                    Отменить
+                  </button>
+                </div>
+              )}
 
               <div className="orders-detail-grid">
                 <div className="orders-kv">
@@ -225,22 +270,6 @@ export default function Orders() {
                   <span className="orders-v orders-v-strong">{money(selectedOrder.total_amount || selectedOrder.total_amount_kzt)} ₸</span>
                 </div>
               </div>
-
-              <label className="orders-field orders-field--full">
-                <span className="orders-field-label">Статус заказа</span>
-                <select
-                  className="ios-input"
-                  value={selectedOrder.status}
-                  onChange={(e) => updateStatus.mutate({ id: selectedOrder.id, nextStatus: e.target.value })}
-                  disabled={updateStatus.isPending}
-                >
-                  {STATUSES.map((s) => (
-                    <option key={s} value={s}>
-                      {s}
-                    </option>
-                  ))}
-                </select>
-              </label>
 
               {selectedOrder.notes ? (
                 <div className="orders-notes">
