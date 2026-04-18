@@ -1,6 +1,7 @@
 from datetime import datetime
 from decimal import Decimal
 import os
+import re
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import asc, desc, func, or_
@@ -20,6 +21,48 @@ SITE_NEW_ORDER_STATUS = "Новый заказ"
 LEGACY_CATEGORY_ID_BASE = 10_000_000
 LEGACY_BRAND_ID_BASE = 20_000_000
 LEGACY_ID_SLOT_MAX = 9_999
+
+_PUBLIC_ORDER_NOT_FOUND = "Заказ не найден. Проверьте номер заказа и телефон."
+
+
+def _normalize_phone_digits(s: str) -> str:
+    return re.sub(r"\D+", "", s or "")
+
+
+def _phones_match_order(stored: str | None, provided: str) -> bool:
+    """Совпадение телефона: полное совпадение цифр или последние 10 цифр (формат +7 / 8)."""
+    a = _normalize_phone_digits(stored or "")
+    b = _normalize_phone_digits(provided or "")
+    if not a or not b:
+        return False
+    if a == b:
+        return True
+    if len(a) >= 10 and len(b) >= 10 and a[-10:] == b[-10:]:
+        return True
+    return False
+
+
+def build_public_order_status_response(reserve: models.Reserve) -> schemas.PublicOrderStatusResponse:
+    st = (reserve.status or "").strip()
+    cancelled = st == "Отменен"
+    fulfilled = st == "Выдано"
+    if cancelled:
+        title = "Заказ отменён магазином"
+    elif fulfilled:
+        title = "Заказ выполнен"
+    elif st in ("Новый заказ", "Новый заказ с сайта"):
+        title = "Заказ принят, обрабатывается"
+    else:
+        title = st
+    return schemas.PublicOrderStatusResponse(
+        reserve_id=reserve.id,
+        order_code=reserve.order_code,
+        status=st,
+        status_title=title,
+        is_cancelled=cancelled,
+        is_fulfilled=fulfilled,
+        created_at=reserve.created_at,
+    )
 
 
 def _strip_or_none(val) -> str | None:
@@ -418,3 +461,26 @@ def create_public_order(
     except Exception:
         pass
     return schemas.PublicOrderCreateResponse(ok=True, reserve_id=reserve.id)
+
+
+@router.get("/orders/{reserve_id}", response_model=schemas.PublicOrderStatusResponse)
+def get_public_order_status(
+    reserve_id: int,
+    phone: str = Query(
+        ...,
+        min_length=5,
+        max_length=30,
+        description="Телефон, указанный при оформлении заказа",
+    ),
+    db: Session = Depends(get_db),
+):
+    """
+    Статус заказа для клиента витрины. Телефон должен совпадать с заказом (защита от просмотра чужих заказов).
+    После отмены в админке `is_cancelled=true`, `status_title` поясняет результат.
+    """
+    r = db.query(models.Reserve).filter(models.Reserve.id == reserve_id).first()
+    if not r or (r.source or "") != "website":
+        raise HTTPException(status_code=404, detail=_PUBLIC_ORDER_NOT_FOUND)
+    if not _phones_match_order(r.customer_phone, phone):
+        raise HTTPException(status_code=404, detail=_PUBLIC_ORDER_NOT_FOUND)
+    return build_public_order_status_response(r)

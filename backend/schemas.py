@@ -605,5 +605,16 @@ class PublicOrderCreateResponse(BaseModel):
     reserve_id: int
 
 
+class PublicOrderStatusResponse(BaseModel):
+    """Статус заказа для клиента витрины (без внутренних полей)."""
+    reserve_id: int
+    order_code: str
+    status: str
+    status_title: str
+    is_cancelled: bool
+    is_fulfilled: bool
+    created_at: datetime
+
+
 class OrderStatusUpdate(BaseModel):
     status: str = Field(..., min_length=2, max_length=80)

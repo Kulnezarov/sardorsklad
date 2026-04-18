@@ -210,6 +210,9 @@ export const brandApi = {
 export const publicApi = {
   getProducts: (params = {}) => apiClient.get('/api/v1/public/products', { params }),
   createOrder: (data) => apiClient.post('/api/v1/public/orders', data),
+  /** Статус заказа для клиента: reserve_id из ответа createOrder, phone — как при оформлении */
+  getOrderStatus: (reserveId, phone) =>
+    apiClient.get(`/api/v1/public/orders/${reserveId}`, { params: { phone } }),
 }
 
 // ============================================================================

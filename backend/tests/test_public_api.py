@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from decimal import Decimal
 from types import SimpleNamespace
 
@@ -6,7 +7,7 @@ from fastapi.testclient import TestClient
 
 import models
 from database import get_db
-from routers.public import router as public_router
+from routers.public import build_public_order_status_response, router as public_router
 
 
 class FakeQuery:
@@ -140,6 +141,19 @@ def test_public_order_create_success():
     body = res.json()
     assert body["ok"] is True
     assert body["reserve_id"] == 1
+
+
+def test_public_order_status_cancelled_payload():
+    r = SimpleNamespace(
+        id=1,
+        order_code="WEB-1",
+        status="Отменен",
+        created_at=datetime.now(timezone.utc),
+    )
+    p = build_public_order_status_response(r)
+    assert p.is_cancelled is True
+    assert p.is_fulfilled is False
+    assert "отмен" in p.status_title.lower()
 
 
 def test_public_order_not_enough_stock():
