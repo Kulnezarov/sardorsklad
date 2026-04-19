@@ -165,21 +165,44 @@ const LabelPrint = ({ isOpen, onClose, product, settings, initialLabelType = 'ba
 <html lang="ru">
 <head>
   <meta charset="UTF-8"/>
-  <title>Этикетка SkladPro</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Этикетка SkladPro 60×40</title>
   <style>
-    @page { size: ${LABEL.w} ${LABEL.h}; margin: 1.5mm; }
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    html, body { height: 100%; }
+    /*
+      Печать: одна страница = одна этикетка 60×40 mm (ширина × высота по CSS @page).
+      margin: 0 на @page — меньше конфликтов с CUPS; микро-отступ только внутри .label.
+    */
+    @page {
+      size: 60mm 40mm;
+      margin: 0;
+    }
+    *, *::before, *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+    html {
+      width: 60mm;
+      margin: 0;
+      padding: 0;
+    }
     body {
+      width: 60mm;
+      margin: 0;
+      padding: 0;
       font-family: 'Helvetica Neue', Arial, sans-serif;
       background: #fff;
+      color: #000;
       -webkit-print-color-adjust: exact;
       print-color-adjust: exact;
     }
+    /* Каждая этикетка — ровно один лист фиксированного размера (не % от «виртуальной» страницы) */
     .label {
-      width: 100%;
-      min-height: 36mm;
-      height: 100%;
+      width: 60mm;
+      height: 40mm;
+      max-width: 60mm;
+      max-height: 40mm;
+      overflow: hidden;
       display: flex;
       flex-direction: column;
       align-items: center;
@@ -187,8 +210,14 @@ const LabelPrint = ({ isOpen, onClose, product, settings, initialLabelType = 'ba
       text-align: center;
       page-break-after: always;
       page-break-inside: avoid;
+      break-after: page;
+      break-inside: avoid;
+      padding: 1mm 1.5mm;
     }
-    .label:last-child { page-break-after: auto; }
+    .label:last-child {
+      page-break-after: auto;
+      break-after: auto;
+    }
     .code-wrap {
       display: flex;
       align-items: center;
@@ -200,31 +229,46 @@ const LabelPrint = ({ isOpen, onClose, product, settings, initialLabelType = 'ba
     .code-wrap img {
       display: block;
       margin: 0 auto;
-      max-width: 54mm;
-      max-height: 26mm;
+      max-width: 56mm;
+      max-height: 24mm;
       width: auto;
       height: auto;
       object-fit: contain;
+      image-orientation: from-image;
+      transform: none;
     }
     .label--qr .code-wrap img {
-      max-width: 32mm;
-      max-height: 32mm;
+      max-width: 30mm;
+      max-height: 30mm;
     }
     .code-digits {
-      margin-top: 1.2mm;
+      flex-shrink: 0;
+      margin-top: 0.8mm;
       padding: 0 1mm;
       font-family: ui-monospace, 'Courier New', monospace;
-      font-size: 7.5pt;
+      font-size: 7pt;
       font-weight: 700;
-      letter-spacing: 0.12em;
+      letter-spacing: 0.1em;
       color: #000;
-      line-height: 1.15;
+      line-height: 1.1;
       max-width: 56mm;
       word-break: break-all;
     }
-    .code-fail { font-size: 8pt; color: #c00; padding: 4mm; }
+    .code-fail { font-size: 8pt; color: #c00; padding: 2mm; }
+
     @media print {
-      html, body { margin: 0; padding: 0; }
+      html, body {
+        width: 60mm !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        height: auto !important;
+      }
+      .label {
+        width: 60mm !important;
+        height: 40mm !important;
+        max-width: 60mm !important;
+        max-height: 40mm !important;
+      }
     }
   </style>
 </head>
@@ -591,9 +635,12 @@ const LabelPrint = ({ isOpen, onClose, product, settings, initialLabelType = 'ba
               />
             </div>
 
-            <div style={{ padding: '12px 14px', borderRadius: 14, background: 'var(--ios-grouped-bg)', border: '1px solid var(--border)', marginBottom: 20, fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.45 }}>
+            <div style={{ padding: '12px 14px', borderRadius: 14, background: 'var(--ios-grouped-bg)', border: '1px solid var(--border)', marginBottom: 12, fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.45 }}>
               На печати: только изображение кода
               {type === 'barcode' ? ' и строка цифр под ним' : ''}. Без названия товара и цены.
+              <div style={{ marginTop: 8, fontSize: 11, opacity: 0.95 }}>
+                <b>macOS:</b> в диалоге печати отключите колонтитулы, масштаб <b>100&nbsp;%</b>, выберите формат бумаги <b>60×40&nbsp;mm</b> (если есть) или созданный в CUPS.
+              </div>
             </div>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
