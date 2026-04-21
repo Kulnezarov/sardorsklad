@@ -8,11 +8,14 @@ export const productsApi = {
   deleteProduct: (id) => apiClient.delete(`/api/v1/products/${id}`),
   getCategories: () => apiClient.get('/api/v1/products/categories/list'),
   getStats: () => apiClient.get('/api/v1/products/stats/summary'),
-  uploadProductImage: (id, file) => {
+  uploadProductImage: (id, file, options = {}) => {
+    const { onUploadProgress, signal } = options;
     const formData = new FormData();
     formData.append('file', file);
     return apiClient.post(`/api/v1/products/${id}/image`, formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
+      onUploadProgress,
+      signal,
     });
   },
 };

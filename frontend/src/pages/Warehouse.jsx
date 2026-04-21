@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 import LabelPrint from '../components/LabelPrint';
 import { productsApi } from '../api/products';
+import { resolveUploadedAssetUrl } from '../api/client';
 import { settingsApi } from '../api/settings';
 import { Button, Modal, Input, Badge } from '../components/ui';
 
@@ -55,6 +56,8 @@ const Warehouse = () => {
   const [printType, setPrintType] = useState('barcode');
   const [formData, setFormData] = useState(emptyForm);
   const [imageUploading, setImageUploading] = useState(false);
+  const [imageUploadPct, setImageUploadPct] = useState(null);
+  const [imagePreviewBust, setImagePreviewBust] = useState(0);
   const queryClient = useQueryClient();
 
   const { data: products = [], isLoading } = useQuery({
@@ -146,11 +149,10 @@ const Warehouse = () => {
     });
   };
 
-  const getImagePreviewUrl = (url) => {
-    if (!url) return '';
-    if (url.startsWith('http://') || url.startsWith('https://')) return url;
-    const origin = window.location.origin;
-    return `${origin}${url.startsWith('/') ? '' : '/'}${url}`;
+  const productImageDisplaySrc = (url) => {
+    const base = (url || '').split('?')[0].trim();
+    if (!base) return '';
+    return `${resolveUploadedAssetUrl(base)}?v=${imagePreviewBust}`;
   };
 
   const handleUploadImage = async (event) => {
@@ -166,10 +168,24 @@ const Warehouse = () => {
       return;
     }
     setImageUploading(true);
+    setImageUploadPct(0);
     try {
-      const response = await productsApi.uploadProductImage(formData.id, file);
-      const imageUrl = response?.data?.image_url || '';
+      const response = await productsApi.uploadProductImage(formData.id, file, {
+        onUploadProgress: (ev) => {
+          if (ev.total) {
+            setImageUploadPct(Math.min(100, Math.round((ev.loaded * 100) / ev.total)));
+          } else {
+            setImageUploadPct((p) => (p == null ? 5 : Math.min(95, (p || 0) + 8)));
+          }
+        },
+      });
+      const imageUrl = (response?.data?.image_url || '').split('?')[0].trim();
+      if (!imageUrl) {
+        toast.error('Сервер не вернул путь к фото');
+        return;
+      }
       setFormData((prev) => ({ ...prev, image_url: imageUrl }));
+      setImagePreviewBust((n) => n + 1);
       setSelectedProduct((prev) => (prev ? { ...prev, image_url: imageUrl } : prev));
       queryClient.invalidateQueries({ queryKey: ['products'] });
       toast.success('Фото товара обновлено');
@@ -177,6 +193,7 @@ const Warehouse = () => {
       toast.error(error.response?.data?.detail || 'Не удалось загрузить фото');
     } finally {
       setImageUploading(false);
+      setImageUploadPct(null);
     }
   };
 
@@ -388,40 +405,56 @@ const Warehouse = () => {
             <div className="section-note" style={{ marginBottom: 8 }}>
               Фото товара
             </div>
-            <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
-              <div
-                style={{
-                  width: 96,
-                  height: 96,
-                  borderRadius: 12,
-                  border: '1px solid var(--border)',
-                  overflow: 'hidden',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  background: 'var(--surface)',
-                }}
-              >
-                {formData.image_url ? (
-                  <img
-                    src={getImagePreviewUrl(formData.image_url)}
-                    alt={formData.name || 'product'}
-                    style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-                  />
-                ) : (
-                  <span className="muted-text" style={{ fontSize: 12 }}>Нет фото</span>
-                )}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxWidth: 360 }}>
+              <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+                <div
+                  style={{
+                    width: 96,
+                    height: 96,
+                    borderRadius: 12,
+                    border: '1px solid var(--border)',
+                    overflow: 'hidden',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    background: 'var(--surface)',
+                  }}
+                >
+                  {formData.image_url ? (
+                    <img
+                      src={productImageDisplaySrc(formData.image_url)}
+                      alt={formData.name || 'product'}
+                      style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                    />
+                  ) : (
+                    <span className="muted-text" style={{ fontSize: 12 }}>Нет фото</span>
+                  )}
+                </div>
+                <div style={{ flex: 1, minWidth: 180 }}>
+                  <label className="button button-secondary" style={{ cursor: formData.id && !imageUploading ? 'pointer' : 'not-allowed', opacity: formData.id && !imageUploading ? 1 : 0.6, display: 'inline-block' }}>
+                    {imageUploading ? `Загрузка${imageUploadPct != null ? ` ${imageUploadPct}%` : '...'}` : formData.image_url ? 'Заменить фото' : 'Загрузить фото'}
+                    <input
+                      type="file"
+                      accept="image/png,image/jpeg,image/webp"
+                      onChange={handleUploadImage}
+                      disabled={!formData.id || imageUploading}
+                      style={{ display: 'none' }}
+                    />
+                  </label>
+                  {imageUploading && imageUploadPct != null && (
+                    <div style={{ marginTop: 8, height: 6, borderRadius: 4, background: 'var(--border)', overflow: 'hidden' }}>
+                      <div
+                        style={{
+                          height: '100%',
+                          width: `${imageUploadPct}%`,
+                          background: 'linear-gradient(90deg, #6366f1, #7c3aed)',
+                          transition: 'width 0.12s ease',
+                        }}
+                      />
+                    </div>
+                  )}
+                </div>
               </div>
-              <label className="button button-secondary" style={{ cursor: formData.id && !imageUploading ? 'pointer' : 'not-allowed', opacity: formData.id && !imageUploading ? 1 : 0.6 }}>
-                {imageUploading ? 'Загрузка...' : formData.image_url ? 'Заменить фото' : 'Загрузить фото'}
-                <input
-                  type="file"
-                  accept="image/png,image/jpeg,image/webp"
-                  onChange={handleUploadImage}
-                  disabled={!formData.id || imageUploading}
-                  style={{ display: 'none' }}
-                />
-              </label>
             </div>
           </div>
 

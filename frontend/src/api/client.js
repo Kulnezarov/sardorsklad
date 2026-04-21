@@ -53,6 +53,20 @@ export function getResolvedApiBaseUrl() {
   return 'http://localhost:8000/api/v1'
 }
 
+/**
+ * URL для /uploads/... с бэкенда (тот же хост, что и API, без /api/v1).
+ * Нужен в dev, когда фронт на :5173, а FastAPI — на :8000: иначе <img src="/uploads/..."> идёт на Vite.
+ */
+export function resolveUploadedAssetUrl(relativeOrAbsolute) {
+  const s = String(relativeOrAbsolute || '').trim()
+  if (!s) return ''
+  if (/^https?:\/\//i.test(s)) return s
+  const api = getResolvedApiBaseUrl()
+  const root = api.replace(/\/api\/v1\/?$/, '')
+  const path = s.startsWith('/') ? s : `/${s}`
+  return `${root}${path}`
+}
+
 const apiClient = axios.create({
   baseURL: '',
   headers: {
@@ -147,11 +161,14 @@ export const productApi = {
       timeout: timeout ?? 0,
     })
   },
-  uploadProductImage: (id, file) => {
+  uploadProductImage: (id, file, options = {}) => {
+    const { onUploadProgress, signal } = options
     const formData = new FormData()
     formData.append('file', file)
     return apiClient.post(`/api/v1/products/${id}/image`, formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
+      onUploadProgress,
+      signal,
     })
   },
   exportExcel: (filters = {}) =>

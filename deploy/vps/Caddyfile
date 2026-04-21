@@ -12,6 +12,11 @@
 		reverse_proxy backend:8000
 	}
 
+	# Статика фото (FastAPI StaticFiles) — иначе /uploads/* уйдёт в nginx SPA и картинки не откроются
+	handle /uploads* {
+		reverse_proxy backend:8000
+	}
+
 	handle {
 		reverse_proxy frontend:80
 	}

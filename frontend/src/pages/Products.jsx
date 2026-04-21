@@ -8,7 +8,7 @@ import {
   FiTag, FiUpload, FiDownload, FiX, FiLoader, FiClock, FiPackage,
 } from 'react-icons/fi';
 import { Button, Modal, Input, TextArea, LoadingSpinner, Alert } from '../components/ui';
-import { productApi } from '../api/client';
+import { productApi, resolveUploadedAssetUrl } from '../api/client';
 import { importExcelStream } from '../api/importExcelStream';
 import { settingsApi } from '../api/settings';
 import { generateEAN13 } from '../utils/barcodeGen';
@@ -123,7 +123,7 @@ function buildPayload(formData, cnyRate = 65) {
     brand: formData.brand?.trim() || null,
     category: formData.category?.trim() || null,
     description: formData.description?.trim() || null,
-    image_url: formData.image_url?.trim() || null,
+    image_url: (formData.image_url || '').split('?')[0].trim() || null,
     supplier: formData.supplier?.trim() || null,
     location_zone: formData.storage_location?.trim() || null,
     purchase_price: purchase,
@@ -184,6 +184,9 @@ const Products = () => {
   const [savedProduct, setSavedProduct] = useState(null);
 
   const [imageUploading, setImageUploading] = useState(false);
+  /** 0–100 во время upload; null когда не качаем */
+  const [imageUploadPct, setImageUploadPct] = useState(null);
+  const [imagePreviewBust, setImagePreviewBust] = useState(0);
 
   const [importReport, setImportReport] = useState(null);
   const [importOverlay, setImportOverlay] = useState(null);
@@ -642,10 +645,10 @@ const Products = () => {
 
   const openNew = () => { setFormData({ ...emptyForm(), barcode: generateEAN13() }); setFormError(''); setBarcodeLocked(false); setShowQrPanel(false); setShowForm(true); };
 
-  const getImagePreviewUrl = (url) => {
-    if (!url) return '';
-    if (url.startsWith('http://') || url.startsWith('https://')) return url;
-    return `${window.location.origin}${url.startsWith('/') ? '' : '/'}${url}`;
+  const productImageDisplaySrc = (url) => {
+    const base = (url || '').split('?')[0].trim();
+    if (!base) return '';
+    return `${resolveUploadedAssetUrl(base)}?v=${imagePreviewBust}`;
   };
 
   const handleUploadProductImage = async (event) => {
@@ -661,16 +664,31 @@ const Products = () => {
       return;
     }
     setImageUploading(true);
+    setImageUploadPct(0);
     try {
-      const response = await productApi.uploadProductImage(formData.id, file);
-      const imageUrl = response?.data?.image_url || '';
+      const response = await productApi.uploadProductImage(formData.id, file, {
+        onUploadProgress: (ev) => {
+          if (ev.total) {
+            setImageUploadPct(Math.min(100, Math.round((ev.loaded * 100) / ev.total)));
+          } else {
+            setImageUploadPct((p) => (p == null ? 5 : Math.min(95, (p || 0) + 8)));
+          }
+        },
+      });
+      const imageUrl = (response?.data?.image_url || '').split('?')[0].trim();
+      if (!imageUrl) {
+        toast.error('Сервер не вернул путь к фото');
+        return;
+      }
       setFormData((prev) => ({ ...prev, image_url: imageUrl }));
+      setImagePreviewBust((n) => n + 1);
       await queryClient.invalidateQueries({ queryKey: ['products'] });
       toast.success('Фото обновлено');
     } catch (err) {
       toast.error(err.response?.data?.detail || 'Не удалось загрузить фото');
     } finally {
       setImageUploading(false);
+      setImageUploadPct(null);
     }
   };
 
@@ -1147,49 +1165,65 @@ const Products = () => {
                 <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>JPG, PNG или WEBP (на сервере сохраняется как WebP). Сначала сохраните товар, затем загрузите фото.</div>
               </div>
             </div>
-            <div style={{ marginTop: 12, display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
-              <div
-                style={{
-                  width: 88,
-                  height: 88,
-                  borderRadius: 12,
-                  border: '1px solid var(--border)',
-                  overflow: 'hidden',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  background: 'var(--surface)',
-                }}
-              >
-                {formData.image_url ? (
-                  <img
-                    src={getImagePreviewUrl(formData.image_url)}
-                    alt=""
-                    style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-                  />
-                ) : (
-                  <span className="muted-text" style={{ fontSize: 12 }}>Нет фото</span>
-                )}
+            <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 8, maxWidth: 320 }}>
+              <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+                <div
+                  style={{
+                    width: 88,
+                    height: 88,
+                    borderRadius: 12,
+                    border: '1px solid var(--border)',
+                    overflow: 'hidden',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    background: 'var(--surface)',
+                  }}
+                >
+                  {formData.image_url ? (
+                    <img
+                      src={productImageDisplaySrc(formData.image_url)}
+                      alt=""
+                      style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                    />
+                  ) : (
+                    <span className="muted-text" style={{ fontSize: 12 }}>Нет фото</span>
+                  )}
+                </div>
+                <div style={{ flex: 1, minWidth: 160 }}>
+                  <label
+                    className="btn-ios-secondary"
+                    style={{
+                      cursor: formData.id && !imageUploading ? 'pointer' : 'not-allowed',
+                      opacity: formData.id && !imageUploading ? 1 : 0.6,
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 6,
+                    }}
+                  >
+                    {imageUploading ? `Загрузка${imageUploadPct != null ? ` ${imageUploadPct}%` : '…'}` : formData.image_url ? 'Заменить фото' : 'Загрузить фото'}
+                    <input
+                      type="file"
+                      accept="image/png,image/jpeg,image/webp"
+                      onChange={handleUploadProductImage}
+                      disabled={!formData.id || imageUploading}
+                      style={{ display: 'none' }}
+                    />
+                  </label>
+                  {imageUploading && imageUploadPct != null && (
+                    <div style={{ marginTop: 8, height: 6, borderRadius: 4, background: 'var(--border)', overflow: 'hidden' }}>
+                      <div
+                        style={{
+                          height: '100%',
+                          width: `${imageUploadPct}%`,
+                          background: 'linear-gradient(90deg, #6366f1, #7c3aed)',
+                          transition: 'width 0.12s ease',
+                        }}
+                      />
+                    </div>
+                  )}
+                </div>
               </div>
-              <label
-                className="btn-ios-secondary"
-                style={{
-                  cursor: formData.id && !imageUploading ? 'pointer' : 'not-allowed',
-                  opacity: formData.id && !imageUploading ? 1 : 0.6,
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: 6,
-                }}
-              >
-                {imageUploading ? 'Загрузка…' : formData.image_url ? 'Заменить фото' : 'Загрузить фото'}
-                <input
-                  type="file"
-                  accept="image/png,image/jpeg,image/webp"
-                  onChange={handleUploadProductImage}
-                  disabled={!formData.id || imageUploading}
-                  style={{ display: 'none' }}
-                />
-              </label>
             </div>
           </div>
 
