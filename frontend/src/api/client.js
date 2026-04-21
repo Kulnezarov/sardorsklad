@@ -147,6 +147,13 @@ export const productApi = {
       timeout: timeout ?? 0,
     })
   },
+  uploadProductImage: (id, file) => {
+    const formData = new FormData()
+    formData.append('file', file)
+    return apiClient.post(`/api/v1/products/${id}/image`, formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    })
+  },
   exportExcel: (filters = {}) =>
     apiClient.get('/api/v1/products/export/excel', {
       params: filters,

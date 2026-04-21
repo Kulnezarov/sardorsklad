@@ -4,19 +4,13 @@ import { keepPreviousData, useInfiniteQuery, useMutation, useQuery, useQueryClie
 import toast from 'react-hot-toast';
 import {
   FiPlus, FiEdit2, FiTrash2, FiSearch, FiAlertTriangle,
-  FiMic, FiMicOff, FiGrid, FiShoppingCart, FiLock, FiUnlock, FiRefreshCw, FiMaximize2,
+  FiImage, FiGrid, FiShoppingCart, FiLock, FiUnlock, FiRefreshCw, FiMaximize2,
   FiTag, FiUpload, FiDownload, FiX, FiLoader, FiClock, FiPackage,
 } from 'react-icons/fi';
 import { Button, Modal, Input, TextArea, LoadingSpinner, Alert } from '../components/ui';
 import { productApi } from '../api/client';
 import { importExcelStream } from '../api/importExcelStream';
 import { settingsApi } from '../api/settings';
-import {
-  isSpeechRecognitionSupported,
-  isAddProductCommand,
-  startListening,
-  parseVoiceSmart,
-} from '../voice/productVoiceFill';
 import { generateEAN13 } from '../utils/barcodeGen';
 import LabelPrint from '../components/LabelPrint';
 import { QRCodeSVG } from 'qrcode.react';
@@ -87,6 +81,7 @@ const emptyForm = () => ({
   id: null, name: '', sku: '', barcode: '', brand: '', category: '',
   purchase_price: 0, sale_price: 0, cny_price: '', delivery_cost_kzt: '', delivery_weight_kg: '',
   quantity: 0, min_quantity: 0, description: '', supplier: '', storage_location: '',
+  image_url: '',
 });
 
 const num = (v) => { if (v === '' || v == null) return 0; const n = parseFloat(String(v).replace(',', '.')); return Number.isFinite(n) ? n : 0; };
@@ -128,6 +123,7 @@ function buildPayload(formData, cnyRate = 65) {
     brand: formData.brand?.trim() || null,
     category: formData.category?.trim() || null,
     description: formData.description?.trim() || null,
+    image_url: formData.image_url?.trim() || null,
     supplier: formData.supplier?.trim() || null,
     location_zone: formData.storage_location?.trim() || null,
     purchase_price: purchase,
@@ -138,21 +134,6 @@ function buildPayload(formData, cnyRate = 65) {
     quantity: parseInt(formData.quantity, 10) || 0,
     min_quantity: parseInt(formData.min_quantity, 10) || 0,
   };
-}
-
-function mergeVoiceIntoForm(prev, updates) {
-  if (!updates) return prev;
-  const next = { ...prev };
-  Object.entries(updates).forEach(([k, v]) => {
-    if (v === undefined || v === null) return;
-    if (['name','brand','category','supplier'].includes(k)) next[k] = String(v);
-    else if (k === 'storage_location') next.storage_location = String(v);
-    else if (['cny_price','delivery_cost_kzt'].includes(k)) next[k] = String(v);
-    else if (k === 'sale_price') next.sale_price = Number(v) || 0;
-    else if (k === 'quantity') next.quantity = Number(v) || 0;
-    else next[k] = v;
-  });
-  return next;
 }
 
 function genMathProblem() {
@@ -202,8 +183,7 @@ const Products = () => {
   const [showPrintSuggest, setShowPrintSuggest] = useState(false);
   const [savedProduct, setSavedProduct] = useState(null);
 
-  const [voiceListening, setVoiceListening] = useState(false);
-  const [voiceLastText, setVoiceLastText] = useState('');
+  const [imageUploading, setImageUploading] = useState(false);
 
   const [importReport, setImportReport] = useState(null);
   const [importOverlay, setImportOverlay] = useState(null);
@@ -215,7 +195,6 @@ const Products = () => {
   const importAbortRef = useRef(null);
   const searchWrapRef = useRef(null);
   const importFileRef = useRef(null);
-  const voiceCtlRef = useRef(null);
   const barcodeCanvasRef = useRef(null);
   const formRef = useRef(formData);
   const productsRef = useRef([]);
@@ -254,12 +233,12 @@ const Products = () => {
   const cnyRate = Number(settingsRow?.cny_rate) || 65;
   const deliveryKztPerKg = Number(settingsRow?.delivery_kzt_per_kg) || 800;
 
-  // Voice: open form on openVoiceAdd from nav
-  // Also handles openAdd + barcode from Sales page scanner
+  // openVoiceAdd: открыть форму нового товара (как «Добавить»)
+  // openAdd + barcode: со страницы продаж
   useEffect(() => {
     if (location.state?.openVoiceAdd) {
       setFormData({ ...emptyForm(), barcode: generateEAN13() });
-      setFormError(''); setBarcodeLocked(false); setShowQrPanel(false); setShowForm(true); setVoiceLastText('');
+      setFormError(''); setBarcodeLocked(false); setShowQrPanel(false); setShowForm(true);
       navigate(location.pathname, { replace: true, state: {} });
     } else if (location.state?.openAdd) {
       const bc = location.state.barcode || '';
@@ -534,53 +513,7 @@ const Products = () => {
   });
 
   /* form helpers */
-  const resetForm = () => { stopVoice(); setFormData(emptyForm()); setShowForm(false); setFormError(''); setBarcodeLocked(false); setShowQrPanel(false); setVoiceLastText(''); };
-  const stopVoice = () => { voiceCtlRef.current?.stop?.(); voiceCtlRef.current?.abort?.(); voiceCtlRef.current = null; setVoiceListening(false); };
-
-  const applyVoiceResult = (text) => {
-    setVoiceLastText(text);
-    if (isAddProductCommand(text) && !showForm) { setFormData({ ...emptyForm(), barcode: generateEAN13() }); setBarcodeLocked(false); setShowForm(true); return; }
-    if (!showForm) return;
-    const parsed = parseVoiceSmart(text);
-    if (parsed.command === 'stop') { toast.success('Микрофон выключен'); return; }
-    if (parsed.command === 'save') {
-      const fd = formRef.current;
-      if (!fd.name?.trim()) { toast.error('Укажите название'); return; }
-      if (num(fd.sale_price) <= 0) { toast.error('Укажите цену продажи'); return; }
-      saveMutation.mutate(buildPayload(fd, cnyRate)); return;
-    }
-    if (parsed.updates && Object.keys(parsed.updates).length) { setFormData((prev) => mergeVoiceIntoForm(prev, parsed.updates)); toast.success('Готово'); return; }
-    toast('Не распознано', { icon: '🎤' });
-  };
-
-  const toggleVoiceFill = () => {
-    if (voiceListening) { stopVoice(); return; }
-    if (!isSpeechRecognitionSupported()) { toast.error('Голос не поддерживается'); return; }
-    setVoiceListening(true); setVoiceLastText('');
-    voiceCtlRef.current = startListening({
-      continuous: false,
-      onInterim: (t) => setVoiceLastText(t),
-      onResult: (finalText) => { stopVoice(); applyVoiceResult(finalText); },
-      onError: (msg) => { toast.error(msg); stopVoice(); },
-    });
-  };
-
-  const listenForAddProductPhrase = () => {
-    if (!isSpeechRecognitionSupported()) { toast.error('Голос не поддерживается'); return; }
-    stopVoice(); setVoiceListening(true); setVoiceLastText('');
-    voiceCtlRef.current = startListening({
-      continuous: false,
-      onInterim: (t) => setVoiceLastText(t),
-      onResult: (finalText) => {
-        stopVoice();
-        if (isAddProductCommand(finalText)) { setFormData({ ...emptyForm(), barcode: generateEAN13() }); setFormError(''); setBarcodeLocked(false); setShowForm(true); toast.success('Форма открыта'); }
-        else { toast('Скажите: «добавить товар»', { icon: '🎤' }); }
-      },
-      onError: (msg) => { toast.error(msg); stopVoice(); },
-    });
-  };
-
-  useEffect(() => () => stopVoice(), []);
+  const resetForm = () => { setFormData(emptyForm()); setShowForm(false); setFormError(''); setBarcodeLocked(false); setShowQrPanel(false); };
 
   const showFormRef = useRef(false);
   const blockScanRef = useRef(false);
@@ -694,6 +627,7 @@ const Products = () => {
       delivery_weight_kg: wKg,
       supplier: product.supplier || '',
       storage_location: product.location_zone || '',
+      image_url: product.image_url || '',
     });
     setShowForm(true); setBarcodeLocked(true); setShowQrPanel(false); setFormError('');
     setSideProduct(null);
@@ -703,10 +637,42 @@ const Products = () => {
     e?.preventDefault?.(); setFormError('');
     if (!formData.name?.trim()) { setFormError('Название товара обязательно'); return; }
     if (num(formData.sale_price) <= 0) { setFormError('Цена продажи должна быть больше 0'); return; }
-    stopVoice(); saveMutation.mutate(buildPayload(formData, cnyRate));
+    saveMutation.mutate(buildPayload(formData, cnyRate));
   };
 
   const openNew = () => { setFormData({ ...emptyForm(), barcode: generateEAN13() }); setFormError(''); setBarcodeLocked(false); setShowQrPanel(false); setShowForm(true); };
+
+  const getImagePreviewUrl = (url) => {
+    if (!url) return '';
+    if (url.startsWith('http://') || url.startsWith('https://')) return url;
+    return `${window.location.origin}${url.startsWith('/') ? '' : '/'}${url}`;
+  };
+
+  const handleUploadProductImage = async (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+    if (!formData.id) {
+      toast.error('Сначала сохраните товар, затем загрузите фото');
+      return;
+    }
+    if (!file.type.startsWith('image/')) {
+      toast.error('Выберите файл изображения (JPG, PNG, WEBP)');
+      return;
+    }
+    setImageUploading(true);
+    try {
+      const response = await productApi.uploadProductImage(formData.id, file);
+      const imageUrl = response?.data?.image_url || '';
+      setFormData((prev) => ({ ...prev, image_url: imageUrl }));
+      await queryClient.invalidateQueries({ queryKey: ['products'] });
+      toast.success('Фото обновлено');
+    } catch (err) {
+      toast.error(err.response?.data?.detail || 'Не удалось загрузить фото');
+    } finally {
+      setImageUploading(false);
+    }
+  };
 
   const openDeleteConfirm = (product, e) => {
     e?.stopPropagation?.();
@@ -830,12 +796,6 @@ const Products = () => {
             <FiDownload size={15} /> Экспорт
           </button>
           <input ref={importFileRef} type="file" accept=".xlsx,.xlsm,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" style={{ display: 'none' }} onChange={(e) => { const f = e.target.files?.[0]; if (f) importMutation.mutate(f); e.target.value = ''; }} />
-          {isSpeechRecognitionSupported() && (
-            <button type="button" onClick={voiceListening ? stopVoice : listenForAddProductPhrase} style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '9px 14px', borderRadius: 12, border: '1px solid var(--border)', background: voiceListening ? '#fee2e2' : 'var(--surface)', fontWeight: 600, fontSize: 13, cursor: 'pointer', color: voiceListening ? 'var(--danger)' : 'var(--text)', transition: 'var(--transition)' }}>
-              {voiceListening ? <FiMicOff size={15} /> : <FiMic size={15} />}
-              Голос
-            </button>
-          )}
           <button type="button" onClick={openNew} style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '9px 16px', borderRadius: 12, border: '1px solid #4f46e5', background: 'linear-gradient(135deg, #6366f1, #7c3aed)', color: '#fff', fontWeight: 600, fontSize: 13, cursor: 'pointer', boxShadow: 'none', willChange: 'transform' }}>
             <FiPlus size={16} strokeWidth={2.5} /> Добавить товар
           </button>
@@ -1178,18 +1138,60 @@ const Products = () => {
       >
         {formError && <Alert type="danger" message={formError} onClose={() => setFormError('')} style={{ marginBottom: 16 }} />}
 
-        {isSpeechRecognitionSupported() && showForm && (
-          <div style={{ marginBottom: 18, padding: '12px 16px', borderRadius: 'var(--radius-ios)', background: 'var(--ios-grouped-bg)', border: '1px solid var(--border)' }}>
+        <div style={{ marginBottom: 18, padding: '12px 16px', borderRadius: 'var(--radius-ios)', background: 'var(--ios-grouped-bg)', border: '1px solid var(--border)' }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
               <div>
-                <div style={{ fontWeight: 600, fontSize: 14 }}>Голосовое заполнение</div>
-                <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>«название тормоза категория тормоз марка чанган количество 10 стоимость 2000» или по частям</div>
+                <div style={{ fontWeight: 600, fontSize: 14, display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <FiImage size={16} /> Фото товара
+                </div>
+                <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>JPG, PNG или WEBP (на сервере сохраняется как WebP). Сначала сохраните товар, затем загрузите фото.</div>
               </div>
-              <Button variant={voiceListening ? 'danger' : 'secondary'} icon={voiceListening ? FiMicOff : FiMic} onClick={toggleVoiceFill}>{voiceListening ? 'Стоп' : 'Слушать'}</Button>
             </div>
-            {(voiceListening || voiceLastText) && <div style={{ marginTop: 10, fontSize: 13, color: 'var(--text-secondary)', fontStyle: voiceListening ? 'italic' : 'normal' }}>{voiceListening ? 'Слушаю… ' : ''}{voiceLastText || '—'}</div>}
+            <div style={{ marginTop: 12, display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+              <div
+                style={{
+                  width: 88,
+                  height: 88,
+                  borderRadius: 12,
+                  border: '1px solid var(--border)',
+                  overflow: 'hidden',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  background: 'var(--surface)',
+                }}
+              >
+                {formData.image_url ? (
+                  <img
+                    src={getImagePreviewUrl(formData.image_url)}
+                    alt=""
+                    style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                  />
+                ) : (
+                  <span className="muted-text" style={{ fontSize: 12 }}>Нет фото</span>
+                )}
+              </div>
+              <label
+                className="btn-ios-secondary"
+                style={{
+                  cursor: formData.id && !imageUploading ? 'pointer' : 'not-allowed',
+                  opacity: formData.id && !imageUploading ? 1 : 0.6,
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 6,
+                }}
+              >
+                {imageUploading ? 'Загрузка…' : formData.image_url ? 'Заменить фото' : 'Загрузить фото'}
+                <input
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp"
+                  onChange={handleUploadProductImage}
+                  disabled={!formData.id || imageUploading}
+                  style={{ display: 'none' }}
+                />
+              </label>
+            </div>
           </div>
-        )}
 
         <form className="ios-form-stack" onSubmit={handleSubmit}>
           <div>
