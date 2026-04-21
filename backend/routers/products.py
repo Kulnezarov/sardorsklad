@@ -3,6 +3,7 @@ import json
 import os
 import threading
 import uuid
+from io import BytesIO
 from datetime import datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -11,6 +12,7 @@ from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from fastapi.responses import JSONResponse, StreamingResponse
+from PIL import Image, ImageOps
 from sqlalchemy import func, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -37,7 +39,9 @@ def build_generated_sku(db: Session) -> str:
 UPLOAD_DIR = Path(os.getenv("UPLOAD_DIR", "uploads")).resolve()
 PRODUCT_IMAGE_DIR = UPLOAD_DIR / "products"
 MAX_IMAGE_SIZE_BYTES = 5 * 1024 * 1024
-ALLOWED_IMAGE_TYPES = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp"}
+ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp"}
+MAX_IMAGE_DIMENSION = 1600
+WEBP_QUALITY = 78
 
 
 @router.get("/", response_model=List[schemas.ProductResponse])
@@ -402,8 +406,7 @@ async def upload_product_image(
         raise HTTPException(status_code=404, detail="Product not found")
 
     content_type = (file.content_type or "").lower()
-    ext = ALLOWED_IMAGE_TYPES.get(content_type)
-    if not ext:
+    if content_type not in ALLOWED_IMAGE_TYPES:
         raise HTTPException(status_code=400, detail="Допустимы только JPG, PNG, WEBP")
 
     data = await file.read()
@@ -412,10 +415,20 @@ async def upload_product_image(
     if len(data) > MAX_IMAGE_SIZE_BYTES:
         raise HTTPException(status_code=400, detail="Файл слишком большой (макс. 5 МБ)")
 
+    try:
+        with Image.open(BytesIO(data)) as img:
+            img = ImageOps.exif_transpose(img)
+            img.thumbnail((MAX_IMAGE_DIMENSION, MAX_IMAGE_DIMENSION), Image.Resampling.LANCZOS)
+            out = BytesIO()
+            img.save(out, format="WEBP", quality=WEBP_QUALITY, method=6, optimize=True)
+            encoded = out.getvalue()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Не удалось обработать изображение")
+
     PRODUCT_IMAGE_DIR.mkdir(parents=True, exist_ok=True)
-    file_name = f"{product_id}_{uuid.uuid4().hex}.{ext}"
+    file_name = f"{product_id}_{uuid.uuid4().hex}.webp"
     file_path = PRODUCT_IMAGE_DIR / file_name
-    file_path.write_bytes(data)
+    file_path.write_bytes(encoded)
 
     # Удаляем старый локальный файл изображения, если он из нашего uploads.
     old_url = (db_product.image_url or "").strip()
