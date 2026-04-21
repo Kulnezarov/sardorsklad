@@ -1,8 +1,11 @@
 import asyncio
 import json
+import os
 import threading
+import uuid
 from datetime import datetime, timedelta
 from decimal import Decimal
+from pathlib import Path
 from typing import List, Optional
 from urllib.parse import quote
 
@@ -29,6 +32,12 @@ router = APIRouter(
 def build_generated_sku(db: Session) -> str:
     last_id = db.query(func.max(models.Product.id)).scalar() or 0
     return f"AUTO-{last_id + 1:06d}"
+
+
+UPLOAD_DIR = Path(os.getenv("UPLOAD_DIR", "uploads")).resolve()
+PRODUCT_IMAGE_DIR = UPLOAD_DIR / "products"
+MAX_IMAGE_SIZE_BYTES = 5 * 1024 * 1024
+ALLOWED_IMAGE_TYPES = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp"}
 
 
 @router.get("/", response_model=List[schemas.ProductResponse])
@@ -380,6 +389,48 @@ def update_product(
         raise HTTPException(status_code=500, detail="Не удалось обновить товар в базе")
     db.refresh(db_product)
     return db_product
+
+
+@router.post("/{product_id}/image")
+async def upload_product_image(
+    product_id: int,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+):
+    db_product = db.query(models.Product).filter(models.Product.id == product_id).first()
+    if not db_product:
+        raise HTTPException(status_code=404, detail="Product not found")
+
+    content_type = (file.content_type or "").lower()
+    ext = ALLOWED_IMAGE_TYPES.get(content_type)
+    if not ext:
+        raise HTTPException(status_code=400, detail="Допустимы только JPG, PNG, WEBP")
+
+    data = await file.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="Файл пустой")
+    if len(data) > MAX_IMAGE_SIZE_BYTES:
+        raise HTTPException(status_code=400, detail="Файл слишком большой (макс. 5 МБ)")
+
+    PRODUCT_IMAGE_DIR.mkdir(parents=True, exist_ok=True)
+    file_name = f"{product_id}_{uuid.uuid4().hex}.{ext}"
+    file_path = PRODUCT_IMAGE_DIR / file_name
+    file_path.write_bytes(data)
+
+    # Удаляем старый локальный файл изображения, если он из нашего uploads.
+    old_url = (db_product.image_url or "").strip()
+    if old_url.startswith("/uploads/products/"):
+        old_file = PRODUCT_IMAGE_DIR / old_url.split("/")[-1]
+        if old_file.exists() and old_file.is_file():
+            try:
+                old_file.unlink()
+            except OSError:
+                pass
+
+    db_product.image_url = f"/uploads/products/{file_name}"
+    db.commit()
+    db.refresh(db_product)
+    return {"ok": True, "image_url": db_product.image_url}
 
 
 @router.delete("/{product_id}")

@@ -23,6 +23,7 @@ const emptyForm = {
   location_position: '',
   location_zone: '',
   description: '',
+  image_url: '',
 };
 
 const normalize = (value) =>
@@ -53,6 +54,7 @@ const Warehouse = () => {
   const [barcodeLocked, setBarcodeLocked] = useState(true);
   const [printType, setPrintType] = useState('barcode');
   const [formData, setFormData] = useState(emptyForm);
+  const [imageUploading, setImageUploading] = useState(false);
   const queryClient = useQueryClient();
 
   const { data: products = [], isLoading } = useQuery({
@@ -142,6 +144,40 @@ const Warehouse = () => {
       sale_price: Number(formData.sale_price) || 0,
       cny_price: Number(formData.cny_price) || 0,
     });
+  };
+
+  const getImagePreviewUrl = (url) => {
+    if (!url) return '';
+    if (url.startsWith('http://') || url.startsWith('https://')) return url;
+    const origin = window.location.origin;
+    return `${origin}${url.startsWith('/') ? '' : '/'}${url}`;
+  };
+
+  const handleUploadImage = async (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+    if (!formData.id) {
+      toast.error('Сначала сохраните товар, потом загрузите фото');
+      return;
+    }
+    if (!file.type.startsWith('image/')) {
+      toast.error('Выберите файл изображения');
+      return;
+    }
+    setImageUploading(true);
+    try {
+      const response = await productsApi.uploadProductImage(formData.id, file);
+      const imageUrl = response?.data?.image_url || '';
+      setFormData((prev) => ({ ...prev, image_url: imageUrl }));
+      setSelectedProduct((prev) => (prev ? { ...prev, image_url: imageUrl } : prev));
+      queryClient.invalidateQueries({ queryKey: ['products'] });
+      toast.success('Фото товара обновлено');
+    } catch (error) {
+      toast.error(error.response?.data?.detail || 'Не удалось загрузить фото');
+    } finally {
+      setImageUploading(false);
+    }
   };
 
   return (
@@ -347,6 +383,47 @@ const Warehouse = () => {
               onChange={(event) => handleChange('description', event.target.value)}
             />
           </label>
+
+          <div className="surface-card" style={{ padding: 12 }}>
+            <div className="section-note" style={{ marginBottom: 8 }}>
+              Фото товара
+            </div>
+            <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+              <div
+                style={{
+                  width: 96,
+                  height: 96,
+                  borderRadius: 12,
+                  border: '1px solid var(--border)',
+                  overflow: 'hidden',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  background: 'var(--surface)',
+                }}
+              >
+                {formData.image_url ? (
+                  <img
+                    src={getImagePreviewUrl(formData.image_url)}
+                    alt={formData.name || 'product'}
+                    style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                  />
+                ) : (
+                  <span className="muted-text" style={{ fontSize: 12 }}>Нет фото</span>
+                )}
+              </div>
+              <label className="button button-secondary" style={{ cursor: formData.id && !imageUploading ? 'pointer' : 'not-allowed', opacity: formData.id && !imageUploading ? 1 : 0.6 }}>
+                {imageUploading ? 'Загрузка...' : formData.image_url ? 'Заменить фото' : 'Загрузить фото'}
+                <input
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp"
+                  onChange={handleUploadImage}
+                  disabled={!formData.id || imageUploading}
+                  style={{ display: 'none' }}
+                />
+              </label>
+            </div>
+          </div>
 
           <div className="modal-actions-bar">
             {formData.id && (

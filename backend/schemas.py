@@ -82,6 +82,7 @@ class ProductUpdate(BaseModel):
     brand: Optional[str] = Field(None, max_length=100)
     category: Optional[str] = Field(None, max_length=100)
     description: Optional[str] = None
+    image_url: Optional[str] = None
     purchase_price: Optional[Money10_2] = None
     sale_price: Optional[Money10_2] = None
     cny_price: Optional[Money10_2] = None

@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
+from fastapi.staticfiles import StaticFiles
 from datetime import date, datetime
 from enum import Enum
 from sqlalchemy.exc import OperationalError
@@ -330,6 +331,11 @@ app.add_middleware(
     allow_headers=["*"],
     expose_headers=["*"],
 )
+
+# Локальное хранилище фото товаров (uploads/*).
+uploads_dir = os.getenv("UPLOAD_DIR", "uploads")
+os.makedirs(uploads_dir, exist_ok=True)
+app.mount("/uploads", StaticFiles(directory=uploads_dir), name="uploads")
 
 
 # ============================================================================
