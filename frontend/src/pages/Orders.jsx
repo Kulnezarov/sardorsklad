@@ -11,6 +11,8 @@ import {
   FiLayers,
   FiCheck,
   FiX,
+  FiCopy,
+  FiMessageCircle,
 } from 'react-icons/fi';
 import { orderApi } from '../api/client';
 
@@ -47,6 +49,78 @@ function errMessage(err) {
   return 'Не удалось выполнить действие';
 }
 
+function lineAmountItem(it) {
+  if (it.line_total != null && it.line_total !== '') return Number(it.line_total);
+  const q = it.quantity ?? it.quantity_ordered ?? 0;
+  const p = it.sale_price_snapshot ?? it.price_kzt ?? 0;
+  return Number(p) * Number(q);
+}
+
+/** Для wa.me: только цифры, 10-значный KZ/РФ — добавляем 7 */
+function digitsForWhatsApp(raw) {
+  let d = String(raw || '').replace(/\D/g, '');
+  if (!d) return '';
+  if (d.length === 10) return `7${d}`;
+  if (d.length === 11 && d.startsWith('8')) return `7${d.slice(1)}`;
+  return d;
+}
+
+function buildItemsLines(order) {
+  return (order.items || []).map((it) => {
+    const n = it.product_name || it.name || 'Товар';
+    const q = it.quantity ?? it.quantity_ordered ?? 0;
+    const a = lineAmountItem(it);
+    return `• ${n} × ${q} = ${money(a)} ₸`;
+  });
+}
+
+function buildWhatsappText(order) {
+  const code = order.order_code || `#${order.id}`;
+  const sum = money(order.total_amount || order.total_amount_kzt);
+  const name = (order.customer_name || 'клиент').trim();
+  const phone = (order.customer_phone || '').trim() || 'не указан';
+  const when = fmtWhen(order.created_at);
+  const src = sourceLabel(order.source);
+  const lines = buildItemsLines(order);
+  const block = [
+    'Здравствуйте!',
+    `Вы оформили заказ ${code} на сайте (источник: ${src}).`,
+    `Дата: ${when}.`,
+    `Сумма заказа: ${sum} ₸.`,
+    `Контактное имя: ${name}.`,
+    `Телефон: ${phone}.`,
+    lines.length ? `Позиции:\n${lines.join('\n')}` : null,
+    order.notes && String(order.notes).trim() ? `Комментарий и доставка:\n${String(order.notes).trim()}` : null,
+  ]
+    .filter(Boolean)
+    .join('\n\n');
+  return block;
+}
+
+/** Один блок для вставки в мессенджер / Excel */
+function buildManagerClipboardText(order) {
+  const code = order.order_code || `#${order.id}`;
+  const sum = money(order.total_amount || order.total_amount_kzt);
+  const name = (order.customer_name || '—').trim();
+  const phone = (order.customer_phone || '—').trim();
+  const when = fmtWhen(order.created_at);
+  const src = sourceLabel(order.source);
+  const st = displayStatus(order.status);
+  const lines = buildItemsLines(order);
+  return [
+    `Заказ ${code} · ${st}`,
+    `Создан: ${when}`,
+    `Источник: ${src}`,
+    `Сумма: ${sum} ₸`,
+    `Имя: ${name}`,
+    `Телефон: ${phone}`,
+    lines.length ? `Позиции:\n${lines.join('\n')}` : 'Позиции: —',
+    order.notes && String(order.notes).trim() ? `Комментарий / доставка:\n${String(order.notes).trim()}` : null,
+  ]
+    .filter(Boolean)
+    .join('\n\n');
+}
+
 export default function Orders() {
   const queryClient = useQueryClient();
   const [status, setStatus] = useState('');
@@ -71,6 +145,19 @@ export default function Orders() {
     return { count: list.length, sum, site };
   }, [orders]);
 
+  const copyText = async (text, successMsg) => {
+    if (!text) {
+      toast.error('Нечего копировать');
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(text);
+      toast.success(successMsg || 'Скопировано');
+    } catch {
+      toast.error('Не удалось скопировать');
+    }
+  };
+
   const statusMut = useMutation({
     mutationFn: ({ id, nextStatus }) => orderApi.updateStatus(id, { status: nextStatus }),
     onSuccess: (_, vars) => {
@@ -91,12 +178,7 @@ export default function Orders() {
       .catch(() => toast.error('Не удалось запустить повтор'));
   };
 
-  const lineAmount = (it) => {
-    if (it.line_total != null && it.line_total !== '') return Number(it.line_total);
-    const q = it.quantity ?? it.quantity_ordered ?? 0;
-    const p = it.sale_price_snapshot ?? it.price_kzt ?? 0;
-    return Number(p) * Number(q);
-  };
+  const lineAmount = (it) => lineAmountItem(it);
 
   const handleIssue = () => {
     if (!selectedOrder) return;
@@ -109,6 +191,17 @@ export default function Orders() {
     statusMut.mutate({ id: selectedOrder.id, nextStatus: 'Отменен' });
   };
 
+  const openWhatsApp = (order) => {
+    const d = digitsForWhatsApp(order.customer_phone);
+    if (!d || d.length < 10) {
+      toast.error('Номер для WhatsApp не распознан — проверьте телефон');
+      return;
+    }
+    const text = buildWhatsappText(order);
+    const url = `https://wa.me/${d}?text=${encodeURIComponent(text)}`;
+    window.open(url, '_blank', 'noopener,noreferrer');
+  };
+
   return (
     <div className="page-ios orders-page">
       <header className="orders-header">
@@ -118,7 +211,7 @@ export default function Orders() {
             Заказы
           </h1>
           <p className="orders-subtitle">
-            Новые заказы обрабатывайте кнопками «Выдано» (списание со склада) или «Отменить».
+            Имя и сумма выделены. Телефон — кнопка «Скопировать». Готовый текст в WhatsApp — одна кнопка.
           </p>
         </div>
         <button type="button" className="orders-btn-ghost" onClick={retryTelegram}>
@@ -217,7 +310,9 @@ export default function Orders() {
             <>
               <div className="orders-detail-head">
                 <div>
-                  <h2 className="orders-detail-title">Заказ {selectedOrder.order_code || `#${selectedOrder.id}`}</h2>
+                  <h2 className="orders-detail-title">
+                    Заказ <span className="orders-v-name">{selectedOrder.order_code || `#${selectedOrder.id}`}</span>
+                  </h2>
                   <div className="orders-detail-sub">
                     <span>
                       <FiCalendar size={14} aria-hidden /> {fmtWhen(selectedOrder.created_at)}
@@ -252,18 +347,54 @@ export default function Orders() {
                 </div>
               )}
 
+              <div className="orders-contact-btns">
+                <button
+                  type="button"
+                  className="orders-wa-btn"
+                  onClick={() => openWhatsApp(selectedOrder)}
+                >
+                  <FiMessageCircle size={16} aria-hidden />
+                  Написать в WhatsApp
+                </button>
+                <button
+                  type="button"
+                  className="orders-copy-btn"
+                  onClick={() => copyText(buildManagerClipboardText(selectedOrder), 'Все реквизиты заказа скопированы')}
+                >
+                  <FiCopy size={16} aria-hidden />
+                  Скопировать всё
+                </button>
+              </div>
+
               <div className="orders-detail-grid">
-                <div className="orders-kv">
-                  <span className="orders-k">Клиент</span>
-                  <span className="orders-v">{selectedOrder.customer_name}</span>
+                <div className="orders-kv orders-kv--block">
+                  <span className="orders-k">Контактное имя</span>
+                  <div className="orders-v-name">{selectedOrder.customer_name || '—'}</div>
                 </div>
-                <div className="orders-kv">
+                <div className="orders-kv orders-kv--block">
                   <span className="orders-k">Телефон</span>
-                  <span className="orders-v">{selectedOrder.customer_phone || '—'}</span>
+                  <div className="orders-phone-line">
+                    <span>{selectedOrder.customer_phone || '—'}</span>
+                    {selectedOrder.customer_phone && (
+                      <button
+                        type="button"
+                        className="orders-copy-btn"
+                        onClick={() =>
+                          copyText(
+                            String(selectedOrder.customer_phone).replace(/\s/g, ''),
+                            'Номер скопирован',
+                          )
+                        }
+                      >
+                        <FiCopy size={14} aria-hidden />
+                        Скопировать номер
+                      </button>
+                    )}
+                  </div>
                 </div>
                 <div className="orders-kv">
                   <span className="orders-k">Источник</span>
-                  <span className="orders-v">{sourceLabel(selectedOrder.source)}</span>
+                  <span className="orders-v orders-v-strong">{sourceLabel(selectedOrder.source)}</span>
                 </div>
                 <div className="orders-kv">
                   <span className="orders-k">Сумма</span>
@@ -272,8 +403,8 @@ export default function Orders() {
               </div>
 
               {selectedOrder.notes ? (
-                <div className="orders-notes">
-                  <div className="orders-notes-label">Комментарий / доставка</div>
+                <div className="orders-notes notes-block-emphasis">
+                  <div className="orders-notes-label">Комментарий и доставка</div>
                   <pre className="orders-notes-body">{selectedOrder.notes}</pre>
                 </div>
               ) : null}
@@ -295,10 +426,14 @@ export default function Orders() {
                   <tbody>
                     {(selectedOrder.items || []).map((it) => (
                       <tr key={it.id}>
-                        <td>{it.product_name}</td>
+                        <td>
+                          <strong>{it.product_name}</strong>
+                        </td>
                         <td className="orders-table-num">{it.quantity ?? it.quantity_ordered}</td>
                         <td className="orders-table-num">{money(it.sale_price_snapshot ?? it.price_kzt)}</td>
-                        <td className="orders-table-num">{money(lineAmount(it))}</td>
+                        <td className="orders-table-num">
+                          <strong>{money(lineAmount(it))}</strong>
+                        </td>
                       </tr>
                     ))}
                   </tbody>

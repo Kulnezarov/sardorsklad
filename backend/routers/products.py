@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 import os
 import threading
 import uuid
@@ -42,6 +43,29 @@ MAX_IMAGE_SIZE_BYTES = 5 * 1024 * 1024
 ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp"}
 MAX_IMAGE_DIMENSION = 1600
 WEBP_QUALITY = 78
+
+
+def _prepare_for_webp(img: Image.Image) -> Image.Image:
+    """JPEG/PNG/WebP → режим, с которым Pillow стабильно пишет WEBP."""
+    mode = img.mode
+    if mode == "CMYK":
+        return img.convert("RGB")
+    if mode == "P":
+        # Палитра: с прозрачностью → RGBA, иначе RGB
+        if "transparency" in img.info:
+            return img.convert("RGBA")
+        return img.convert("RGB")
+    if mode == "PA":
+        return img.convert("RGBA")
+    if mode == "L":
+        return img.convert("RGB")
+    if mode == "LA":
+        return img.convert("RGBA")
+    if mode in ("RGB", "RGBA"):
+        return img
+    has_a = "A" in (img.getbands() or ())
+    tr = bool(getattr(img, "has_transparency_data", False) or has_a)
+    return img.convert("RGBA" if tr else "RGB")
 
 
 @router.get("/", response_model=List[schemas.ProductResponse])
@@ -405,25 +429,39 @@ async def upload_product_image(
     if not db_product:
         raise HTTPException(status_code=404, detail="Product not found")
 
-    content_type = (file.content_type or "").lower()
-    if content_type not in ALLOWED_IMAGE_TYPES:
-        raise HTTPException(status_code=400, detail="Допустимы только JPG, PNG, WEBP")
-
     data = await file.read()
     if not data:
         raise HTTPException(status_code=400, detail="Файл пустой")
     if len(data) > MAX_IMAGE_SIZE_BYTES:
         raise HTTPException(status_code=400, detail="Файл слишком большой (макс. 5 МБ)")
 
+    # Content-Type у браузера иногда пустой или application/octet-stream — проверяем по сигнатуре/PIL
+    content_type = (file.content_type or "").lower()
+    if content_type and content_type not in ALLOWED_IMAGE_TYPES and content_type != "application/octet-stream":
+        raise HTTPException(status_code=400, detail="Ожидается изображение JPG, PNG или WEBP")
+
     try:
         with Image.open(BytesIO(data)) as img:
+            fmt = (img.format or "").upper()
+            if fmt and fmt not in ("JPEG", "JPG", "PNG", "WEBP"):
+                raise ValueError("unsupported format")
             img = ImageOps.exif_transpose(img)
+            img = _prepare_for_webp(img)
             img.thumbnail((MAX_IMAGE_DIMENSION, MAX_IMAGE_DIMENSION), Image.Resampling.LANCZOS)
             out = BytesIO()
-            img.save(out, format="WEBP", quality=WEBP_QUALITY, method=6, optimize=True)
+            # Всё сохраняем как сжатый WebP (один формат, одна папка uploads/products)
+            img.save(
+                out,
+                format="WEBP",
+                quality=WEBP_QUALITY,
+                method=6,
+                lossless=False,
+                optimize=True,
+            )
             encoded = out.getvalue()
-    except Exception:
-        raise HTTPException(status_code=400, detail="Не удалось обработать изображение")
+    except Exception as e:
+        logging.getLogger(__name__).warning("image upload failed: %s", e, exc_info=True)
+        raise HTTPException(status_code=400, detail="Не удалось обработать изображение (проверьте формат PNG/JPEG/WebP)")
 
     PRODUCT_IMAGE_DIR.mkdir(parents=True, exist_ok=True)
     file_name = f"{product_id}_{uuid.uuid4().hex}.webp"
