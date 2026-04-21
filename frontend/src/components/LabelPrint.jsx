@@ -63,7 +63,6 @@ function generateBarcodeDataUrl(value) {
 
 const LabelPrint = ({ isOpen, onClose, product, settings, initialLabelType = 'barcode' }) => {
   const [type, setType] = useState(initialLabelType);
-  const [copies, setCopies] = useState(1);
   const [custom, setCustom] = useState('');
   const [printing, setPrinting] = useState(false);
   const [sharing, setSharing] = useState(false);
@@ -152,7 +151,7 @@ const LabelPrint = ({ isOpen, onClose, product, settings, initialLabelType = 'ba
          ${!isQr ? `<div class="code-digits">${escHtml(barcodeVal)}</div>` : ''}`
       : `<div class="code-fail">Не удалось сгенерировать код</div>`;
 
-    const labelHtml = Array.from({ length: Math.max(1, Number(copies)) })
+    const labelHtml = Array.from({ length: 1 })
       .map(
         () =>
           `<div class="label ${isQr ? 'label--qr' : 'label--barcode'}">
@@ -611,38 +610,6 @@ const LabelPrint = ({ isOpen, onClose, product, settings, initialLabelType = 'ba
               </div>
             )}
 
-            <div style={{ marginBottom: 20 }}>
-              <div
-                style={{
-                  fontSize: 11,
-                  fontWeight: 700,
-                  color: 'var(--text-muted)',
-                  textTransform: 'uppercase',
-                  letterSpacing: '0.07em',
-                  marginBottom: 8,
-                }}
-              >
-                Копий
-              </div>
-              <input
-                className="ios-input"
-                type="number"
-                min="1"
-                max="100"
-                value={copies}
-                onChange={(e) => setCopies(Math.max(1, parseInt(e.target.value, 10) || 1))}
-                style={{ fontSize: 14, maxWidth: 120 }}
-              />
-            </div>
-
-            <div style={{ padding: '12px 14px', borderRadius: 14, background: 'var(--ios-grouped-bg)', border: '1px solid var(--border)', marginBottom: 12, fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.45 }}>
-              На печати: только изображение кода
-              {type === 'barcode' ? ' и строка цифр под ним' : ''}. Без названия товара и цены.
-              <div style={{ marginTop: 8, fontSize: 11, opacity: 0.95 }}>
-                <b>macOS:</b> в диалоге печати отключите колонтитулы, масштаб <b>100&nbsp;%</b>, выберите формат бумаги <b>60×40&nbsp;mm</b> (если есть) или созданный в CUPS.
-              </div>
-            </div>
-
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
               <button
                 type="button"
@@ -717,7 +684,7 @@ const LabelPrint = ({ isOpen, onClose, product, settings, initialLabelType = 'ba
                   }}
                 >
                   <FiPrinter size={17} />
-                  {printing ? 'Подготовка…' : `Печать · ${copies} шт`}
+                  {printing ? 'Подготовка…' : 'Печать'}
                 </button>
               </div>
             </div>
