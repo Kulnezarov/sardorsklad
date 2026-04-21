@@ -1,9 +1,11 @@
 import os
+import re
 import json
+from pathlib import Path
 from decimal import Decimal
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.exceptions import RequestValidationError
 from fastapi.staticfiles import StaticFiles
 from datetime import date, datetime
@@ -317,6 +319,31 @@ def api_info():
         "cache_enabled": os.getenv("CACHE_ENABLED", "true").lower() == "true",
         "notifications_enabled": os.getenv("NOTIFICATIONS_ENABLED", "true").lower() == "true",
     }
+
+
+# Публичная раздача фото товаров под /api/v1/... (тот же префикс, что и API — Caddy: handle /api* → backend).
+# Браузер в <img> не шлёт JWT; путь /uploads/... часто уходит в nginx SPA и картинка «битая».
+_PRODUCT_IMG_DIR = (Path(os.getenv("UPLOAD_DIR", "uploads")).resolve() / "products")
+_SAFE_PRODUCT_IMG = re.compile(r"^\d+_[0-9a-f]{32}\.webp$", re.IGNORECASE)
+
+
+@app.get("/api/v1/media/product-images/{file_name}", include_in_schema=False)
+def serve_product_image_public(file_name: str):
+    """WebP-файлы из uploads/products. Без авторизации (и витрина, и склад)."""
+    if not file_name or not _SAFE_PRODUCT_IMG.match(file_name):
+        raise HTTPException(status_code=404, detail="Not found")
+    path = (_PRODUCT_IMG_DIR / file_name).resolve()
+    try:
+        path.relative_to(_PRODUCT_IMG_DIR.resolve())
+    except ValueError as err:
+        raise HTTPException(status_code=404, detail="Not found") from err
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="Not found")
+    return FileResponse(
+        path,
+        media_type="image/webp",
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
 
 
 # ============================================================================

@@ -54,10 +54,9 @@ export function getResolvedApiBaseUrl() {
 }
 
 /**
- * URL для /uploads/... на превью в <img>.
- * - В **проде** (Vite :5173 нет): тот же origin, что и страница — Caddy проксирует /uploads на бэкенд.
- *   Иначе при сборке с VITE_API_URL на :8000 картинка шла на закрытый порт — «битая» иконка.
- * - В **dev** (порт 5173 и т.д.): хост/порт API (или тот же origin + proxy /uploads в vite.config).
+ * URL для /uploads/... или /api/v1/media/product-images/... в <img>.
+ * - **Прод** (без 5173): `window.location.origin` + path — Caddy `handle /api* → backend` и при необходимости /uploads.
+ * - **dev** (5173 и т.д.): хост/порт API, иначе картинка на :8000 не отдаётся с фронта.
  */
 export function resolveUploadedAssetUrl(relativeOrAbsolute) {
   const s = String(relativeOrAbsolute || '').trim()

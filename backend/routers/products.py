@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import threading
 import uuid
 from io import BytesIO
@@ -43,6 +44,31 @@ MAX_IMAGE_SIZE_BYTES = 5 * 1024 * 1024
 ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp"}
 MAX_IMAGE_DIMENSION = 1600
 WEBP_QUALITY = 78
+
+
+def _delete_old_product_image_file(old_url: str | None) -> None:
+    """Удаляет WebP с диска по image_url: /uploads/products/... или /api/v1/media/product-images/..."""
+    if not old_url or not isinstance(old_url, str):
+        return
+    p = (old_url or "").strip()
+    if p.startswith("/uploads/products/"):
+        name = p.rsplit("/", 1)[-1]
+    elif p.startswith("/api/v1/media/product-images/"):
+        name = p.rsplit("/", 1)[-1]
+    else:
+        return
+    if not re.match(r"^\d+_[0-9a-f]{32}\.webp$", name, re.IGNORECASE):
+        return
+    path = (PRODUCT_IMAGE_DIR / name).resolve()
+    try:
+        path.relative_to(PRODUCT_IMAGE_DIR.resolve())
+    except ValueError:
+        return
+    if path.is_file():
+        try:
+            path.unlink()
+        except OSError:
+            pass
 
 
 def _prepare_for_webp(img: Image.Image) -> Image.Image:
@@ -468,17 +494,11 @@ async def upload_product_image(
     file_path = PRODUCT_IMAGE_DIR / file_name
     file_path.write_bytes(encoded)
 
-    # Удаляем старый локальный файл изображения, если он из нашего uploads.
-    old_url = (db_product.image_url or "").strip()
-    if old_url.startswith("/uploads/products/"):
-        old_file = PRODUCT_IMAGE_DIR / old_url.split("/")[-1]
-        if old_file.exists() and old_file.is_file():
-            try:
-                old_file.unlink()
-            except OSError:
-                pass
+    # Удаляем старый локальный WebP (старые записи: /uploads/products/; новые: /api/v1/media/...).
+    _delete_old_product_image_file((db_product.image_url or "").strip())
 
-    db_product.image_url = f"/uploads/products/{file_name}"
+    # Публичный URL под тем же /api/v1, что и REST — Caddy: handle /api* → backend (браузер в <img> без JWT).
+    db_product.image_url = f"/api/v1/media/product-images/{file_name}"
     db.commit()
     db.refresh(db_product)
     return {"ok": True, "image_url": db_product.image_url}
