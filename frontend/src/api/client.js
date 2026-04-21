@@ -54,16 +54,24 @@ export function getResolvedApiBaseUrl() {
 }
 
 /**
- * URL для /uploads/... с бэкенда (тот же хост, что и API, без /api/v1).
- * Нужен в dev, когда фронт на :5173, а FastAPI — на :8000: иначе <img src="/uploads/..."> идёт на Vite.
+ * URL для /uploads/... на превью в <img>.
+ * - В **проде** (Vite :5173 нет): тот же origin, что и страница — Caddy проксирует /uploads на бэкенд.
+ *   Иначе при сборке с VITE_API_URL на :8000 картинка шла на закрытый порт — «битая» иконка.
+ * - В **dev** (порт 5173 и т.д.): хост/порт API (или тот же origin + proxy /uploads в vite.config).
  */
 export function resolveUploadedAssetUrl(relativeOrAbsolute) {
   const s = String(relativeOrAbsolute || '').trim()
   if (!s) return ''
   if (/^https?:\/\//i.test(s)) return s
+  const path = s.startsWith('/') ? s : `/${s}`
+  if (typeof window !== 'undefined' && window.location?.hostname) {
+    const pagePort = (window.location.port || '').trim()
+    if (!DEV_PORTS_NEED_SEPARATE_API.has(pagePort)) {
+      return `${window.location.origin}${path}`
+    }
+  }
   const api = getResolvedApiBaseUrl()
   const root = api.replace(/\/api\/v1\/?$/, '')
-  const path = s.startsWith('/') ? s : `/${s}`
   return `${root}${path}`
 }
 

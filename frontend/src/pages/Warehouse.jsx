@@ -58,6 +58,7 @@ const Warehouse = () => {
   const [imageUploading, setImageUploading] = useState(false);
   const [imageUploadPct, setImageUploadPct] = useState(null);
   const [imagePreviewBust, setImagePreviewBust] = useState(0);
+  const [imageBlobUrl, setImageBlobUrl] = useState('');
   const queryClient = useQueryClient();
 
   const { data: products = [], isLoading } = useQuery({
@@ -108,7 +109,19 @@ const Warehouse = () => {
     );
   }, [products, search]);
 
+  const closeEditor = () => {
+    setImageBlobUrl((p) => {
+      if (p) URL.revokeObjectURL(p);
+      return '';
+    });
+    setShowEditor(false);
+  };
+
   const openNewProduct = () => {
+    setImageBlobUrl((p) => {
+      if (p) URL.revokeObjectURL(p);
+      return '';
+    });
     setSelectedProduct(null);
     setFormData(emptyForm);
     setBarcodeLocked(false);
@@ -117,6 +130,10 @@ const Warehouse = () => {
   };
 
   const openProduct = (product) => {
+    setImageBlobUrl((p) => {
+      if (p) URL.revokeObjectURL(p);
+      return '';
+    });
     setSelectedProduct(product);
     setFormData({
       ...emptyForm,
@@ -155,6 +172,12 @@ const Warehouse = () => {
     return `${resolveUploadedAssetUrl(base)}?v=${imagePreviewBust}`;
   };
 
+  const productImageThumbSrc = () => {
+    if (imageBlobUrl) return imageBlobUrl;
+    if (formData.image_url) return productImageDisplaySrc(formData.image_url);
+    return '';
+  };
+
   const handleUploadImage = async (event) => {
     const file = event.target.files?.[0];
     event.target.value = '';
@@ -167,6 +190,10 @@ const Warehouse = () => {
       toast.error('Выберите файл изображения');
       return;
     }
+    setImageBlobUrl((prev) => {
+      if (prev) URL.revokeObjectURL(prev);
+      return URL.createObjectURL(file);
+    });
     setImageUploading(true);
     setImageUploadPct(0);
     try {
@@ -186,6 +213,10 @@ const Warehouse = () => {
       }
       setFormData((prev) => ({ ...prev, image_url: imageUrl }));
       setImagePreviewBust((n) => n + 1);
+      setImageBlobUrl((prev) => {
+        if (prev) URL.revokeObjectURL(prev);
+        return '';
+      });
       setSelectedProduct((prev) => (prev ? { ...prev, image_url: imageUrl } : prev));
       queryClient.invalidateQueries({ queryKey: ['products'] });
       toast.success('Фото товара обновлено');
@@ -274,7 +305,7 @@ const Warehouse = () => {
 
       <Modal
         isOpen={showEditor}
-        onClose={() => setShowEditor(false)}
+        onClose={closeEditor}
         title={formData.id ? `Карточка товара #${formData.id}` : 'Новый товар'}
         size="lg"
       >
@@ -420,9 +451,9 @@ const Warehouse = () => {
                     background: 'var(--surface)',
                   }}
                 >
-                  {formData.image_url ? (
+                  {productImageThumbSrc() ? (
                     <img
-                      src={productImageDisplaySrc(formData.image_url)}
+                      src={productImageThumbSrc()}
                       alt={formData.name || 'product'}
                       style={{ width: '100%', height: '100%', objectFit: 'cover' }}
                     />
@@ -464,7 +495,7 @@ const Warehouse = () => {
                 Печать кода
               </Button>
             )}
-            <Button variant="secondary" onClick={() => setShowEditor(false)}>
+            <Button variant="secondary" onClick={closeEditor}>
               Закрыть
             </Button>
             <Button onClick={handleSave} loading={saveMutation.isPending}>

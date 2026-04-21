@@ -39,6 +39,8 @@ services:
       dockerfile: Dockerfile
     container_name: skladpro-backend
     restart: unless-stopped
+    volumes:
+      - skladpro_uploads:/app/uploads
     env_file:
       - ./backend/.env
     environment:
@@ -90,3 +92,4 @@ volumes:
   redis_data:
   caddy_data:
   caddy_config:
+  skladpro_uploads:

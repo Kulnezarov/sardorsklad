@@ -187,6 +187,8 @@ const Products = () => {
   /** 0–100 во время upload; null когда не качаем */
   const [imageUploadPct, setImageUploadPct] = useState(null);
   const [imagePreviewBust, setImagePreviewBust] = useState(0);
+  /** Мгновенное превью выбранного файла до ответа сервера */
+  const [imageBlobUrl, setImageBlobUrl] = useState('');
 
   const [importReport, setImportReport] = useState(null);
   const [importOverlay, setImportOverlay] = useState(null);
@@ -240,10 +242,18 @@ const Products = () => {
   // openAdd + barcode: со страницы продаж
   useEffect(() => {
     if (location.state?.openVoiceAdd) {
+      setImageBlobUrl((p) => {
+        if (p) URL.revokeObjectURL(p);
+        return '';
+      });
       setFormData({ ...emptyForm(), barcode: generateEAN13() });
       setFormError(''); setBarcodeLocked(false); setShowQrPanel(false); setShowForm(true);
       navigate(location.pathname, { replace: true, state: {} });
     } else if (location.state?.openAdd) {
+      setImageBlobUrl((p) => {
+        if (p) URL.revokeObjectURL(p);
+        return '';
+      });
       const bc = location.state.barcode || '';
       setFormData({ ...emptyForm(), barcode: bc });
       setFormError(''); setBarcodeLocked(Boolean(bc)); setShowQrPanel(false); setShowForm(true);
@@ -516,7 +526,17 @@ const Products = () => {
   });
 
   /* form helpers */
-  const resetForm = () => { setFormData(emptyForm()); setShowForm(false); setFormError(''); setBarcodeLocked(false); setShowQrPanel(false); };
+  const resetForm = () => {
+    setImageBlobUrl((prev) => {
+      if (prev) URL.revokeObjectURL(prev);
+      return '';
+    });
+    setFormData(emptyForm());
+    setShowForm(false);
+    setFormError('');
+    setBarcodeLocked(false);
+    setShowQrPanel(false);
+  };
 
   const showFormRef = useRef(false);
   const blockScanRef = useRef(false);
@@ -632,6 +652,10 @@ const Products = () => {
       storage_location: product.location_zone || '',
       image_url: product.image_url || '',
     });
+    setImageBlobUrl((prev) => {
+      if (prev) URL.revokeObjectURL(prev);
+      return '';
+    });
     setShowForm(true); setBarcodeLocked(true); setShowQrPanel(false); setFormError('');
     setSideProduct(null);
   };
@@ -643,12 +667,28 @@ const Products = () => {
     saveMutation.mutate(buildPayload(formData, cnyRate));
   };
 
-  const openNew = () => { setFormData({ ...emptyForm(), barcode: generateEAN13() }); setFormError(''); setBarcodeLocked(false); setShowQrPanel(false); setShowForm(true); };
+  const openNew = () => {
+    setImageBlobUrl((prev) => {
+      if (prev) URL.revokeObjectURL(prev);
+      return '';
+    });
+    setFormData({ ...emptyForm(), barcode: generateEAN13() });
+    setFormError('');
+    setBarcodeLocked(false);
+    setShowQrPanel(false);
+    setShowForm(true);
+  };
 
   const productImageDisplaySrc = (url) => {
     const base = (url || '').split('?')[0].trim();
     if (!base) return '';
     return `${resolveUploadedAssetUrl(base)}?v=${imagePreviewBust}`;
+  };
+
+  const productImageThumbSrc = () => {
+    if (imageBlobUrl) return imageBlobUrl;
+    if (formData.image_url) return productImageDisplaySrc(formData.image_url);
+    return '';
   };
 
   const handleUploadProductImage = async (event) => {
@@ -663,6 +703,10 @@ const Products = () => {
       toast.error('Выберите файл изображения (JPG, PNG, WEBP)');
       return;
     }
+    setImageBlobUrl((prev) => {
+      if (prev) URL.revokeObjectURL(prev);
+      return URL.createObjectURL(file);
+    });
     setImageUploading(true);
     setImageUploadPct(0);
     try {
@@ -682,6 +726,10 @@ const Products = () => {
       }
       setFormData((prev) => ({ ...prev, image_url: imageUrl }));
       setImagePreviewBust((n) => n + 1);
+      setImageBlobUrl((prev) => {
+        if (prev) URL.revokeObjectURL(prev);
+        return '';
+      });
       await queryClient.invalidateQueries({ queryKey: ['products'] });
       toast.success('Фото обновлено');
     } catch (err) {
@@ -1180,9 +1228,9 @@ const Products = () => {
                     background: 'var(--surface)',
                   }}
                 >
-                  {formData.image_url ? (
+                  {productImageThumbSrc() ? (
                     <img
-                      src={productImageDisplaySrc(formData.image_url)}
+                      src={productImageThumbSrc()}
                       alt=""
                       style={{ width: '100%', height: '100%', objectFit: 'cover' }}
                     />
