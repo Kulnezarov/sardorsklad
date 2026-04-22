@@ -18,4 +18,5 @@ export const productsApi = {
       signal,
     });
   },
+  deleteProductImage: (id) => apiClient.delete(`/api/v1/products/${id}/image`),
 };

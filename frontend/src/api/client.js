@@ -178,6 +178,7 @@ export const productApi = {
       signal,
     })
   },
+  deleteProductImage: (id) => apiClient.delete(`/api/v1/products/${id}/image`),
   exportExcel: (filters = {}) =>
     apiClient.get('/api/v1/products/export/excel', {
       params: filters,

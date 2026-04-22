@@ -740,6 +740,27 @@ const Products = () => {
     }
   };
 
+  const handleDeleteProductImage = async () => {
+    if (!formData.id) {
+      toast.error('Сначала сохраните товар');
+      return;
+    }
+    if (!formData.image_url) return;
+    try {
+      await productApi.deleteProductImage(formData.id);
+      setFormData((prev) => ({ ...prev, image_url: '' }));
+      setImagePreviewBust(Date.now());
+      setImageBlobUrl((prev) => {
+        if (prev) URL.revokeObjectURL(prev);
+        return '';
+      });
+      await queryClient.invalidateQueries({ queryKey: ['products'] });
+      toast.success('Фото удалено');
+    } catch (err) {
+      toast.error(err.response?.data?.detail || 'Не удалось удалить фото');
+    }
+  };
+
   const openDeleteConfirm = (product, e) => {
     e?.stopPropagation?.();
     const { problem, answer } = genMathProblem();
@@ -1258,6 +1279,17 @@ const Products = () => {
                       style={{ display: 'none' }}
                     />
                   </label>
+                  {formData.image_url && (
+                    <button
+                      type="button"
+                      className="btn-ios-secondary"
+                      onClick={handleDeleteProductImage}
+                      disabled={imageUploading}
+                      style={{ marginLeft: 8, opacity: imageUploading ? 0.6 : 1 }}
+                    >
+                      Удалить фото
+                    </button>
+                  )}
                   {imageUploading && imageUploadPct != null && (
                     <div style={{ marginTop: 8, height: 6, borderRadius: 4, background: 'var(--border)', overflow: 'hidden' }}>
                       <div

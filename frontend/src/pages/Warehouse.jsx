@@ -228,6 +228,28 @@ const Warehouse = () => {
     }
   };
 
+  const handleDeleteImage = async () => {
+    if (!formData.id) {
+      toast.error('Сначала сохраните товар');
+      return;
+    }
+    if (!formData.image_url) return;
+    try {
+      await productsApi.deleteProductImage(formData.id);
+      setFormData((prev) => ({ ...prev, image_url: '' }));
+      setSelectedProduct((prev) => (prev ? { ...prev, image_url: '' } : prev));
+      setImagePreviewBust(Date.now());
+      setImageBlobUrl((prev) => {
+        if (prev) URL.revokeObjectURL(prev);
+        return '';
+      });
+      queryClient.invalidateQueries({ queryKey: ['products'] });
+      toast.success('Фото удалено');
+    } catch (error) {
+      toast.error(error.response?.data?.detail || 'Не удалось удалить фото');
+    }
+  };
+
   return (
     <div className="page-stack">
       <section className="hero-panel">
@@ -472,6 +494,17 @@ const Warehouse = () => {
                       style={{ display: 'none' }}
                     />
                   </label>
+                  {formData.image_url && (
+                    <button
+                      type="button"
+                      className="button button-secondary"
+                      onClick={handleDeleteImage}
+                      disabled={imageUploading}
+                      style={{ marginLeft: 8, opacity: imageUploading ? 0.6 : 1 }}
+                    >
+                      Удалить фото
+                    </button>
+                  )}
                   {imageUploading && imageUploadPct != null && (
                     <div style={{ marginTop: 8, height: 6, borderRadius: 4, background: 'var(--border)', overflow: 'hidden' }}>
                       <div
