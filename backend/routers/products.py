@@ -520,6 +520,9 @@ def delete_product(
     if not db_product.is_active:
         return JSONResponse({"ok": True, "already_inactive": True})
 
+    # При архивировании удаляем связанный файл изображения (если это наш uploads/products WebP).
+    _delete_old_product_image_file((db_product.image_url or "").strip())
+
     db_product.is_active = False
     write_audit_log(
         db,

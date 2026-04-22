@@ -725,7 +725,7 @@ const Products = () => {
         return;
       }
       setFormData((prev) => ({ ...prev, image_url: imageUrl }));
-      setImagePreviewBust((n) => n + 1);
+      setImagePreviewBust(Date.now());
       setImageBlobUrl((prev) => {
         if (prev) URL.revokeObjectURL(prev);
         return '';

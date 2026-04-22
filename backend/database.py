@@ -197,6 +197,20 @@ def ensure_schema_updates():
         "products.migrate_price",
     )
 
+    # image_url: старые пути /uploads/products/... -> новый публичный путь /api/v1/media/product-images/...
+    _exec_schema_sql(
+        """
+        UPDATE products
+        SET image_url = regexp_replace(
+          image_url,
+          '^/uploads/products/',
+          '/api/v1/media/product-images/'
+        )
+        WHERE image_url LIKE '/uploads/products/%';
+        """,
+        "products.migrate_image_url_to_api_media",
+    )
+
     # GENERATED profit_percent (как в модели SQLAlchemy)
     _exec_schema_sql(
         """
