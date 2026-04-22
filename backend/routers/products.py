@@ -14,7 +14,7 @@ from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from fastapi.responses import JSONResponse, StreamingResponse
-from PIL import Image, ImageOps
+from PIL import Image, ImageOps, UnidentifiedImageError
 from sqlalchemy import func, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -461,32 +461,34 @@ async def upload_product_image(
     if len(data) > MAX_IMAGE_SIZE_BYTES:
         raise HTTPException(status_code=400, detail="Файл слишком большой (макс. 5 МБ)")
 
-    # Content-Type у браузера иногда пустой или application/octet-stream — проверяем по сигнатуре/PIL
+    # Content-Type у браузера иногда пустой или application/octet-stream.
+    # Разрешаем любой image/*, финальная проверка и декодирование — через Pillow.
     content_type = (file.content_type or "").lower()
-    if content_type and content_type not in ALLOWED_IMAGE_TYPES and content_type != "application/octet-stream":
+    if content_type and not content_type.startswith("image/") and content_type != "application/octet-stream":
+        logging.error("Unsupported upload content type: %s", content_type)
         raise HTTPException(status_code=400, detail="Ожидается изображение JPG, PNG или WEBP")
 
     try:
         with Image.open(BytesIO(data)) as img:
-            fmt = (img.format or "").upper()
-            if fmt and fmt not in ("JPEG", "JPG", "PNG", "WEBP"):
-                raise ValueError("unsupported format")
             img = ImageOps.exif_transpose(img)
             img = _prepare_for_webp(img)
             img.thumbnail((MAX_IMAGE_DIMENSION, MAX_IMAGE_DIMENSION), Image.Resampling.LANCZOS)
             out = BytesIO()
-            # Всё сохраняем как сжатый WebP (один формат, одна папка uploads/products)
+            # Универсальный конвертер: любой распознанный Pillow формат -> WebP.
             img.save(
                 out,
                 format="WEBP",
-                quality=WEBP_QUALITY,
+                quality=78,
                 method=6,
                 lossless=False,
                 optimize=True,
             )
             encoded = out.getvalue()
+    except UnidentifiedImageError as e:
+        logging.error("Unsupported image format for product %s: %s", product_id, e, exc_info=True)
+        raise HTTPException(status_code=400, detail="Неподдерживаемый формат изображения")
     except Exception as e:
-        logging.getLogger(__name__).warning("image upload failed: %s", e, exc_info=True)
+        logging.getLogger(__name__).error("image upload failed: %s", e, exc_info=True)
         raise HTTPException(status_code=400, detail="Не удалось обработать изображение (проверьте формат PNG/JPEG/WebP)")
 
     PRODUCT_IMAGE_DIR.mkdir(parents=True, exist_ok=True)
