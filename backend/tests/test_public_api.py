@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 
 import models
 from database import get_db
-from routers.public import build_public_order_status_response, router as public_router
+from routers.public import build_public_order_status_response, build_public_reserve_detail_response, router as public_router
 
 
 class FakeQuery:
@@ -154,6 +154,33 @@ def test_public_order_status_cancelled_payload():
     assert p.is_cancelled is True
     assert p.is_fulfilled is False
     assert "отмен" in p.status_title.lower()
+
+
+def test_public_reserve_detail_maps_lines():
+    line = SimpleNamespace(
+        id=9,
+        product_id=2,
+        product_name="Test",
+        quantity_ordered=1,
+        quantity=1,
+        price_kzt=Decimal("500"),
+        sale_price_snapshot=Decimal("500"),
+        line_total=Decimal("500"),
+    )
+    r = SimpleNamespace(
+        id=1,
+        order_code="WEB-1",
+        status="Новый заказ",
+        created_at=datetime.now(timezone.utc),
+        items=[line],
+        total_amount_kzt=Decimal("500"),
+        total_amount=None,
+    )
+    d = build_public_reserve_detail_response(r)
+    assert len(d.items) == 1
+    assert d.items[0].line_status == "pending"
+    assert d.items[0].unit_price == "500.00"
+    assert d.total_amount == "500.00"
 
 
 def test_public_order_not_enough_stock():

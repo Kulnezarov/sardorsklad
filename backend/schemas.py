@@ -617,5 +617,30 @@ class PublicOrderStatusResponse(BaseModel):
     created_at: datetime
 
 
+class PublicReserveLineItem(BaseModel):
+    """Позиция резерва/заказа для витрины (статус строки = по заказу, т.к. в БД нет per-line)."""
+    id: int
+    product_id: Optional[int] = None
+    product_name: str
+    quantity: int
+    unit_price: str
+    line_total: Optional[str] = None
+    line_status: str  # pending | fulfilled | cancelled
+    line_status_title: str
+
+
+class PublicReserveDetailResponse(BaseModel):
+    """Карточка заказа с позициями — для «Мои заказы» на витрине (CHPARTS)."""
+    reserve_id: int
+    order_code: str
+    status: str
+    status_title: str
+    is_cancelled: bool
+    is_fulfilled: bool
+    created_at: datetime
+    total_amount: str
+    items: List[PublicReserveLineItem]
+
+
 class OrderStatusUpdate(BaseModel):
     status: str = Field(..., min_length=2, max_length=80)

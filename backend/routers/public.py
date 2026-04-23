@@ -65,6 +65,58 @@ def build_public_order_status_response(reserve: models.Reserve) -> schemas.Publi
     )
 
 
+def _decimal_str(v) -> str:
+    if v is None:
+        return "0.00"
+    d = v if isinstance(v, Decimal) else Decimal(str(v))
+    return f"{d:.2f}"
+
+
+def _public_line_status_from_header(header: schemas.PublicOrderStatusResponse) -> tuple[str, str]:
+    """Код и подпись для позиций (в БД нет статуса по строке — наследуем от заказа)."""
+    if header.is_fulfilled:
+        return "fulfilled", "Выдано"
+    if header.is_cancelled:
+        return "cancelled", "Отменено"
+    return "pending", "В обработке"
+
+
+def build_public_reserve_detail_response(reserve: models.Reserve) -> schemas.PublicReserveDetailResponse:
+    header = build_public_order_status_response(reserve)
+    code, line_title = _public_line_status_from_header(header)
+    rows = sorted(reserve.items or [], key=lambda x: x.id or 0)
+    items_out: list[schemas.PublicReserveLineItem] = []
+    for it in rows:
+        qty = it.quantity if it.quantity is not None else it.quantity_ordered
+        price = it.sale_price_snapshot if it.sale_price_snapshot is not None else it.price_kzt
+        items_out.append(
+            schemas.PublicReserveLineItem(
+                id=it.id,
+                product_id=it.product_id,
+                product_name=it.product_name,
+                quantity=int(qty or 0),
+                unit_price=_decimal_str(price),
+                line_total=_decimal_str(it.line_total) if it.line_total is not None else None,
+                line_status=code,
+                line_status_title=line_title,
+            )
+        )
+    total = reserve.total_amount_kzt
+    if total is None:
+        total = reserve.total_amount
+    return schemas.PublicReserveDetailResponse(
+        reserve_id=header.reserve_id,
+        order_code=header.order_code,
+        status=header.status,
+        status_title=header.status_title,
+        is_cancelled=header.is_cancelled,
+        is_fulfilled=header.is_fulfilled,
+        created_at=header.created_at,
+        total_amount=_decimal_str(total),
+        items=items_out,
+    )
+
+
 def _strip_or_none(val) -> str | None:
     if val is None:
         return None
@@ -484,3 +536,31 @@ def get_public_order_status(
     if not _phones_match_order(r.customer_phone, phone):
         raise HTTPException(status_code=404, detail=_PUBLIC_ORDER_NOT_FOUND)
     return build_public_order_status_response(r)
+
+
+@router.get("/reserves/{reserve_id}", response_model=schemas.PublicReserveDetailResponse)
+def get_public_reserve_detail(
+    reserve_id: int,
+    phone: str = Query(
+        ...,
+        min_length=5,
+        max_length=30,
+        description="Телефон, указанный при оформлении заказа",
+    ),
+    db: Session = Depends(get_db),
+):
+    """
+    Позиции и статусы (по заказу) для «Мои заказы» на витрине.
+    Тот же `phone`, что и у GET /public/orders/{id} — без просмотра чужих заказов.
+    """
+    r = (
+        db.query(models.Reserve)
+        .options(joinedload(models.Reserve.items))
+        .filter(models.Reserve.id == reserve_id)
+        .first()
+    )
+    if not r or (r.source or "") != "website":
+        raise HTTPException(status_code=404, detail=_PUBLIC_ORDER_NOT_FOUND)
+    if not _phones_match_order(r.customer_phone, phone):
+        raise HTTPException(status_code=404, detail=_PUBLIC_ORDER_NOT_FOUND)
+    return build_public_reserve_detail_response(r)
