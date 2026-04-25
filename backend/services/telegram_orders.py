@@ -67,20 +67,31 @@ def send_new_order_notification(db: Session, order: models.Reserve) -> None:
     db.commit()
     db.refresh(notif)
 
-    try:
-        for chat_id in chats:
+    # Каждый chat_id независимо: один неверный ID не должен блокировать остальные.
+    errors: list[str] = []
+    sent_any = False
+    for chat_id in chats:
+        try:
             _send_message(token, chat_id, message)
+            sent_any = True
+        except Exception as exc:
+            err = f"{chat_id}: {exc}"
+            errors.append(err)
+            logger.warning("Telegram send to chat %s failed: %s", chat_id, exc)
+    if sent_any and not errors:
         notif.status = "sent"
         notif.sent_at = datetime.utcnow()
         notif.error_message = None
-    except Exception as exc:
+    elif sent_any:
+        notif.status = "sent"
+        notif.sent_at = datetime.utcnow()
+        notif.error_message = "; ".join(errors)[:1000]
+    else:
         notif.status = "failed"
-        notif.error_message = str(exc)[:1000]
-        logger.warning("Telegram order notification failed: %s", exc)
-    finally:
-        notif.attempts += 1
-        notif.last_attempt_at = datetime.utcnow()
-        db.commit()
+        notif.error_message = "; ".join(errors)[:1000] if errors else "unknown"
+    notif.attempts += 1
+    notif.last_attempt_at = datetime.utcnow()
+    db.commit()
 
 
 def retry_failed_notifications(db: Session, limit: int = 20) -> int:
@@ -104,12 +115,23 @@ def retry_failed_notifications(db: Session, limit: int = 20) -> int:
                 row.status = "failed"
                 row.error_message = "missing payload text"
                 continue
+            errs: list[str] = []
+            ok_any = False
             for chat_id in chats:
-                _send_message(token, chat_id, text)
-            row.status = "sent"
-            row.sent_at = datetime.utcnow()
-            row.error_message = None
-            sent += 1
+                try:
+                    _send_message(token, chat_id, text)
+                    ok_any = True
+                except Exception as exc:
+                    errs.append(f"{chat_id}: {exc}")
+                    logger.warning("Telegram retry to chat %s failed: %s", chat_id, exc)
+            if ok_any:
+                row.status = "sent"
+                row.sent_at = datetime.utcnow()
+                row.error_message = "; ".join(errs)[:1000] if errs else None
+                sent += 1
+            else:
+                row.status = "failed"
+                row.error_message = "; ".join(errs)[:1000] if errs else "send failed"
         except Exception as exc:
             row.status = "failed"
             row.error_message = str(exc)[:1000]
