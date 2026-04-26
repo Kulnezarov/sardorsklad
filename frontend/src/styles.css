@@ -3645,6 +3645,223 @@ textarea {
   box-shadow: none;
 }
 
+/* — Совместимость (настройки) — */
+.compatibility-settings .settings-section-body {
+  padding: 12px 16px 16px;
+}
+.compat-add-code {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+.compat-input {
+  width: 100px;
+  padding: 9px 11px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: var(--ios-grouped-bg);
+  color: var(--text);
+  font-size: 14px;
+  font-family: inherit;
+}
+.compat-input-grow {
+  flex: 1;
+  min-width: 140px;
+  width: auto;
+}
+.compat-btn-primary,
+.compat-btn-secondary,
+.compat-btn-ghost {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 9px 14px;
+  border-radius: 12px;
+  font-weight: 700;
+  font-size: 13px;
+  cursor: pointer;
+  font-family: inherit;
+  border: 1px solid var(--primary);
+  background: var(--primary-light);
+  color: var(--primary);
+  white-space: nowrap;
+}
+.compat-btn-secondary {
+  border-color: var(--border);
+  background: var(--bg-secondary);
+  color: var(--text);
+}
+.compat-btn-ghost {
+  background: transparent;
+  border-color: var(--border);
+  color: var(--text-secondary);
+}
+.compat-code-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.compat-muted {
+  font-size: 13px;
+  color: var(--text-muted);
+  padding: 4px 0;
+}
+.compat-accordion {
+  border-radius: 14px;
+  border: 1px solid var(--border);
+  background: var(--ios-grouped-bg);
+  overflow: hidden;
+}
+.compat-accordion-head {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 11px 12px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+  color: var(--text);
+  font-size: 14px;
+}
+.compat-code-label {
+  font-weight: 800;
+}
+.compat-code-sub {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-left: 4px;
+}
+.compat-accordion-body {
+  padding: 0 12px 14px 12px;
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+}
+.compat-subhead {
+  display: flex;
+  align-items: center;
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  margin: 12px 0 8px;
+}
+.compat-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.compat-brand-card {
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 10px 12px 12px;
+  margin-bottom: 10px;
+  background: var(--ios-grouped-bg);
+}
+.compat-brand-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12px;
+  font-weight: 800;
+  color: var(--text);
+  margin-bottom: 8px;
+}
+.compat-link {
+  background: none;
+  border: none;
+  color: var(--primary);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  padding: 0;
+  font-family: inherit;
+}
+.compat-link.danger {
+  color: var(--danger);
+}
+.compat-select {
+  width: 100%;
+  padding: 9px 10px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 14px;
+  margin-bottom: 8px;
+  font-family: inherit;
+}
+.compat-textarea {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 10px 11px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.45;
+  resize: vertical;
+  min-height: 88px;
+  font-family: ui-monospace, system-ui, sans-serif;
+}
+.compat-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 4px;
+  margin-bottom: 8px;
+}
+.compat-linked-block {
+  margin-top: 8px;
+  padding: 8px 0 4px;
+  border-top: 1px dashed var(--border);
+}
+.compat-linked-block:first-of-type {
+  border-top: none;
+}
+.compat-linked-title {
+  font-weight: 800;
+  font-size: 13px;
+  color: var(--text);
+  margin-bottom: 6px;
+}
+.compat-model-list {
+  margin: 0;
+  padding: 0 0 0 4px;
+  list-style: none;
+}
+.compat-model-line {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 13px;
+  padding: 4px 0;
+  color: var(--text);
+}
+.compat-icon-del {
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 4px;
+  display: flex;
+  align-items: center;
+  border-radius: 8px;
+}
+.compat-icon-del:hover {
+  color: var(--danger);
+  background: rgba(239, 68, 68, 0.08);
+}
+
 .settings-row {
   display: flex;
   align-items: center;

@@ -346,6 +346,32 @@ def ensure_schema_updates():
         "settings.delivery_kzt_per_kg",
     )
 
+    ensure_compatibility_tables()
+
+
+def ensure_compatibility_tables() -> None:
+    """Создать таблицы справочника авто/кодов, если БД ещё без них (старые деплои)."""
+    if not DATABASE_URL or "postgresql" not in DATABASE_URL.lower():
+        return
+    try:
+        from models import (
+            EngineFamily,
+            EngineFamilyModel,
+            ProductEngineFamilyLink,
+            ProductVehicleModelLink,
+            VehicleBrand,
+            VehicleModel,
+        )
+
+        VehicleBrand.__table__.create(engine, checkfirst=True)
+        EngineFamily.__table__.create(engine, checkfirst=True)
+        VehicleModel.__table__.create(engine, checkfirst=True)
+        EngineFamilyModel.__table__.create(engine, checkfirst=True)
+        ProductEngineFamilyLink.__table__.create(engine, checkfirst=True)
+        ProductVehicleModelLink.__table__.create(engine, checkfirst=True)
+    except Exception as e:
+        logger.warning("ensure_compatibility_tables: %s", e)
+
 
 def drop_tables():
     """Drop all tables (synchronous, for testing)."""

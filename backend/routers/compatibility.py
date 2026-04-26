@@ -6,13 +6,16 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import asc, func, or_
 from sqlalchemy.orm import Session, joinedload
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, OperationalError, ProgrammingError
 
 import models
 import schemas
 from database import get_db
 from dependencies import require_manager_or_admin
+from config.logger import setup_logger
 from services.product_compatibility import slugify_label
+
+logger = setup_logger("compatibility")
 
 router = APIRouter(
     prefix="/api/v1/compatibility",
@@ -94,21 +97,37 @@ def list_vehicle_brands(
     status_code=status.HTTP_201_CREATED,
 )
 def create_vehicle_brand(payload: schemas.VehicleBrandCreate, db: Session = Depends(get_db)):
-    slug = (payload.slug or "").strip() or slugify_label(payload.name)
-    slug = _unique_vehicle_brand_slug(db, slug)
-    row = models.VehicleBrand(
-        name=payload.name.strip(),
-        slug=slug,
-        is_active=payload.is_active,
-    )
-    db.add(row)
     try:
-        db.commit()
-    except IntegrityError:
+        slug = (payload.slug or "").strip() or slugify_label(payload.name)
+        slug = _unique_vehicle_brand_slug(db, slug)
+        row = models.VehicleBrand(
+            name=payload.name.strip(),
+            slug=slug,
+            is_active=payload.is_active,
+        )
+        db.add(row)
+        try:
+            db.commit()
+        except IntegrityError:
+            db.rollback()
+            raise HTTPException(400, detail="Конфликт: марка с таким именем/slug")
+        db.refresh(row)
+        return row
+    except HTTPException:
+        raise
+    except (ProgrammingError, OperationalError) as e:
         db.rollback()
-        raise HTTPException(400, detail="Конфликт: марка с таким именем/slug")
-    db.refresh(row)
-    return row
+        logger.exception("create_vehicle_brand: db %s", e)
+        raise HTTPException(
+            status_code=503,
+            detail="Таблица справочника не готова или БД недоступна. Перезапустите API после обновления.",
+        ) from e
+    except Exception as e:
+        db.rollback()
+        logger.exception("create_vehicle_brand: %s", e)
+        raise HTTPException(
+            status_code=500, detail="Не удалось создать марку. Проверьте логи сервера."
+        ) from e
 
 
 @router.put("/vehicle-brands/{brand_id}", response_model=schemas.VehicleBrandResponse)

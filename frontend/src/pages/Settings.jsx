@@ -7,6 +7,7 @@ import {
   FiAlertTriangle, FiRefreshCw, FiLoader, FiTrash2,
   FiSun, FiMoon, FiShoppingBag, FiClock, FiSettings, FiSave,
 } from 'react-icons/fi';
+import { getApiErrorMessage } from '../api/client';
 import { settingsApi } from '../api/settings';
 import { historyApi } from '../api/history';
 import SettingsCompatibilitySection from '../components/SettingsCompatibilitySection';
@@ -173,7 +174,7 @@ const Settings = () => {
       toast.success('Сохранено ✓', { duration: 1500 });
       qc.invalidateQueries({ queryKey: ['settings-row'] });
     },
-    onError: () => toast.error('Не удалось сохранить'),
+    onError: (e) => toast.error(getApiErrorMessage(e, 'Не удалось сохранить')),
   });
 
   const handleChange = (field, value) => {
@@ -209,7 +210,7 @@ const Settings = () => {
       setShowClearHistoryConfirm(false);
       qc.invalidateQueries({ queryKey: ['history'] });
     },
-    onError: () => toast.error('Ошибка'),
+    onError: (e) => toast.error(getApiErrorMessage(e, 'Ошибка')),
   });
 
   /* ── Label type ── */
@@ -240,9 +241,6 @@ const Settings = () => {
         <div style={{ marginBottom: 24, display: 'flex', flexWrap: 'wrap', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
           <div>
             <div style={{ fontSize: 26, fontWeight: 900, color: 'var(--text)' }}>Настройки</div>
-            <div style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 4 }}>
-              Изменения применяются после нажатия «Сохранить»
-            </div>
           </div>
           <button
             type="button"
@@ -274,7 +272,7 @@ const Settings = () => {
             <FiShoppingBag size={16} /> Магазин
           </div>
           <div className="settings-section-body">
-            <Row label="Название магазина" description="Отображается в заголовке сайдбара">
+            <Row label="Название магазина">
               <input
                 value={form.store_name}
                 onChange={(e) => handleChange('store_name', e.target.value)}
@@ -295,7 +293,7 @@ const Settings = () => {
             <FiBox size={16} /> Склад
           </div>
           <div className="settings-section-body">
-            <Row label="Порог низкого остатка" description="Товары с остатком ниже этого значения будут подсвечены">
+            <Row label="Порог низкого остатка">
               <input
                 type="number"
                 min="1"
@@ -312,7 +310,7 @@ const Settings = () => {
 
             <div className="settings-divider" />
 
-            <Row label="Курс юань → тенге" description={`1 CNY = ${Number(form.cny_rate || 0).toLocaleString('ru-RU')} KZT`}>
+            <Row label={`Курс юань → тенге (1 CNY = ${Number(form.cny_rate || 0).toLocaleString('ru-RU')} KZT)`}>
               <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                 <input
                   type="number"
@@ -346,10 +344,7 @@ const Settings = () => {
 
             <div className="settings-divider" />
 
-            <Row
-              label="Доставка: ₸ за 1 кг"
-              description="Используется в карточке товара: вес (кг) × этот тариф = сумма доставки в ₸"
-            >
+            <Row label="Доставка, ₸ за 1 кг">
               <input
                 type="number"
                 min="0.01"
@@ -367,7 +362,7 @@ const Settings = () => {
 
             <div className="settings-divider" />
 
-            <Row label="Авто +1 при сканировании" description="Автоматически увеличивать количество при повторном сканировании">
+            <Row label="Авто +1 при сканировании">
               <Toggle value={form.scan_auto_increment} onChange={(v) => handleChange('scan_auto_increment', v)} />
             </Row>
           </div>
@@ -379,10 +374,7 @@ const Settings = () => {
             <FiClock size={16} /> История
           </div>
           <div className="settings-section-body">
-            <Row
-              label={`Автоочистка: ${form.history_auto_clean_days} дней`}
-              description="Удалять записи старше указанного количества дней"
-            >
+            <Row label={`Автоочистка истории: ${form.history_auto_clean_days} дн.`}>
               <div style={{ width: 180, display: 'flex', alignItems: 'center', gap: 10 }}>
                 <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>7</span>
                 <input

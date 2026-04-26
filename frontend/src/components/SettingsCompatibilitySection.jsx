@@ -1,12 +1,24 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
-import { FiBox, FiChevronDown, FiChevronRight, FiPlus, FiTrash2 } from 'react-icons/fi';
-import { compatibilityApi } from '../api/client';
+import { FiBox, FiChevronDown, FiChevronRight, FiPlus, FiTrash2, FiLayers } from 'react-icons/fi';
+import { compatibilityApi, getApiErrorMessage } from '../api/client';
+
+const emptyBlock = () => ({ k: `b-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, brandId: '', text: '' });
+
+function parseModelNames(raw) {
+  const out = [];
+  for (const line of String(raw || '').split(/\r?\n/)) {
+    for (const part of line.split(/[,;]+/)) {
+      const t = part.trim();
+      if (t) out.push(t);
+    }
+  }
+  return out;
+}
 
 /**
- * Иерархия: сначала заводим код (465, 474) → раскрытие кода → марки и модели
- * → «Добавить марку» в справочник, «Добавить авто в код» = марка + модель, привязка к коду.
+ * Код (465) → внутри: марка в справочник + блоки «марка + несколько моделей (строки)» → в код.
  */
 function SettingsCompatibilitySection() {
   const qc = useQueryClient();
@@ -14,8 +26,7 @@ function SettingsCompatibilitySection() {
   const [newCodeName, setNewCodeName] = useState('');
   const [expandedId, setExpandedId] = useState(null);
   const [newBrandName, setNewBrandName] = useState('');
-  const [linkBrandId, setLinkBrandId] = useState('');
-  const [linkModelName, setLinkModelName] = useState('');
+  const [brandBlocks, setBrandBlocks] = useState([emptyBlock()]);
 
   const { data: vehBrands = [], refetch: refetchVehBrands } = useQuery({
     queryKey: ['compatibility', 'vehicle-brands'],
@@ -31,7 +42,11 @@ function SettingsCompatibilitySection() {
     enabled: expandedId != null,
   });
 
-  const byBrand = useMemo(() => {
+  useEffect(() => {
+    setBrandBlocks([emptyBlock()]);
+  }, [expandedId]);
+
+  const byBrand = React.useMemo(() => {
     const vms = detail?.vehicle_models || [];
     const map = new Map();
     for (const vm of vms) {
@@ -54,262 +69,254 @@ function SettingsCompatibilitySection() {
       refetchEng();
       qc.invalidateQueries({ queryKey: ['compatibility'] });
     },
-    onError: (e) => toast.error(e?.response?.data?.detail || 'Не удалось'),
+    onError: (e) => toast.error(getApiErrorMessage(e, 'Не удалось')),
   });
   const addVb = useMutation({
     mutationFn: (name) => compatibilityApi.createVehicleBrand({ name, is_active: true }),
     onSuccess: () => {
-      toast.success('Марка в справочнике');
+      toast.success('Марка добавлена');
       setNewBrandName('');
       refetchVehBrands();
       qc.invalidateQueries({ queryKey: ['compatibility'] });
     },
-    onError: () => toast.error('Не удалось'),
+    onError: (e) => toast.error(getApiErrorMessage(e, 'Не удалось создать марку')),
   });
-  const addVmAndLink = useMutation({
-    mutationFn: async ({ efId, brandId, name }) => {
-      const { data: created } = await compatibilityApi.createVehicleModel({
-        vehicle_brand_id: brandId,
-        name,
-        is_active: true,
-      });
-      const cur = await compatibilityApi.getEngineFamily(efId).then((r) => r.data);
-      const ids = [...(cur.vehicle_models || []).map((m) => m.id), created.id].filter(
-        (v, i, a) => a.indexOf(v) === i,
-      );
-      await compatibilityApi.updateEngineFamily(efId, { vehicle_model_ids: ids });
+
+  const addBatchToCode = useMutation({
+    mutationFn: async ({ efId, blocks }) => {
+      const groups = [];
+      for (const b of blocks) {
+        const bid = parseInt(b.brandId, 10);
+        if (!bid) continue;
+        const names = parseModelNames(b.text);
+        if (names.length) groups.push({ brandId: bid, names });
+      }
+      if (!groups.length) {
+        throw new Error('empty');
+      }
+      let cur = await compatibilityApi.getEngineFamily(efId).then((r) => r.data);
+      let ids = [...(cur.vehicle_models || []).map((m) => m.id)];
+      for (const g of groups) {
+        for (const name of g.names) {
+          const { data: created } = await compatibilityApi.createVehicleModel({
+            vehicle_brand_id: g.brandId,
+            name,
+            is_active: true,
+          });
+          ids.push(created.id);
+        }
+      }
+      const uniq = [...new Set(ids)];
+      await compatibilityApi.updateEngineFamily(efId, { vehicle_model_ids: uniq });
     },
-    onSuccess: (_, v) => {
-      toast.success('Модель привязана к коду');
-      setLinkModelName('');
-      setLinkBrandId(String(v.brandId));
-      qc.invalidateQueries({ queryKey: ['compatibility', 'engine-family', v.efId] });
+    onSuccess: (_, { efId }) => {
+      toast.success('Модели добавлены в код');
+      setBrandBlocks([emptyBlock()]);
+      qc.invalidateQueries({ queryKey: ['compatibility', 'engine-family', efId] });
       qc.invalidateQueries({ queryKey: ['compatibility', 'vehicle-models'] });
       qc.invalidateQueries({ queryKey: ['compatibility'] });
     },
-    onError: (e) => toast.error(e?.response?.data?.detail || 'Ошибка'),
+    onError: (e) => {
+      if (e?.message === 'empty') {
+        toast.error('Выберите марку и укажите хотя бы одну модель');
+        return;
+      }
+      toast.error(getApiErrorMessage(e, 'Ошибка'));
+    },
   });
+
   const removeModelFromCode = useMutation({
     mutationFn: async ({ efId, modelId, allIds }) => {
       const next = allIds.filter((id) => id !== modelId);
       await compatibilityApi.updateEngineFamily(efId, { vehicle_model_ids: next });
     },
     onSuccess: (_, v) => {
-      toast.success('Связь снята');
+      toast.success('Снято');
       qc.invalidateQueries({ queryKey: ['compatibility', 'engine-family', v.efId] });
       qc.invalidateQueries({ queryKey: ['compatibility'] });
     },
-    onError: () => toast.error('Не удалось'),
+    onError: (e) => toast.error(getApiErrorMessage(e, 'Не удалось')),
   });
 
   const allIds = (detail?.vehicle_models || []).map((m) => m.id);
 
   return (
-    <div className="settings-section">
+    <div className="settings-section compatibility-settings">
       <div className="settings-section-title">
-        <FiBox size={16} /> Совместимость (код → марка → модель)
+        <FiBox size={16} /> Совместимость
       </div>
       <div className="settings-section-body">
-        <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 10 }}>
-          Сначала добавьте <strong>код</strong> (465, 474). Нажмите на строку — откроются привязанные марки/модели. Марку
-          в справочник, затем модель в этот код.
-        </div>
-        <div
-          style={{
-            display: 'flex',
-            flexWrap: 'wrap',
-            gap: 8,
-            alignItems: 'center',
-            marginBottom: 14,
-            padding: 10,
-            borderRadius: 12,
-            background: 'var(--ios-grouped-bg)',
-            border: '1px solid var(--border)',
-          }}
-        >
+        <div className="compat-add-code">
           <input
+            className="compat-input"
             value={newCode}
             onChange={(e) => setNewCode(e.target.value.replace(/\s+/g, ''))}
             placeholder="Код, напр. 465"
-            style={{ width: 100, padding: '8px 10px', borderRadius: 10, border: '1px solid var(--border)' }}
+            aria-label="Код"
           />
           <input
+            className="compat-input compat-input-grow"
             value={newCodeName}
             onChange={(e) => setNewCodeName(e.target.value)}
-            placeholder="Название (опц.)"
-            style={{ flex: 1, minWidth: 120, padding: '8px 10px', borderRadius: 10, border: '1px solid var(--border)' }}
+            placeholder="Название (опционально)"
+            aria-label="Название кода"
           />
           <button
             type="button"
+            className="compat-btn-primary"
             onClick={() => {
               const c = (newCode || '').trim();
-              if (!c) { toast.error('Введите код'); return; }
+              if (!c) {
+                toast.error('Введите код');
+                return;
+              }
               addEf.mutate({ code: c, name: newCodeName.trim() || null, is_active: true, vehicle_model_ids: null });
             }}
             disabled={addEf.isPending}
-            style={{
-              padding: '8px 14px',
-              borderRadius: 10,
-              fontWeight: 700,
-              border: '1px solid var(--primary)',
-              background: 'var(--primary-light)',
-              color: 'var(--primary)',
-            }}
           >
-            <FiPlus size={14} style={{ marginRight: 4, verticalAlign: 'middle' }} />
+            <FiPlus size={15} style={{ marginRight: 4, verticalAlign: 'middle' }} />
             Код
           </button>
         </div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-          {engFamilies.length === 0 && <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>Пока нет кодов</div>}
+
+        <div className="compat-code-list">
+          {engFamilies.length === 0 && <div className="compat-muted">Нет кодов</div>}
           {engFamilies
             .slice()
             .sort((a, b) => String(a.code).localeCompare(String(b.code), 'ru', { numeric: true }))
             .map((f) => {
               const open = expandedId === f.id;
               return (
-                <div
-                  key={f.id}
-                  style={{
-                    borderRadius: 12,
-                    border: '1px solid var(--border)',
-                    background: 'var(--surface)',
-                    overflow: 'hidden',
-                  }}
-                >
+                <div key={f.id} className="compat-accordion">
                   <button
                     type="button"
+                    className="compat-accordion-head"
                     onClick={() => setExpandedId((id) => (id === f.id ? null : f.id))}
-                    style={{
-                      width: '100%',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 8,
-                      padding: '10px 12px',
-                      border: 'none',
-                      background: open ? 'var(--ios-grouped-bg)' : 'var(--surface)',
-                      cursor: 'pointer',
-                      textAlign: 'left',
-                    }}
                   >
                     {open ? <FiChevronDown size={16} /> : <FiChevronRight size={16} />}
-                    <b style={{ fontSize: 14 }}>{f.code}</b>
-                    {f.name && <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{f.name}</span>}
-                    <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text-muted)' }}>раскрыть</span>
+                    <span className="compat-code-label">{f.code}</span>
+                    {f.name && <span className="compat-code-sub">{f.name}</span>}
                   </button>
                   {open && (
-                    <div style={{ padding: '0 12px 12px 36px' }}>
-                      {detailLoading && <div style={{ fontSize: 12 }}>Загрузка…</div>}
+                    <div className="compat-accordion-body">
+                      {detailLoading && <div className="compat-muted">Загрузка…</div>}
                       {!detailLoading && (
                         <>
-                          <div
-                            style={{
-                              fontSize: 11,
-                              fontWeight: 700,
-                              color: 'var(--text-muted)',
-                              margin: '6px 0 8px',
-                            }}
-                          >
+                          <div className="compat-subhead">
+                            <FiLayers size={14} style={{ marginRight: 6, opacity: 0.7 }} />
                             Марка в справочник
                           </div>
-                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
+                          <div className="compat-row">
                             <input
+                              className="compat-input compat-input-grow"
                               value={newBrandName}
                               onChange={(e) => setNewBrandName(e.target.value)}
-                              placeholder="Новая марка (Changan…)"
-                              style={{ flex: 1, minWidth: 160, padding: '8px 10px', borderRadius: 10, border: '1px solid var(--border)' }}
+                              placeholder="Новая марка, напр. Changan"
                             />
                             <button
                               type="button"
+                              className="compat-btn-secondary"
                               onClick={() => {
-                                if (!newBrandName.trim()) { toast.error('Введите марку'); return; }
+                                if (!newBrandName.trim()) {
+                                  toast.error('Введите марку');
+                                  return;
+                                }
                                 addVb.mutate(newBrandName.trim());
                               }}
                               disabled={addVb.isPending}
                             >
-                              Добавить марку
+                              <FiPlus size={14} style={{ marginRight: 4, verticalAlign: 'middle' }} />
+                              В справочник
                             </button>
                           </div>
-                          <div
-                            style={{
-                              fontSize: 11,
-                              fontWeight: 700,
-                              color: 'var(--text-muted)',
-                              margin: '6px 0 6px',
-                            }}
-                          >
-                            Добавить авто в код {f.code}
-                          </div>
-                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 12, alignItems: 'center' }}>
-                            <select
-                              value={linkBrandId}
-                              onChange={(e) => setLinkBrandId(e.target.value)}
-                              style={{ minWidth: 150, padding: '8px 10px', borderRadius: 10, border: '1px solid var(--border)' }}
-                            >
-                              <option value="">Марка…</option>
-                              {vehBrands.map((b) => (
-                                <option key={b.id} value={b.id}>
-                                  {b.name}
-                                </option>
-                              ))}
-                            </select>
-                            <input
-                              value={linkModelName}
-                              onChange={(e) => setLinkModelName(e.target.value)}
-                              placeholder="Модель (CS35…)"
-                              style={{ flex: 1, minWidth: 120, padding: '8px 10px', borderRadius: 10, border: '1px solid var(--border)' }}
-                            />
+
+                          <div className="compat-subhead">Код {f.code}: марки и модели</div>
+
+                          {brandBlocks.map((b, idx) => (
+                            <div key={b.k} className="compat-brand-card">
+                              <div className="compat-brand-card-head">
+                                <span>Марка {idx + 1}</span>
+                                {brandBlocks.length > 1 && (
+                                  <button
+                                    type="button"
+                                    className="compat-link danger"
+                                    onClick={() => setBrandBlocks((prev) => prev.filter((x) => x.k !== b.k))}
+                                  >
+                                    Убрать блок
+                                  </button>
+                                )}
+                              </div>
+                              <select
+                                className="compat-select"
+                                value={b.brandId}
+                                onChange={(e) => {
+                                  const v = e.target.value;
+                                  setBrandBlocks((prev) => prev.map((x) => (x.k === b.k ? { ...x, brandId: v } : x)));
+                                }}
+                                aria-label={`Марка ${idx + 1}`}
+                              >
+                                <option value="">— марка —</option>
+                                {vehBrands.map((vb) => (
+                                  <option key={vb.id} value={vb.id}>
+                                    {vb.name}
+                                  </option>
+                                ))}
+                              </select>
+                              <textarea
+                                className="compat-textarea"
+                                value={b.text}
+                                onChange={(e) => {
+                                  const t = e.target.value;
+                                  setBrandBlocks((prev) => prev.map((x) => (x.k === b.k ? { ...x, text: t } : x)));
+                                }}
+                                rows={4}
+                                placeholder="CS55&#10;UNI-K&#10;Eado Plus"
+                                spellCheck={false}
+                              />
+                            </div>
+                          ))}
+
+                          <div className="compat-actions">
                             <button
                               type="button"
-                              onClick={() => {
-                                const bid = parseInt(linkBrandId, 10);
-                                if (!bid || !linkModelName.trim()) { toast.error('Марка и модель обязательны'); return; }
-                                addVmAndLink.mutate({ efId: f.id, brandId: bid, name: linkModelName.trim() });
-                              }}
-                              disabled={addVmAndLink.isPending}
+                              className="compat-btn-ghost"
+                              onClick={() => setBrandBlocks((p) => [...p, emptyBlock()])}
                             >
-                              В код
+                              <FiPlus size={15} style={{ marginRight: 4, verticalAlign: 'middle' }} />
+                              Ещё марка
+                            </button>
+                            <button
+                              type="button"
+                              className="compat-btn-primary"
+                              disabled={addBatchToCode.isPending}
+                              onClick={() => addBatchToCode.mutate({ efId: f.id, blocks: brandBlocks })}
+                            >
+                              {addBatchToCode.isPending ? '…' : 'Добавить в код'}
                             </button>
                           </div>
-                          <div
-                            style={{
-                              fontSize: 11,
-                              fontWeight: 700,
-                              color: 'var(--text-muted)',
-                              margin: '8px 0 4px',
-                            }}
-                          >
-                            Сейчас в коде
+
+                          <div className="compat-subhead" style={{ marginTop: 18 }}>
+                            В коде {f.code}
                           </div>
                           {[...byBrand.entries()].length === 0 && (
-                            <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>— привяжите минимум одну модель</div>
+                            <div className="compat-muted">Пока пусто</div>
                           )}
                           {[...byBrand.entries()].map(([bid, g]) => (
-                            <div key={bid} style={{ marginBottom: 8, fontSize: 13 }}>
-                              <div style={{ fontWeight: 700, marginBottom: 4, color: 'var(--text)' }}>
-                                {g.brand?.name || `Марка #${bid}`}
-                              </div>
-                              <ul style={{ margin: 0, paddingLeft: 18 }}>
+                            <div key={bid} className="compat-linked-block">
+                              <div className="compat-linked-title">{g.brand?.name || `Марка #${bid}`}</div>
+                              <ul className="compat-model-list">
                                 {g.models.map((m) => (
-                                  <li key={m.id} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                  <li key={m.id} className="compat-model-line">
                                     <span>{m.name}</span>
                                     <button
                                       type="button"
+                                      className="compat-icon-del"
                                       title="Убрать из кода"
                                       onClick={() =>
                                         removeModelFromCode.mutate({ efId: f.id, modelId: m.id, allIds })
                                       }
-                                      style={{
-                                        border: 'none',
-                                        background: 'none',
-                                        color: 'var(--danger)',
-                                        cursor: 'pointer',
-                                        padding: 0,
-                                        display: 'inline-flex',
-                                        alignItems: 'center',
-                                      }}
                                     >
-                                      <FiTrash2 size={12} />
+                                      <FiTrash2 size={14} />
                                     </button>
                                   </li>
                                 ))}
