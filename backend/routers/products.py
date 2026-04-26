@@ -396,7 +396,7 @@ def create_product(
     payload.pop("profit_percent", None)
     v_ids = payload.pop("compatibility_vehicle_model_ids", None)
     e_ids = payload.pop("compatibility_engine_family_ids", None)
-        payload["received_at"] = datetime.now(UTC)
+    payload["received_at"] = datetime.now(UTC)
 
     db_product = models.Product(**payload)
     db.add(db_product)
