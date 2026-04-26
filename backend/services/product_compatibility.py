@@ -13,17 +13,50 @@ import models
 import schemas
 
 
+# maketrans требует строки равной длины; ж/sh/ch — многосимвольно → мапа посимвольно/подстроки
+_CYR_TO_LAT = {
+    "а": "a",
+    "б": "b",
+    "в": "v",
+    "г": "g",
+    "д": "d",
+    "е": "e",
+    "ё": "e",
+    "ж": "zh",
+    "з": "z",
+    "и": "i",
+    "й": "j",
+    "к": "k",
+    "л": "l",
+    "м": "m",
+    "н": "n",
+    "о": "o",
+    "п": "p",
+    "р": "r",
+    "с": "s",
+    "т": "t",
+    "у": "u",
+    "ф": "f",
+    "х": "h",
+    "ц": "c",
+    "ч": "ch",
+    "ш": "sh",
+    "щ": "shch",
+    "ъ": "",
+    "ы": "y",
+    "ь": "",
+    "э": "e",
+    "ю": "yu",
+    "я": "ya",
+}
+
+
 def slugify_label(s: str, fallback: str = "item") -> str:
     """URL-safe slug: латиница, цифры, дефис; кириллица транслитеруется грубо."""
     raw = (s or "").strip().lower()
     if not raw:
         raw = fallback
-    # простая кириллица → латиница
-    tr = str.maketrans(
-        "абвгдеёжзийклмнопрстуфхцчшщъыьэюя",
-        "abvgdeezijklmnoprstufhchshschieuya",
-    )
-    t = raw.translate(tr)
+    t = "".join(_CYR_TO_LAT.get(c, c) for c in raw)
     t = unicodedata.normalize("NFKD", t)
     t = re.sub(r"[^a-z0-9]+", "-", t, flags=re.I)
     t = t.strip("-")[:150] or fallback
