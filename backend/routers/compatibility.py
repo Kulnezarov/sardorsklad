@@ -1,6 +1,7 @@
 """CRUD для марок/моделей авто и кодов совместимости (двигательные семьи)."""
 
 import re
+from datetime import UTC, datetime
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -113,10 +114,14 @@ def create_vehicle_brand(payload: schemas.VehicleBrandCreate, db: Session = Depe
     try:
         slug = (payload.slug or "").strip() or slugify_label(payload.name)
         slug = _unique_vehicle_brand_slug(db, slug)
+        # Явные даты: на старых БД у колонок мог не быть DEFAULT → NOT NULL ломал INSERT
+        now = datetime.now(UTC)
         row = models.VehicleBrand(
             name=payload.name.strip(),
             slug=slug,
             is_active=payload.is_active,
+            created_at=now,
+            updated_at=now,
         )
         db.add(row)
         try:
@@ -232,11 +237,14 @@ def create_vehicle_model(payload: schemas.VehicleModelCreate, db: Session = Depe
     name = payload.name.strip()
     slug = (payload.slug or "").strip() or slugify_label(f"{b.slug}-{name}")
     slug = _unique_vehicle_model_slug(db, slug)
+    now = datetime.now(UTC)
     row = models.VehicleModel(
         vehicle_brand_id=payload.vehicle_brand_id,
         name=name,
         slug=slug,
         is_active=payload.is_active,
+        created_at=now,
+        updated_at=now,
     )
     db.add(row)
     try:
