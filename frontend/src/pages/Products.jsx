@@ -265,6 +265,16 @@ const Products = () => {
     staleTime: 60000,
   });
 
+  const [compatVmFilter, setCompatVmFilter] = useState('');
+  const filteredCompatVehicles = useMemo(() => {
+    const q = compatVmFilter.trim().toLowerCase();
+    if (!q) return compatVehicleModels;
+    return compatVehicleModels.filter((vm) => {
+      const b = (vm.brand && vm.brand.name) || '';
+      return `${b} ${vm.name}`.toLowerCase().includes(q);
+    });
+  }, [compatVehicleModels, compatVmFilter]);
+
   const handleToggleEngineCode = useCallback((id) => {
     let was = false;
     let shouldFill = false;
@@ -1450,13 +1460,21 @@ const Products = () => {
             />
           </div>
 
-          <div style={{ display: 'grid', gap: 8 }}>
-            <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-muted)' }}>
-              Коды совместимости — не обязательно (как категория: нажмите чип)
-            </div>
+          <div style={{ display: 'grid', gap: 10 }}>
+            <TextArea
+              label="Совместимость для витрины (свой текст)"
+              placeholder="Любой текст для сайта/витрины: марки, кроссы, уточнения. Не зависит от чипов ниже."
+              value={formData.model || ''}
+              onChange={(e) => {
+                compatibilityTextTouchedRef.current = true;
+                setFormData({ ...formData, model: e.target.value });
+              }}
+              style={{ minHeight: 88, ...formData.id ? { border: '1px solid var(--primary)' } : {} }}
+            />
+            <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-muted)' }}>Коды из справочника</div>
             <div className="catalog-chips-scroll" style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
               {compatEngineFamilies.length === 0 && (
-                <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Справочник пуст: Настройки → Совместимость</span>
+                <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Справочник пуст — задайте в Настройки</span>
               )}
               {compatEngineFamilies.map((ef) => {
                 const on = (formData.compatibility_engine_family_ids || []).includes(ef.id);
@@ -1474,20 +1492,29 @@ const Products = () => {
                 );
               })}
             </div>
-            <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-              При выборе кода внизу подставляется первая марка/модель из справочника к коду; можно отредактировать вручную.
-            </div>
-            <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-muted)' }}>
-              Какие авто подходят (доп.) — чипы, не обязательно
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+              <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-muted)' }}>Авто из справочника (чипы)</span>
+              <input
+                className="ios-input"
+                type="search"
+                placeholder="Поиск: марка или модель"
+                value={compatVmFilter}
+                onChange={(e) => setCompatVmFilter(e.target.value)}
+                style={{ flex: 1, minWidth: 140, maxWidth: 280, fontSize: 13, padding: '6px 10px' }}
+                aria-label="Поиск авто в чипах"
+              />
             </div>
             <div
               className="catalog-chips-scroll"
-              style={{ display: 'flex', flexWrap: 'wrap', gap: 8, maxHeight: 140, overflowY: 'auto' }}
+              style={{ display: 'flex', flexWrap: 'wrap', gap: 8, maxHeight: 160, overflowY: 'auto' }}
             >
               {compatVehicleModels.length === 0 && (
                 <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>—</span>
               )}
-              {compatVehicleModels.map((vm) => {
+              {compatVehicleModels.length > 0 && filteredCompatVehicles.length === 0 && (
+                <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Нет совпадений по поиску</span>
+              )}
+              {filteredCompatVehicles.map((vm) => {
                 const on = (formData.compatibility_vehicle_model_ids || []).includes(vm.id);
                 const b = (vm.brand && vm.brand.name) || '—';
                 return (
@@ -1503,16 +1530,6 @@ const Products = () => {
                 );
               })}
             </div>
-            <Input
-              label="Совместимость (авто, витрина)"
-              placeholder="Кратко для каталога; при выборе кода — подставится первая пара марка+модель"
-              value={formData.model || ''}
-              onChange={(e) => {
-                compatibilityTextTouchedRef.current = true;
-                setFormData({ ...formData, model: e.target.value });
-              }}
-              style={formData.id ? { border: '1px solid var(--primary)' } : {}}
-            />
           </div>
 
           <div>

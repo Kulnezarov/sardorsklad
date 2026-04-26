@@ -347,6 +347,7 @@ def ensure_schema_updates():
     )
 
     ensure_compatibility_tables()
+    ensure_compatibility_table_columns()
 
 
 def ensure_compatibility_tables() -> None:
@@ -371,6 +372,46 @@ def ensure_compatibility_tables() -> None:
         ProductVehicleModelLink.__table__.create(engine, checkfirst=True)
     except Exception as e:
         logger.warning("ensure_compatibility_tables: %s", e)
+
+
+def ensure_compatibility_table_columns() -> None:
+    """Починить старые таблицы без created_at/updated_at (иначе 500 на POST и ответе API)."""
+    if not DATABASE_URL or "postgresql" not in DATABASE_URL.lower():
+        return
+    _exec_schema_sql(
+        """
+        DO $$
+        BEGIN
+          IF to_regclass('public.vehicle_brands') IS NOT NULL THEN
+            ALTER TABLE vehicle_brands
+              ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ;
+            ALTER TABLE vehicle_brands
+              ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ;
+            UPDATE vehicle_brands
+              SET created_at = COALESCE(created_at, now() AT TIME ZONE 'utc'),
+                  updated_at = COALESCE(updated_at, created_at, now() AT TIME ZONE 'utc');
+          END IF;
+        END $$;
+        """,
+        "vehicle_brands.ts_fix",
+    )
+    _exec_schema_sql(
+        """
+        DO $$
+        BEGIN
+          IF to_regclass('public.vehicle_models') IS NOT NULL THEN
+            ALTER TABLE vehicle_models
+              ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ;
+            ALTER TABLE vehicle_models
+              ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ;
+            UPDATE vehicle_models
+              SET created_at = COALESCE(created_at, now() AT TIME ZONE 'utc'),
+                  updated_at = COALESCE(updated_at, created_at, now() AT TIME ZONE 'utc');
+          END IF;
+        END $$;
+        """,
+        "vehicle_models.ts_fix",
+    )
 
 
 def drop_tables():

@@ -1,6 +1,7 @@
 """CRUD для марок/моделей авто и кодов совместимости (двигательные семьи)."""
 
 import re
+from datetime import UTC, datetime
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -16,6 +17,28 @@ from config.logger import setup_logger
 from services.product_compatibility import slugify_label
 
 logger = setup_logger("compatibility")
+
+
+def _vb_to_response(row: models.VehicleBrand) -> schemas.VehicleBrandResponse:
+    """ORM → схема: подстраховка, если в БД NULL в датах (старая/битая миграция)."""
+    now = datetime.now(UTC)
+    ca = row.created_at
+    ua = row.updated_at
+    if ca is not None and getattr(ca, "tzinfo", None) is None:
+        ca = ca.replace(tzinfo=UTC)
+    if ua is not None and getattr(ua, "tzinfo", None) is None:
+        ua = ua.replace(tzinfo=UTC)
+    ca = ca or now
+    ua = ua or ca
+    return schemas.VehicleBrandResponse(
+        id=row.id,
+        name=(row.name or "").strip() or "—",
+        slug=(row.slug or "brand").strip(),
+        is_active=bool(row.is_active),
+        created_at=ca,
+        updated_at=ua,
+    )
+
 
 router = APIRouter(
     prefix="/api/v1/compatibility",
@@ -88,7 +111,8 @@ def list_vehicle_brands(
         qry = qry.filter(
             or_(models.VehicleBrand.name.ilike(term), models.VehicleBrand.slug.ilike(term))
         )
-    return qry.order_by(asc(models.VehicleBrand.name)).all()
+    rows = qry.order_by(asc(models.VehicleBrand.name)).all()
+    return [_vb_to_response(r) for r in rows]
 
 
 @router.post(
@@ -112,7 +136,7 @@ def create_vehicle_brand(payload: schemas.VehicleBrandCreate, db: Session = Depe
             db.rollback()
             raise HTTPException(400, detail="Конфликт: марка с таким именем/slug")
         db.refresh(row)
-        return row
+        return _vb_to_response(row)
     except HTTPException:
         raise
     except (ProgrammingError, OperationalError) as e:
@@ -149,7 +173,7 @@ def update_vehicle_brand(
         db.rollback()
         raise HTTPException(400, detail="Конфликт данных")
     db.refresh(row)
-    return row
+    return _vb_to_response(row)
 
 
 @router.delete("/vehicle-brands/{brand_id}", status_code=status.HTTP_204_NO_CONTENT)
