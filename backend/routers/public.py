@@ -10,7 +10,11 @@ from sqlalchemy.orm import Session, joinedload
 import models
 import schemas
 from database import get_db
-from services.product_compatibility import build_compatibility_map, build_compatibility_out
+from services.product_compatibility import (
+    build_compatibility_map,
+    build_compatibility_out,
+    vehicle_brand_to_response,
+)
 from services.public_rate_limit import check_public_order_rate_limit
 from services.telegram_orders import send_new_order_notification
 
@@ -502,7 +506,7 @@ def list_public_vehicle_brands(db: Session = Depends(get_db)):
         .order_by(asc(models.VehicleBrand.name))
         .all()
     )
-    return [schemas.VehicleBrandResponse.model_validate(b, from_attributes=True) for b in rows]
+    return [vehicle_brand_to_response(b) for b in rows]
 
 
 @router.get("/compatibility/vehicle-models", response_model=list[schemas.VehicleModelResponse])
@@ -522,13 +526,9 @@ def list_public_vehicle_models(
     for r in rows:
         d = schemas.VehicleModelResponse.model_validate(r, from_attributes=True)
         if r.vehicle_brand:
-            d = d.model_copy(
-                update={
-                    "brand": schemas.VehicleBrandResponse.model_validate(
-                        r.vehicle_brand, from_attributes=True
-                    )
-                }
-            )
+        d = d.model_copy(
+            update={"brand": vehicle_brand_to_response(r.vehicle_brand)}
+        )
         out.append(d)
     return out
 

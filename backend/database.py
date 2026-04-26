@@ -45,7 +45,9 @@ Base = declarative_base()
 # Connection event listeners
 @event.listens_for(engine, "connect")
 def receive_connect(dbapi_conn, connection_record):
-    """Set PostgreSQL specific settings on connect."""
+    """Только для PostgreSQL: иначе SQLite и др. падают на «SET jit»."""
+    if engine.dialect.name != "postgresql":
+        return
     cursor = dbapi_conn.cursor()
     cursor.execute("SET jit = off")  # Disable JIT for faster queries
     cursor.close()
@@ -387,9 +389,25 @@ def ensure_compatibility_table_columns() -> None:
               ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ;
             ALTER TABLE vehicle_brands
               ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ;
+            ALTER TABLE vehicle_brands ADD COLUMN IF NOT EXISTS slug VARCHAR(160);
+            ALTER TABLE vehicle_brands ADD COLUMN IF NOT EXISTS is_active BOOLEAN;
+            UPDATE vehicle_brands SET is_active = COALESCE(is_active, true) WHERE is_active IS NULL;
             UPDATE vehicle_brands
               SET created_at = COALESCE(created_at, now() AT TIME ZONE 'utc'),
                   updated_at = COALESCE(updated_at, created_at, now() AT TIME ZONE 'utc');
+            UPDATE vehicle_brands
+              SET slug = 'vb-' || id::text
+              WHERE slug IS NULL OR btrim(COALESCE(slug::text, '')) = '';
+            BEGIN
+              ALTER TABLE vehicle_brands ALTER COLUMN is_active SET DEFAULT true;
+            EXCEPTION WHEN OTHERS THEN
+              NULL;
+            END;
+            BEGIN
+              ALTER TABLE vehicle_brands ALTER COLUMN is_active SET NOT NULL;
+            EXCEPTION WHEN OTHERS THEN
+              NULL;
+            END;
           END IF;
         END $$;
         """,
@@ -404,9 +422,25 @@ def ensure_compatibility_table_columns() -> None:
               ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ;
             ALTER TABLE vehicle_models
               ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ;
+            ALTER TABLE vehicle_models ADD COLUMN IF NOT EXISTS slug VARCHAR(200);
+            ALTER TABLE vehicle_models ADD COLUMN IF NOT EXISTS is_active BOOLEAN;
+            UPDATE vehicle_models SET is_active = COALESCE(is_active, true) WHERE is_active IS NULL;
             UPDATE vehicle_models
               SET created_at = COALESCE(created_at, now() AT TIME ZONE 'utc'),
                   updated_at = COALESCE(updated_at, created_at, now() AT TIME ZONE 'utc');
+            UPDATE vehicle_models
+              SET slug = 'vm-' || id::text
+              WHERE slug IS NULL OR btrim(COALESCE(slug::text, '')) = '';
+            BEGIN
+              ALTER TABLE vehicle_models ALTER COLUMN is_active SET DEFAULT true;
+            EXCEPTION WHEN OTHERS THEN
+              NULL;
+            END;
+            BEGIN
+              ALTER TABLE vehicle_models ALTER COLUMN is_active SET NOT NULL;
+            EXCEPTION WHEN OTHERS THEN
+              NULL;
+            END;
           END IF;
         END $$;
         """,

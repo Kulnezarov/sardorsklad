@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from datetime import UTC, datetime
 from typing import Iterable, List, Optional, Set
 
 from sqlalchemy.orm import Session, joinedload
@@ -27,6 +28,29 @@ def slugify_label(s: str, fallback: str = "item") -> str:
     t = re.sub(r"[^a-z0-9]+", "-", t, flags=re.I)
     t = t.strip("-")[:150] or fallback
     return t
+
+
+def vehicle_brand_to_response(row: models.VehicleBrand) -> schemas.VehicleBrandResponse:
+    """
+    ORM → API: NULL в created_at/updated_at и naive-UTC (старые БД) — без этого Pydantic даёт 500.
+    """
+    now = datetime.now(UTC)
+    ca = row.created_at
+    ua = row.updated_at
+    if ca is not None and getattr(ca, "tzinfo", None) is None:
+        ca = ca.replace(tzinfo=UTC)
+    if ua is not None and getattr(ua, "tzinfo", None) is None:
+        ua = ua.replace(tzinfo=UTC)
+    ca = ca or now
+    ua = ua or ca
+    return schemas.VehicleBrandResponse(
+        id=row.id,
+        name=(row.name or "").strip() or "—",
+        slug=(row.slug or "brand").strip() or "brand",
+        is_active=bool(row.is_active) if row.is_active is not None else True,
+        created_at=ca,
+        updated_at=ua,
+    )
 
 
 def _sync_link_rows(

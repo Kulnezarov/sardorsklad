@@ -1,7 +1,6 @@
 """CRUD для марок/моделей авто и кодов совместимости (двигательные семьи)."""
 
 import re
-from datetime import UTC, datetime
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -14,30 +13,13 @@ import schemas
 from database import get_db
 from dependencies import require_manager_or_admin
 from config.logger import setup_logger
-from services.product_compatibility import slugify_label
+from services.product_compatibility import slugify_label, vehicle_brand_to_response
 
 logger = setup_logger("compatibility")
 
 
 def _vb_to_response(row: models.VehicleBrand) -> schemas.VehicleBrandResponse:
-    """ORM → схема: подстраховка, если в БД NULL в датах (старая/битая миграция)."""
-    now = datetime.now(UTC)
-    ca = row.created_at
-    ua = row.updated_at
-    if ca is not None and getattr(ca, "tzinfo", None) is None:
-        ca = ca.replace(tzinfo=UTC)
-    if ua is not None and getattr(ua, "tzinfo", None) is None:
-        ua = ua.replace(tzinfo=UTC)
-    ca = ca or now
-    ua = ua or ca
-    return schemas.VehicleBrandResponse(
-        id=row.id,
-        name=(row.name or "").strip() or "—",
-        slug=(row.slug or "brand").strip(),
-        is_active=bool(row.is_active),
-        created_at=ca,
-        updated_at=ua,
-    )
+    return vehicle_brand_to_response(row)
 
 
 router = APIRouter(
@@ -103,16 +85,23 @@ def list_vehicle_brands(
     q: Optional[str] = None,
     include_inactive: bool = False,
 ):
-    qry = db.query(models.VehicleBrand)
-    if not include_inactive:
-        qry = qry.filter(models.VehicleBrand.is_active.is_(True))
-    if q and q.strip():
-        term = f"%{q.strip()}%"
-        qry = qry.filter(
-            or_(models.VehicleBrand.name.ilike(term), models.VehicleBrand.slug.ilike(term))
-        )
-    rows = qry.order_by(asc(models.VehicleBrand.name)).all()
-    return [_vb_to_response(r) for r in rows]
+    try:
+        qry = db.query(models.VehicleBrand)
+        if not include_inactive:
+            qry = qry.filter(models.VehicleBrand.is_active.is_(True))
+        if q and q.strip():
+            term = f"%{q.strip()}%"
+            qry = qry.filter(
+                or_(models.VehicleBrand.name.ilike(term), models.VehicleBrand.slug.ilike(term))
+            )
+        rows = qry.order_by(asc(models.VehicleBrand.name)).all()
+        return [_vb_to_response(r) for r in rows]
+    except (ProgrammingError, OperationalError) as e:
+        logger.exception("list_vehicle_brands: %s", e)
+        raise HTTPException(
+            status_code=503,
+            detail="Таблица справочника марок не готова или БД недоступна. Перезапустите API после обновления.",
+        ) from e
 
 
 @router.post(
@@ -221,7 +210,7 @@ def list_vehicle_models(
     for r in rows:
         d = schemas.VehicleModelResponse.model_validate(r, from_attributes=True)
         d = d.model_copy(
-            update={"brand": schemas.VehicleBrandResponse.model_validate(r.vehicle_brand, from_attributes=True)}
+            update={"brand": _vb_to_response(r.vehicle_brand)}
         )
         out.append(d)
     return out
@@ -264,7 +253,7 @@ def create_vehicle_model(payload: schemas.VehicleModelCreate, db: Session = Depe
     )
     d = schemas.VehicleModelResponse.model_validate(row, from_attributes=True)
     return d.model_copy(
-        update={"brand": schemas.VehicleBrandResponse.model_validate(row.vehicle_brand, from_attributes=True)}
+        update={"brand": _vb_to_response(row.vehicle_brand)}
     )
 
 
@@ -300,7 +289,7 @@ def update_vehicle_model(
     )
     d = schemas.VehicleModelResponse.model_validate(row, from_attributes=True)
     return d.model_copy(
-        update={"brand": schemas.VehicleBrandResponse.model_validate(row.vehicle_brand, from_attributes=True)}
+        update={"brand": _vb_to_response(row.vehicle_brand)}
     )
 
 
@@ -406,7 +395,7 @@ def _engine_family_to_schema(db: Session, f: models.EngineFamily) -> schemas.Eng
             continue
         d = schemas.VehicleModelResponse.model_validate(row, from_attributes=True)
         d = d.model_copy(
-            update={"brand": schemas.VehicleBrandResponse.model_validate(row.vehicle_brand, from_attributes=True)}
+            update={"brand": _vb_to_response(row.vehicle_brand)}
         )
         vms.append(d)
     vms.sort(key=lambda x: (x.brand.name.casefold() if x.brand else "", x.name.casefold(), x.id))
