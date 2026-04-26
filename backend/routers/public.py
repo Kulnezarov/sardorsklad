@@ -526,9 +526,9 @@ def list_public_vehicle_models(
     for r in rows:
         d = schemas.VehicleModelResponse.model_validate(r, from_attributes=True)
         if r.vehicle_brand:
-        d = d.model_copy(
-            update={"brand": vehicle_brand_to_response(r.vehicle_brand)}
-        )
+            d = d.model_copy(
+                update={"brand": vehicle_brand_to_response(r.vehicle_brand)}
+            )
         out.append(d)
     return out
 
