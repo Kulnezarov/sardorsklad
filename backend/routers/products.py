@@ -25,6 +25,7 @@ from database import SessionLocal, get_db
 from dependencies import require_manager_or_admin
 from services.audit import write_audit_log
 from services.excel_products import export_products_xlsx, import_products_from_xlsx
+from services.product_compatibility import apply_product_compatibility, build_compatibility_out
 
 router = APIRouter(
     prefix="/api/v1/products",
@@ -69,6 +70,18 @@ def _delete_old_product_image_file(old_url: str | None) -> None:
             path.unlink()
         except OSError:
             pass
+
+
+def _product_to_response_lite(p: models.Product) -> schemas.ProductResponse:
+    """Список товаров: без N+1 по совместимости — смотрите product.model (кэш)."""
+    r = schemas.ProductResponse.model_validate(p, from_attributes=True)
+    return r.model_copy(update={"compatibility": schemas.ProductCompatibilityOut()})
+
+
+def _product_to_response(db: Session, p: models.Product) -> schemas.ProductResponse:
+    comp = build_compatibility_out(db, p.id)
+    r = schemas.ProductResponse.model_validate(p, from_attributes=True)
+    return r.model_copy(update={"compatibility": comp})
 
 
 def _prepare_for_webp(img: Image.Image) -> Image.Image:
@@ -121,6 +134,7 @@ def list_products(
                     models.Product.sku.ilike(f"%{term}%"),
                     models.Product.barcode.ilike(f"%{term}%"),
                     models.Product.brand.ilike(f"%{term}%"),
+                    models.Product.model.ilike(f"%{term}%"),
                     models.Product.category.ilike(f"%{term}%"),
                 )
             )
@@ -130,7 +144,8 @@ def list_products(
         threshold = settings.low_stock_threshold if settings else 5
         query = query.filter(models.Product.quantity <= threshold)
 
-    return query.order_by(models.Product.created_at.desc()).offset(skip).limit(limit).all()
+    rows = query.order_by(models.Product.created_at.desc()).offset(skip).limit(limit).all()
+    return [_product_to_response_lite(p) for p in rows]
 
 
 @router.get("/barcode/{barcode}", response_model=schemas.ProductResponse)
@@ -148,7 +163,7 @@ def get_product_by_barcode(barcode: str, db: Session = Depends(get_db)):
     )
     if not product:
         raise HTTPException(status_code=404, detail="Product not found")
-    return product
+    return _product_to_response(db, product)
 
 
 @router.post("/import/excel", response_model=schemas.ImportExcelResponse)
@@ -254,7 +269,7 @@ def export_excel_products(
 @router.get("/categories/list", response_model=List[str])
 def list_categories(
     db: Session = Depends(get_db),
-    limit: int = Query(30, ge=1, le=200),
+    limit: int = Query(500, ge=1, le=1000),
     search: Optional[str] = Query(None),
 ):
     query = db.query(models.Product.category).filter(
@@ -300,12 +315,64 @@ def get_product_stats(db: Session = Depends(get_db)):
     }
 
 
+@router.get("/images/health")
+def product_images_health(
+    db: Session = Depends(get_db),
+    limit: int = Query(5000, ge=1, le=20_000),
+):
+    """
+    Проверка, что file:// для image_url (локальный WebP) существует на диске.
+    Возвращает список битых ссылок для диагностики.
+    """
+    rows = (
+        db.query(models.Product)
+        .filter(
+            models.Product.is_active.is_(True),
+            models.Product.image_url.isnot(None),
+            models.Product.image_url != "",
+        )
+        .order_by(models.Product.id)
+        .limit(limit)
+        .all()
+    )
+    broken: list[dict] = []
+    ok_count = 0
+    for p in rows:
+        u = (p.image_url or "").strip()
+        if not u or not (u.startswith("/api/v1/media/product-images/") or u.startswith("/uploads/products/")):
+            ok_count += 1
+            continue
+        if u.startswith("/api/v1/media/product-images/"):
+            name = u.rsplit("/", 1)[-1]
+        else:
+            name = u.rsplit("/", 1)[-1]
+        if not re.match(r"^\d+_[0-9a-f]{32}\.webp$", name, re.IGNORECASE):
+            ok_count += 1
+            continue
+        path = (PRODUCT_IMAGE_DIR / name).resolve()
+        if path.is_file():
+            ok_count += 1
+        else:
+            broken.append(
+                {
+                    "product_id": p.id,
+                    "image_url": u,
+                    "reason": "file_not_found",
+                }
+            )
+    return {
+        "total_checked": len(rows),
+        "ok_count": ok_count,
+        "broken": broken,
+    }
+
+
 @router.get("/{product_id}", response_model=schemas.ProductResponse)
 def get_product(product_id: int, db: Session = Depends(get_db)):
     product = db.query(models.Product).filter(models.Product.id == product_id).first()
     if not product:
         raise HTTPException(status_code=404, detail="Product not found")
-    return product
+    return _product_to_response(db, product)
 
 
 @router.post("/", response_model=schemas.ProductResponse, status_code=status.HTTP_201_CREATED)
@@ -327,11 +394,15 @@ def create_product(
         raise HTTPException(status_code=400, detail="SKU already exists")
 
     payload.pop("profit_percent", None)
+    v_ids = payload.pop("compatibility_vehicle_model_ids", None)
+    e_ids = payload.pop("compatibility_engine_family_ids", None)
     payload["received_at"] = datetime.utcnow()
 
     db_product = models.Product(**payload)
     db.add(db_product)
     db.flush()
+
+    apply_product_compatibility(db, db_product, vehicle_model_ids=v_ids, engine_family_ids=e_ids)
 
     db.add(
         models.History(
@@ -365,7 +436,7 @@ def create_product(
         db.rollback()
         raise HTTPException(status_code=500, detail="Не удалось сохранить товар в базе")
     db.refresh(db_product)
-    return db_product
+    return _product_to_response(db, db_product)
 
 
 @router.put("/{product_id}", response_model=schemas.ProductResponse)
@@ -397,6 +468,11 @@ def update_product(
         if existing:
             raise HTTPException(status_code=400, detail="Barcode already exists")
 
+    vkey = "compatibility_vehicle_model_ids" in update_data
+    ekey = "compatibility_engine_family_ids" in update_data
+    v_ids = update_data.pop("compatibility_vehicle_model_ids", None) if vkey else None
+    e_ids = update_data.pop("compatibility_engine_family_ids", None) if ekey else None
+
     before = {
         "quantity": db_product.quantity,
         "purchase_price": str(db_product.purchase_price or 0),
@@ -405,6 +481,23 @@ def update_product(
 
     for field, value in update_data.items():
         setattr(db_product, field, value)
+
+    if vkey or ekey:
+        cur_vm = [
+            r[0]
+            for r in db.query(models.ProductVehicleModelLink.vehicle_model_id)
+            .filter(models.ProductVehicleModelLink.product_id == product_id)
+            .all()
+        ]
+        cur_ef = [
+            r[0]
+            for r in db.query(models.ProductEngineFamilyLink.engine_family_id)
+            .filter(models.ProductEngineFamilyLink.product_id == product_id)
+            .all()
+        ]
+        nvm = v_ids if vkey else cur_vm
+        nef = e_ids if ekey else cur_ef
+        apply_product_compatibility(db, db_product, vehicle_model_ids=nvm, engine_family_ids=nef)
 
     db.add(
         models.History(
@@ -442,7 +535,7 @@ def update_product(
         db.rollback()
         raise HTTPException(status_code=500, detail="Не удалось обновить товар в базе")
     db.refresh(db_product)
-    return db_product
+    return _product_to_response(db, db_product)
 
 
 @router.post("/{product_id}/image")
@@ -473,6 +566,7 @@ async def upload_product_image(
             img = ImageOps.exif_transpose(img)
             img = _prepare_for_webp(img)
             img.thumbnail((MAX_IMAGE_DIMENSION, MAX_IMAGE_DIMENSION), Image.Resampling.LANCZOS)
+            w, h = int(img.size[0] or 0), int(img.size[1] or 0)
             out = BytesIO()
             # Универсальный конвертер: любой распознанный Pillow формат -> WebP.
             img.save(
@@ -503,7 +597,13 @@ async def upload_product_image(
     db_product.image_url = f"/api/v1/media/product-images/{file_name}"
     db.commit()
     db.refresh(db_product)
-    return {"ok": True, "image_url": db_product.image_url}
+    return {
+        "ok": True,
+        "image_url": db_product.image_url,
+        "size_bytes": len(encoded),
+        "width": w,
+        "height": h,
+    }
 
 
 @router.delete("/{product_id}/image")

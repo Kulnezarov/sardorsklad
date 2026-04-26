@@ -10,6 +10,7 @@ import schemas
 from database import get_db
 from dependencies import require_manager_or_admin
 from services.audit import write_audit_log
+from services.customer_notifications import notify_order_cancelled
 from services.telegram_orders import retry_failed_notifications
 
 router = APIRouter(
@@ -164,7 +165,29 @@ def update_order_status(
                 status_code=400,
                 detail="Отменить можно только заказ в статусе «Новый заказ»",
             )
+        if payload.cancellation_reason is None:
+            raise HTTPException(
+                status_code=400,
+                detail="Укажите причину отмены (cancellation_reason)",
+            )
+        cmt = (payload.cancellation_comment or "").strip()
+        if payload.cancellation_reason == schemas.CancellationReasonCode.other and len(cmt) < 1:
+            raise HTTPException(
+                status_code=400,
+                detail="Для причины «другое» укажите комментарий (cancellation_comment)",
+            )
+        order.cancellation_reason_code = payload.cancellation_reason.value
+        order.cancellation_comment = cmt or None
+        order.cancelled_by_user_id = current_user.id
+        order.cancelled_at = datetime.now(timezone.utc)
         order.status = STATUS_CANCELLED
+        try:
+            notify_order_cancelled(db, order)
+        except Exception as ne:
+            # не блокируем смену статуса, если уведомление не записалось
+            import logging
+
+            logging.getLogger(__name__).warning("customer notify: %s", ne)
 
     else:
         raise HTTPException(

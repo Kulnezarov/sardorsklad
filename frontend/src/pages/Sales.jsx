@@ -54,6 +54,8 @@ const Sales = () => {
   const searchRef = useRef(null);
   const barcodeRef = useRef(null);
   const dropdownRef = useRef(null);
+  const scanBufferRef = useRef('');
+  const scanTimerRef = useRef(null);
 
   // Persist cart draft to localStorage
   useEffect(() => {
@@ -79,6 +81,7 @@ const Sales = () => {
         p.quantity > 0 && (
           p.name?.toLowerCase().includes(q) ||
           p.brand?.toLowerCase().includes(q) ||
+          p.model?.toLowerCase().includes(q) ||
           p.barcode?.includes(q) ||
           p.sku?.includes(q)
         )
@@ -135,7 +138,7 @@ const Sales = () => {
   const cartCount = useMemo(() => cart.reduce((s, i) => s + i.quantity, 0), [cart]);
 
   // Barcode scan — show confirmation instead of immediately adding
-  const handleBarcodeScan = async (barcode) => {
+  const handleBarcodeScan = useCallback(async (barcode) => {
     const bc = normalizeScanCode(barcode);
     if (!bc) return;
     setBarcodeInput('');
@@ -164,7 +167,50 @@ const Sales = () => {
       setTimeout(() => setScanFlash(null), 700);
       setScannedResult({ product: null, barcode: bc, found: false });
     }
-  };
+  }, [products]);
+
+  useEffect(() => {
+    const isEditableTarget = (target) => {
+      const tag = target?.tagName?.toLowerCase();
+      return tag === 'input' || tag === 'textarea' || tag === 'select' || target?.isContentEditable;
+    };
+
+    const clearBufferSoon = () => {
+      if (scanTimerRef.current) window.clearTimeout(scanTimerRef.current);
+      scanTimerRef.current = window.setTimeout(() => {
+        scanBufferRef.current = '';
+      }, 80);
+    };
+
+    const onKeyDown = (e) => {
+      if (scannedResult || showSuccess) return;
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      if (isEditableTarget(e.target)) return;
+
+      if (e.key === 'Enter') {
+        const code = scanBufferRef.current;
+        scanBufferRef.current = '';
+        if (scanTimerRef.current) window.clearTimeout(scanTimerRef.current);
+        if (normalizeScanCode(code).length >= 4) {
+          e.preventDefault();
+          handleBarcodeScan(code);
+        }
+        return;
+      }
+
+      if (e.key.length === 1) {
+        scanBufferRef.current += e.key;
+        if (scanBufferRef.current.length > 80) scanBufferRef.current = scanBufferRef.current.slice(-80);
+        clearBufferSoon();
+      }
+    };
+
+    window.addEventListener('keydown', onKeyDown, true);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown, true);
+      if (scanTimerRef.current) window.clearTimeout(scanTimerRef.current);
+    };
+  }, [handleBarcodeScan, scannedResult, showSuccess]);
 
   // Sale mutation
   const saleMutation = useMutation({
@@ -212,6 +258,7 @@ const Sales = () => {
                   <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--success)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 6 }}>Товар найден</div>
                   <div style={{ fontSize: 18, fontWeight: 800, color: 'var(--text)', marginBottom: 4, lineHeight: 1.25 }}>{scannedResult.product.name}</div>
                   {scannedResult.product.brand && <div style={{ fontSize: 13, color: 'var(--text-muted)', fontWeight: 500, marginBottom: 6 }}>Марка: {scannedResult.product.brand}</div>}
+                  {scannedResult.product.model && <div style={{ fontSize: 13, color: 'var(--text-muted)', fontWeight: 500, marginBottom: 6 }}>Модель: {scannedResult.product.model}</div>}
                   {scannedResult.product.category && <div style={{ fontSize: 12, color: 'var(--text-muted)', fontWeight: 500, marginBottom: 6 }}>Категория: {scannedResult.product.category}</div>}
                   {(scannedResult.product.barcode || scannedResult.product.sku) && (
                     <div style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 500, marginBottom: 8, fontFamily: 'ui-monospace, monospace', wordBreak: 'break-all' }}>
@@ -296,12 +343,16 @@ const Sales = () => {
                 <div style={{ minWidth: 0 }}>
                   <div id="cart-line-detail-title" style={{ fontWeight: 800, fontSize: 17, color: 'var(--text)', lineHeight: 1.3 }}>{p.name}</div>
                   {p.brand && <div style={{ fontSize: 14, color: 'var(--primary)', fontWeight: 700, marginTop: 6 }}>Марка: {p.brand}</div>}
+                  {p.model && <div style={{ fontSize: 13, color: 'var(--text-secondary)', fontWeight: 700, marginTop: 4 }}>Модель: {p.model}</div>}
                 </div>
                 <button type="button" onClick={() => setCartDetailIdx(null)} style={{ flexShrink: 0, width: 36, height: 36, borderRadius: 12, border: '1px solid var(--border)', background: 'var(--ios-grouped-bg)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-secondary)' }} aria-label="Закрыть"><FiX size={18} /></button>
               </div>
               <div style={{ padding: '14px 20px 20px', display: 'flex', flexDirection: 'column', gap: 12, fontSize: 13 }}>
                 {p.category && (
                   <div><span style={{ color: 'var(--text-muted)', fontWeight: 600 }}>Категория: </span>{p.category}</div>
+                )}
+                {p.model && (
+                  <div><span style={{ color: 'var(--text-muted)', fontWeight: 600 }}>Модель: </span>{p.model}</div>
                 )}
                 {(p.sku || p.barcode) && (
                   <div style={{ fontFamily: 'ui-monospace, monospace', wordBreak: 'break-all', lineHeight: 1.45 }}>
@@ -378,7 +429,7 @@ const Sales = () => {
                   >
                     <div style={{ minWidth: 0 }}>
                       <div style={{ fontWeight: 700, fontSize: 14, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.name}</div>
-                      <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2, fontWeight: 500 }}>{p.brand ? `${p.brand} · ` : ''}Остаток: {p.quantity} шт</div>
+                      <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2, fontWeight: 500 }}>{[p.brand, p.model].filter(Boolean).join(' · ')}{p.brand || p.model ? ' · ' : ''}Остаток: {p.quantity} шт</div>
                     </div>
                     <div style={{ fontWeight: 800, fontSize: 15, color: 'var(--primary)', whiteSpace: 'nowrap', flexShrink: 0 }}>{formatMoney(p.sale_price)} ₸</div>
                   </button>
@@ -447,6 +498,7 @@ const Sales = () => {
                         <div style={{ minWidth: 0 }}>
                           <div style={{ fontWeight: 700, fontSize: 13, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.product.name}</div>
                           {item.product.brand && <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2, fontWeight: 500 }}>{item.product.brand}</div>}
+                          {item.product.model && <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2, fontWeight: 500 }}>Модель: {item.product.model}</div>}
                           <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 4, fontWeight: 600 }}>Нажмите для подробностей</div>
                         </div>
                         <button type="button" onClick={(e) => { e.stopPropagation(); removeFromCart(idx); }} style={{ width: 26, height: 26, borderRadius: 8, border: '1px solid #fecaca', background: '#fee2e2', color: 'var(--danger)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}><FiX size={13} /></button>

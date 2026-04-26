@@ -13,6 +13,7 @@ const emptyForm = {
   sku: '',
   barcode: '',
   brand: '',
+  model: '',
   category: '',
   purchase_price: 0,
   sale_price: 0,
@@ -103,6 +104,7 @@ const Warehouse = () => {
         product.sku,
         product.barcode,
         product.brand,
+        product.model,
         product.category,
         `${product.location_zone} ${product.location_row} ${product.location_shelf} ${product.location_position}`,
       ].some((field) => fuzzyMatch(search, field))
@@ -219,7 +221,12 @@ const Warehouse = () => {
       });
       setSelectedProduct((prev) => (prev ? { ...prev, image_url: imageUrl } : prev));
       queryClient.invalidateQueries({ queryKey: ['products'] });
-      toast.success('Фото товара обновлено');
+      const w = response?.data?.width;
+      const h = response?.data?.height;
+      const b = response?.data?.size_bytes;
+      const dim = w && h ? ` ${w}×${h} px` : '';
+      const sz = b != null ? `, ${(b / 1024).toFixed(1)} КБ` : '';
+      toast.success(`Фото сохранено${dim}${sz}`);
     } catch (error) {
       toast.error(error.response?.data?.detail || 'Не удалось загрузить фото');
     } finally {
@@ -360,6 +367,12 @@ const Warehouse = () => {
               label="Бренд"
               value={formData.brand}
               onChange={(event) => handleChange('brand', event.target.value)}
+            />
+            <Input
+              label="Модель"
+              value={formData.model || ''}
+              onChange={(event) => handleChange('model', event.target.value)}
+              placeholder="Например: CS35, V80"
             />
           </div>
 

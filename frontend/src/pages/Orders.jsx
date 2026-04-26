@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 import {
@@ -127,6 +128,20 @@ export default function Orders() {
   const [source, setSource] = useState('');
   const [search, setSearch] = useState('');
   const [selected, setSelected] = useState(null);
+  const [cancelOpen, setCancelOpen] = useState(false);
+  const [cancelReason, setCancelReason] = useState('out_of_stock');
+  const [cancelComment, setCancelComment] = useState('');
+
+  const CANCEL_REASONS = [
+    { value: 'wrong_product', label: 'Неверный товар' },
+    { value: 'not_paid', label: 'Не оплачен' },
+    { value: 'invalid_contact_data', label: 'Некорректные контакты' },
+    { value: 'not_reachable', label: 'Не дозвонились' },
+    { value: 'out_of_stock', label: 'Нет в наличии' },
+    { value: 'client_refused', label: 'Клиент отказался' },
+    { value: 'duplicate', label: 'Дубль' },
+    { value: 'other', label: 'Другое' },
+  ];
 
   const { data: orders = [], isLoading } = useQuery({
     queryKey: ['orders', status, source, search],
@@ -159,7 +174,12 @@ export default function Orders() {
   };
 
   const statusMut = useMutation({
-    mutationFn: ({ id, nextStatus }) => orderApi.updateStatus(id, { status: nextStatus }),
+    mutationFn: ({ id, nextStatus, cancellation_reason, cancellation_comment }) =>
+      orderApi.updateStatus(id, {
+        status: nextStatus,
+        cancellation_reason: cancellation_reason || null,
+        cancellation_comment: cancellation_comment || null,
+      }),
     onSuccess: (_, vars) => {
       toast.success(
         vars.nextStatus === 'Выдано' ? 'Заказ выдан, товар списан со склада' : 'Заказ отменён',
@@ -187,8 +207,24 @@ export default function Orders() {
 
   const handleCancel = () => {
     if (!selectedOrder) return;
-    if (!window.confirm('Отменить заказ? Со склада ничего не списывается.')) return;
-    statusMut.mutate({ id: selectedOrder.id, nextStatus: 'Отменен' });
+    setCancelReason('out_of_stock');
+    setCancelComment('');
+    setCancelOpen(true);
+  };
+
+  const submitCancel = () => {
+    if (!selectedOrder) return;
+    if (cancelReason === 'other' && !cancelComment.trim()) {
+      toast.error('Для «Другое» укажите комментарий');
+      return;
+    }
+    statusMut.mutate({
+      id: selectedOrder.id,
+      nextStatus: 'Отменен',
+      cancellation_reason: cancelReason,
+      cancellation_comment: cancelComment,
+    });
+    setCancelOpen(false);
   };
 
   const openWhatsApp = (order) => {
@@ -443,6 +479,65 @@ export default function Orders() {
           )}
         </section>
       </div>
+      {cancelOpen &&
+        createPortal(
+          <div
+            className="reserve-modal-overlay"
+            onClick={() => setCancelOpen(false)}
+            role="presentation"
+          >
+            <div
+              className="reserve-modal-box"
+              onClick={(e) => e.stopPropagation()}
+              style={{ maxWidth: 400 }}
+            >
+              <div className="reserve-modal-header" style={{ fontWeight: 800 }}>
+                Отмена заказа
+              </div>
+              <div className="reserve-modal-body" style={{ display: 'grid', gap: 10 }}>
+                <label style={{ display: 'grid', gap: 4, fontSize: 12 }}>
+                  Причина
+                  <select
+                    className="ios-input"
+                    value={cancelReason}
+                    onChange={(e) => setCancelReason(e.target.value)}
+                  >
+                    {CANCEL_REASONS.map((r) => (
+                      <option key={r.value} value={r.value}>
+                        {r.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                {cancelReason === 'other' && (
+                  <label style={{ display: 'grid', gap: 4, fontSize: 12 }}>
+                    Комментарий
+                    <textarea
+                      className="ios-input"
+                      rows={3}
+                      value={cancelComment}
+                      onChange={(e) => setCancelComment(e.target.value)}
+                    />
+                  </label>
+                )}
+                <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
+                  <button type="button" className="ios-btn" onClick={() => setCancelOpen(false)}>
+                    Назад
+                  </button>
+                  <button
+                    type="button"
+                    className="orders-btn-cancel"
+                    onClick={submitCancel}
+                    disabled={statusMut.isPending}
+                  >
+                    Подтвердить отмену
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>,
+          document.body,
+        )}
     </div>
   );
 }

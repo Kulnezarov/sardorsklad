@@ -35,6 +35,7 @@ class ProductBase(BaseModel):
     sku: Optional[str] = Field(None, max_length=100)
     barcode: Optional[str] = Field(None, max_length=50)
     brand: Optional[str] = Field(None, max_length=100)
+    model: Optional[str] = Field(None, max_length=120)
     category: Optional[str] = Field(None, max_length=100)
     category_id: Optional[int] = Field(None, ge=1)
     brand_id: Optional[int] = Field(None, ge=1)
@@ -72,7 +73,15 @@ class ProductBase(BaseModel):
 
 
 class ProductCreate(ProductBase):
-    pass
+    compatibility_vehicle_model_ids: Optional[List[int]] = None
+    compatibility_engine_family_ids: Optional[List[int]] = None
+
+    @field_validator("compatibility_vehicle_model_ids", "compatibility_engine_family_ids", mode="before")
+    @classmethod
+    def _empty_list_as_none(cls, v):
+        if v == [] or v is None:
+            return None
+        return v
 
 
 class ProductUpdate(BaseModel):
@@ -80,6 +89,7 @@ class ProductUpdate(BaseModel):
     sku: Optional[str] = Field(None, max_length=100)
     barcode: Optional[str] = Field(None, max_length=50)
     brand: Optional[str] = Field(None, max_length=100)
+    model: Optional[str] = Field(None, max_length=120)
     category: Optional[str] = Field(None, max_length=100)
     description: Optional[str] = None
     image_url: Optional[str] = None
@@ -98,6 +108,15 @@ class ProductUpdate(BaseModel):
     location_zone: Optional[str] = Field(None, max_length=50)
     supplier: Optional[str] = Field(None, max_length=255)
     is_active: Optional[bool] = None
+    compatibility_vehicle_model_ids: Optional[List[int]] = None
+    compatibility_engine_family_ids: Optional[List[int]] = None
+
+    @field_validator("compatibility_vehicle_model_ids", "compatibility_engine_family_ids", mode="before")
+    @classmethod
+    def _update_empty_ids(cls, v):
+        if v == [] or v is None:
+            return None
+        return v
 
     @field_validator('purchase_price', 'sale_price', 'cny_price', 'delivery_cost_kzt', 'delivery_weight_kg', 'profit_percent', mode='before')
     @classmethod
@@ -107,6 +126,120 @@ class ProductUpdate(BaseModel):
         return Decimal(str(value))
 
 
+# ── Справочник авто-совместимости (CRUD) ──────────────────────────────────
+
+
+class VehicleBrandCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=120)
+    slug: Optional[str] = Field(None, min_length=1, max_length=160)
+    is_active: bool = True
+
+
+class VehicleBrandUpdate(BaseModel):
+    name: Optional[str] = Field(None, min_length=1, max_length=120)
+    slug: Optional[str] = Field(None, min_length=1, max_length=160)
+    is_active: Optional[bool] = None
+
+
+class VehicleBrandResponse(BaseModel):
+    id: int
+    name: str
+    slug: str
+    is_active: bool
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+
+    model_config = {"from_attributes": True}
+
+
+class VehicleModelCreate(BaseModel):
+    vehicle_brand_id: int = Field(..., ge=1)
+    name: str = Field(..., min_length=1, max_length=180)
+    slug: Optional[str] = Field(None, min_length=1, max_length=200)
+    is_active: bool = True
+
+
+class VehicleModelUpdate(BaseModel):
+    name: Optional[str] = Field(None, min_length=1, max_length=180)
+    slug: Optional[str] = Field(None, min_length=1, max_length=200)
+    is_active: Optional[bool] = None
+
+
+class VehicleModelResponse(BaseModel):
+    id: int
+    vehicle_brand_id: int
+    name: str
+    slug: str
+    is_active: bool
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+    brand: Optional[VehicleBrandResponse] = None
+
+    model_config = {"from_attributes": True}
+
+
+class EngineFamilyCreate(BaseModel):
+    code: str = Field(..., min_length=1, max_length=40)
+    name: Optional[str] = Field(None, max_length=255)
+    is_active: bool = True
+    vehicle_model_ids: Optional[List[int]] = None  # сразу привязать модели
+
+    @field_validator("code", mode="before")
+    @classmethod
+    def _strip_code(cls, v):
+        if v is None:
+            return v
+        return str(v).strip()
+
+
+class EngineFamilyUpdate(BaseModel):
+    code: Optional[str] = Field(None, min_length=1, max_length=40)
+    name: Optional[str] = Field(None, max_length=255)
+    is_active: Optional[bool] = None
+    vehicle_model_ids: Optional[List[int]] = None  # replace full set
+
+    @field_validator("code", mode="before")
+    @classmethod
+    def _strip_code_opt(cls, v):
+        if v is None or v == "":
+            return v
+        return str(v).strip()
+
+
+class EngineFamilyResponse(BaseModel):
+    id: int
+    code: str
+    name: Optional[str] = None
+    is_active: bool
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+    vehicle_models: List[VehicleModelResponse] = []
+
+    model_config = {"from_attributes": True}
+
+
+class CompatibilityEngineFamilyBrief(BaseModel):
+    id: int
+    code: str
+    name: Optional[str] = None
+
+    model_config = {"from_attributes": True}
+
+
+class CompatibilityVehicleModelBrief(BaseModel):
+    id: int
+    name: str
+    vehicle_brand_id: int
+    brand_name: str
+
+    model_config = {"from_attributes": True}
+
+
+class ProductCompatibilityOut(BaseModel):
+    engine_families: List[CompatibilityEngineFamilyBrief] = []
+    vehicle_models: List[CompatibilityVehicleModelBrief] = []
+
+
 class ProductResponse(ProductBase):
     id: int
     is_active: bool
@@ -114,6 +247,7 @@ class ProductResponse(ProductBase):
     updated_at: Optional[datetime]
     last_sale_date: Optional[datetime]
     received_at: Optional[datetime] = None
+    compatibility: ProductCompatibilityOut = Field(default_factory=ProductCompatibilityOut)
 
     model_config = {"from_attributes": True}
 
@@ -225,6 +359,10 @@ class ReserveResponse(BaseModel):
     expected_arrival: Optional[datetime]
     completed_at: Optional[datetime]
     notes: Optional[str]
+    cancellation_reason_code: Optional[str] = None
+    cancellation_comment: Optional[str] = None
+    cancelled_by_user_id: Optional[int] = None
+    cancelled_at: Optional[datetime] = None
 
     model_config = {"from_attributes": True}
 
@@ -563,8 +701,10 @@ class PublicProductResponse(BaseModel):
     category_name: Optional[str] = None
     brand_id: Optional[int] = None
     brand_name: Optional[str] = None
+    model: Optional[str] = None
     article: Optional[str] = None  # артикул (sku)
     oem: Optional[str] = None  # штрихкод / OEM при наличии
+    compatibility: ProductCompatibilityOut = Field(default_factory=ProductCompatibilityOut)
 
     model_config = {"from_attributes": True}
 
@@ -642,5 +782,18 @@ class PublicReserveDetailResponse(BaseModel):
     items: List[PublicReserveLineItem]
 
 
+class CancellationReasonCode(str, Enum):
+    wrong_product = "wrong_product"
+    not_paid = "not_paid"
+    invalid_contact_data = "invalid_contact_data"
+    not_reachable = "not_reachable"
+    out_of_stock = "out_of_stock"
+    client_refused = "client_refused"
+    duplicate = "duplicate"
+    other = "other"
+
+
 class OrderStatusUpdate(BaseModel):
     status: str = Field(..., min_length=2, max_length=80)
+    cancellation_reason: Optional[CancellationReasonCode] = None
+    cancellation_comment: Optional[str] = Field(None, max_length=4000)

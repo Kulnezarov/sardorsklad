@@ -79,6 +79,93 @@ class Brand(Base):
 
 
 # ============================================================================
+# VEHICLE COMPATIBILITY (марки/модели авто, коды двигателей)
+# ============================================================================
+class VehicleBrand(Base):
+    """Марка автомобиля (Changan, Wuling) — не путать с брендом запчасти (таблица brands)."""
+
+    __tablename__ = "vehicle_brands"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(120), nullable=False, index=True)
+    slug = Column(String(160), nullable=False, unique=True, index=True)
+    is_active = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    vehicle_models = relationship("VehicleModel", back_populates="vehicle_brand", cascade="all, delete-orphan")
+
+
+class VehicleModel(Base):
+    __tablename__ = "vehicle_models"
+
+    id = Column(Integer, primary_key=True, index=True)
+    vehicle_brand_id = Column(Integer, ForeignKey("vehicle_brands.id", ondelete="CASCADE"), nullable=False, index=True)
+    name = Column(String(180), nullable=False, index=True)
+    slug = Column(String(200), nullable=False, index=True)
+    is_active = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    vehicle_brand = relationship("VehicleBrand", back_populates="vehicle_models")
+    engine_family_links = relationship("EngineFamilyModel", back_populates="vehicle_model", cascade="all, delete-orphan")
+    product_links = relationship("ProductVehicleModelLink", back_populates="vehicle_model", cascade="all, delete-orphan")
+
+    __table_args__ = (
+        UniqueConstraint("vehicle_brand_id", "name", name="uq_vehicle_models_brand_name"),
+        Index("idx_vehicle_models_brand", "vehicle_brand_id"),
+    )
+
+
+class EngineFamily(Base):
+    """Код совместимости: 465, 474, 465Q и т.д."""
+
+    __tablename__ = "engine_families"
+
+    id = Column(Integer, primary_key=True, index=True)
+    code = Column(String(40), nullable=False, unique=True, index=True)
+    name = Column(String(255), nullable=True)
+    is_active = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    model_links = relationship("EngineFamilyModel", back_populates="engine_family", cascade="all, delete-orphan")
+    product_links = relationship("ProductEngineFamilyLink", back_populates="engine_family", cascade="all, delete-orphan")
+
+
+class EngineFamilyModel(Base):
+    """Связь кода совместимости с моделями авто."""
+
+    __tablename__ = "engine_family_models"
+
+    engine_family_id = Column(Integer, ForeignKey("engine_families.id", ondelete="CASCADE"), primary_key=True)
+    vehicle_model_id = Column(Integer, ForeignKey("vehicle_models.id", ondelete="CASCADE"), primary_key=True)
+
+    engine_family = relationship("EngineFamily", back_populates="model_links")
+    vehicle_model = relationship("VehicleModel", back_populates="engine_family_links")
+
+
+class ProductVehicleModelLink(Base):
+    __tablename__ = "product_compatibility_models"
+
+    product_id = Column(Integer, ForeignKey("products.id", ondelete="CASCADE"), primary_key=True)
+    vehicle_model_id = Column(Integer, ForeignKey("vehicle_models.id", ondelete="CASCADE"), primary_key=True)
+
+    product = relationship("Product", back_populates="compatibility_vehicle_models")
+    vehicle_model = relationship("VehicleModel", back_populates="product_links")
+
+
+class ProductEngineFamilyLink(Base):
+    __tablename__ = "product_compatibility_engine_families"
+
+    product_id = Column(Integer, ForeignKey("products.id", ondelete="CASCADE"), primary_key=True)
+    engine_family_id = Column(Integer, ForeignKey("engine_families.id", ondelete="CASCADE"), primary_key=True)
+
+    product = relationship("Product", back_populates="compatibility_engine_families")
+    engine_family = relationship("EngineFamily", back_populates="product_links")
+
+
+# ============================================================================
 # TABLE 2: PRODUCTS
 # ============================================================================
 class Product(Base):
@@ -90,6 +177,7 @@ class Product(Base):
     barcode = Column(String(50), unique=True, nullable=True, index=True)
     category = Column(String(100), nullable=True, index=True)
     brand = Column(String(100), nullable=True, index=True)
+    model = Column(String(120), nullable=True, index=True)
     category_id = Column(Integer, ForeignKey("categories.id", ondelete="SET NULL"), nullable=True, index=True)
     brand_id = Column(Integer, ForeignKey("brands.id", ondelete="SET NULL"), nullable=True, index=True)
     description = Column(Text, nullable=True)
@@ -132,6 +220,12 @@ class Product(Base):
     reserve_items = relationship("ReserveItem", back_populates="product", cascade="all, delete-orphan")
     history = relationship("History", back_populates="product", cascade="all, delete-orphan")
     revision_items = relationship("RevisionItem", back_populates="product", cascade="all, delete-orphan")
+    compatibility_vehicle_models = relationship(
+        "ProductVehicleModelLink", back_populates="product", cascade="all, delete-orphan"
+    )
+    compatibility_engine_families = relationship(
+        "ProductEngineFamilyLink", back_populates="product", cascade="all, delete-orphan"
+    )
 
     # Indexes
     __table_args__ = (
@@ -217,8 +311,14 @@ class Reserve(Base):
 
     notes = Column(Text, nullable=True)
 
+    cancellation_reason_code = Column(String(40), nullable=True, index=True)
+    cancellation_comment = Column(Text, nullable=True)
+    cancelled_by_user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    cancelled_at = Column(DateTime(timezone=True), nullable=True)
+
     # Relationships
     items = relationship("ReserveItem", back_populates="reserve", cascade="all, delete-orphan")
+    cancelled_by_user = relationship("User", foreign_keys=[cancelled_by_user_id])
 
     __table_args__ = (
         Index('idx_reserves_status', 'status'),
@@ -520,3 +620,22 @@ class TelegramNotification(Base):
     sent_at = Column(DateTime(timezone=True), nullable=True)
     last_attempt_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class CustomerNotificationEvent(Base):
+    """События уведомлений клиенту (отмена заказа и т.д.) — idempotent по idempotency_key."""
+
+    __tablename__ = "customer_notification_events"
+
+    id = Column(Integer, primary_key=True, index=True)
+    reserve_id = Column(Integer, ForeignKey("reserves.id", ondelete="CASCADE"), nullable=False, index=True)
+    event_type = Column(String(50), nullable=False, index=True)  # order_cancelled, ...
+    idempotency_key = Column(String(120), nullable=False, unique=True, index=True)
+    provider = Column(String(30), nullable=True)  # telegram, email, none
+    status = Column(String(30), nullable=False, default="pending", index=True)  # pending, sent, failed, no_provider
+    payload_json = Column(JSONB, nullable=True)
+    error_message = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False, index=True)
+    sent_at = Column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (Index("idx_cust_notif_reserve_type", "reserve_id", "event_type"),)

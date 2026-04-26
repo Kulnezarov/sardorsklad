@@ -121,6 +121,7 @@ def ensure_schema_updates():
     product_alters = [
         ("products.barcode", "ALTER TABLE products ADD COLUMN IF NOT EXISTS barcode VARCHAR(50)"),
         ("products.brand", "ALTER TABLE products ADD COLUMN IF NOT EXISTS brand VARCHAR(100)"),
+        ("products.model", "ALTER TABLE products ADD COLUMN IF NOT EXISTS model VARCHAR(120)"),
         ("products.category_id", "ALTER TABLE products ADD COLUMN IF NOT EXISTS category_id INTEGER"),
         ("products.brand_id", "ALTER TABLE products ADD COLUMN IF NOT EXISTS brand_id INTEGER"),
         ("products.image_url", "ALTER TABLE products ADD COLUMN IF NOT EXISTS image_url TEXT"),
@@ -278,6 +279,36 @@ def ensure_schema_updates():
     for label, sql in reserve_alters:
         _exec_schema_sql(sql, label)
     _exec_schema_sql("CREATE INDEX IF NOT EXISTS idx_reserves_source ON reserves(source)", "reserves.idx_source")
+
+    # Длинные статусы резерва («Новый заказ с сайта») и отмена с причиной
+    _exec_schema_sql(
+        "ALTER TABLE reserves ALTER COLUMN status TYPE VARCHAR(80)",
+        "reserves.status_widen",
+    )
+    _exec_schema_sql(
+        "ALTER TABLE reserves ADD COLUMN IF NOT EXISTS cancellation_reason_code VARCHAR(40)",
+        "reserves.cancellation_reason_code",
+    )
+    _exec_schema_sql(
+        "ALTER TABLE reserves ADD COLUMN IF NOT EXISTS cancellation_comment TEXT",
+        "reserves.cancellation_comment",
+    )
+    _exec_schema_sql(
+        "ALTER TABLE reserves ADD COLUMN IF NOT EXISTS cancelled_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL",
+        "reserves.cancelled_by_user_id",
+    )
+    _exec_schema_sql(
+        "ALTER TABLE reserves ADD COLUMN IF NOT EXISTS cancelled_at TIMESTAMPTZ",
+        "reserves.cancelled_at",
+    )
+    _exec_schema_sql(
+        "CREATE INDEX IF NOT EXISTS idx_reserves_cancellation_reason ON reserves(cancellation_reason_code)",
+        "reserves.idx_cancellation_reason",
+    )
+    _exec_schema_sql(
+        "CREATE INDEX IF NOT EXISTS idx_reserves_cancelled_by ON reserves(cancelled_by_user_id)",
+        "reserves.idx_cancelled_by",
+    )
 
     reserve_item_alters = [
         ("reserve_items.quantity", "ALTER TABLE reserve_items ADD COLUMN IF NOT EXISTS quantity INTEGER"),

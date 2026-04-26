@@ -185,6 +185,9 @@ export const productApi = {
       responseType: 'blob',
     }),
   getStats: () => apiClient.get('/api/v1/products/stats/summary'),
+  /** Проверка существования файлов на диске для image_url */
+  getImageHealth: (params = {}) =>
+    apiClient.get('/api/v1/products/images/health', { params }),
 }
 
 // ============================================================================
@@ -223,6 +226,28 @@ export const orderApi = {
   getById: (id) => apiClient.get(`/api/v1/orders/${id}`),
   updateStatus: (id, data) => apiClient.put(`/api/v1/orders/${id}/status`, data),
   retryNotifications: () => apiClient.post('/api/v1/orders/notifications/retry'),
+}
+
+// ============================================================================
+// VEHICLE / ENGINE COMPATIBILITY (Справочник + связи в товаре)
+// ============================================================================
+export const compatibilityApi = {
+  vehicleBrands: (params) => apiClient.get('/api/v1/compatibility/vehicle-brands', { params }),
+  createVehicleBrand: (data) => apiClient.post('/api/v1/compatibility/vehicle-brands', data),
+  updateVehicleBrand: (id, data) => apiClient.put(`/api/v1/compatibility/vehicle-brands/${id}`, data),
+  deleteVehicleBrand: (id) => apiClient.delete(`/api/v1/compatibility/vehicle-brands/${id}`),
+  vehicleModels: (params) => apiClient.get('/api/v1/compatibility/vehicle-models', { params }),
+  createVehicleModel: (data) => apiClient.post('/api/v1/compatibility/vehicle-models', data),
+  updateVehicleModel: (id, data) => apiClient.put(`/api/v1/compatibility/vehicle-models/${id}`, data),
+  deleteVehicleModel: (id) => apiClient.delete(`/api/v1/compatibility/vehicle-models/${id}`),
+  engineFamilies: (params) => apiClient.get('/api/v1/compatibility/engine-families', { params }),
+  getEngineFamily: (id) => apiClient.get(`/api/v1/compatibility/engine-families/${id}`),
+  getEngineFamilyByCode: (code) =>
+    apiClient.get(`/api/v1/compatibility/engine-families/by-code/${encodeURIComponent(String(code))}`),
+  createEngineFamily: (data) => apiClient.post('/api/v1/compatibility/engine-families', data),
+  updateEngineFamily: (id, data) => apiClient.put(`/api/v1/compatibility/engine-families/${id}`, data),
+  deleteEngineFamily: (id) => apiClient.delete(`/api/v1/compatibility/engine-families/${id}`),
+  autocompleteFamilies: (q) => apiClient.get('/api/v1/compatibility/autocomplete', { params: { q } }),
 }
 
 export const categoryApi = {

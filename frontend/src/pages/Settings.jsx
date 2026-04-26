@@ -8,6 +8,7 @@ import {
   FiSun, FiMoon, FiShoppingBag, FiClock, FiSettings, FiSave,
 } from 'react-icons/fi';
 import { settingsApi } from '../api/settings';
+import { compatibilityApi } from '../api/client';
 import { historyApi } from '../api/history';
 import { useAuth } from '../auth/AuthContext';
 import { fetchCnyRate } from '../utils/cnyAutoRate';
@@ -122,6 +123,45 @@ const Settings = () => {
       const r = await settingsApi.getSettings();
       return r.data;
     },
+  });
+
+  const { data: vehBrands = [], refetch: refetchVehBrands } = useQuery({
+    queryKey: ['compatibility', 'vehicle-brands'],
+    queryFn: () => compatibilityApi.vehicleBrands().then((r) => r.data),
+    enabled: !isLoading,
+  });
+  const { data: vehModels = [], refetch: refetchVehModels } = useQuery({
+    queryKey: ['compatibility', 'vehicle-models'],
+    queryFn: () => compatibilityApi.vehicleModels().then((r) => r.data),
+    enabled: !isLoading,
+  });
+  const { data: engFamilies = [], refetch: refetchEng } = useQuery({
+    queryKey: ['compatibility', 'engine-families'],
+    queryFn: () => compatibilityApi.engineFamilies().then((r) => r.data),
+    enabled: !isLoading,
+  });
+
+  const [vbName, setVbName] = useState('');
+  const [vmName, setVmName] = useState('');
+  const [vmBrandId, setVmBrandId] = useState('');
+  const [efCode, setEfCode] = useState('');
+  const [efName, setEfName] = useState('');
+  const [efModelIds, setEfModelIds] = useState('');
+
+  const addVbMut = useMutation({
+    mutationFn: (name) => compatibilityApi.createVehicleBrand({ name, is_active: true }),
+    onSuccess: () => { toast.success('Марка добавлена'); setVbName(''); refetchVehBrands(); qc.invalidateQueries({ queryKey: ['compatibility'] }); },
+    onError: () => toast.error('Не удалось добавить марку'),
+  });
+  const addVmMut = useMutation({
+    mutationFn: ({ name, brandId }) => compatibilityApi.createVehicleModel({ name, vehicle_brand_id: brandId, is_active: true }),
+    onSuccess: () => { toast.success('Модель добавлена'); setVmName(''); refetchVehModels(); qc.invalidateQueries({ queryKey: ['compatibility'] }); },
+    onError: () => toast.error('Не удалось добавить модель'),
+  });
+  const addEfMut = useMutation({
+    mutationFn: (body) => compatibilityApi.createEngineFamily(body),
+    onSuccess: () => { toast.success('Код добавлен'); setEfCode(''); setEfName(''); setEfModelIds(''); refetchEng(); qc.invalidateQueries({ queryKey: ['compatibility'] }); },
+    onError: (e) => toast.error(e?.response?.data?.detail || 'Не удалось'),
   });
 
   useEffect(() => {
@@ -410,6 +450,109 @@ const Settings = () => {
               >
                 <FiTrash2 size={14} /> Очистить всю историю сейчас
               </button>
+            </div>
+          </div>
+        </div>
+
+        {/* ── Совместимость (авто) ── */}
+        <div className="settings-section">
+          <div className="settings-section-title">
+            <FiBox size={16} /> Совместимость (марка / модель / код)
+          </div>
+          <div className="settings-section-body">
+            <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 10 }}>
+              Справочник для витрины: коды 474, 465Q и т.д., и привязка к маркам/моделям авто.
+            </div>
+            <div style={{ display: 'grid', gap: 12, marginBottom: 16 }}>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+                <input
+                  value={vbName}
+                  onChange={(e) => setVbName(e.target.value)}
+                  placeholder="Новая марка авто (Changan…)"
+                  style={{ flex: 1, minWidth: 160, padding: '8px 12px', borderRadius: 10, border: '1px solid var(--border)' }}
+                />
+                <button
+                  type="button"
+                  onClick={() => vbName.trim() && addVbMut.mutate(vbName.trim())}
+                  disabled={addVbMut.isPending || !vbName.trim()}
+                  className="ios-btn"
+                >
+                  Добавить марку
+                </button>
+              </div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+                <select
+                  value={vmBrandId}
+                  onChange={(e) => setVmBrandId(e.target.value)}
+                  style={{ minWidth: 160, padding: '8px 10px', borderRadius: 10, border: '1px solid var(--border)' }}
+                >
+                  <option value="">Марка…</option>
+                  {vehBrands.map((b) => (
+                    <option key={b.id} value={b.id}>
+                      {b.name}
+                    </option>
+                  ))}
+                </select>
+                <input
+                  value={vmName}
+                  onChange={(e) => setVmName(e.target.value)}
+                  placeholder="Модель (CS35…)"
+                  style={{ flex: 1, minWidth: 140, padding: '8px 12px', borderRadius: 10, border: '1px solid var(--border)' }}
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    const id = parseInt(vmBrandId, 10);
+                    if (!id || !vmName.trim()) { toast.error('Марка и модель обязательны'); return; }
+                    addVmMut.mutate({ name: vmName.trim(), brandId: id });
+                  }}
+                  disabled={addVmMut.isPending}
+                >
+                  Модель
+                </button>
+              </div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+                <input
+                  value={efCode}
+                  onChange={(e) => setEfCode(e.target.value)}
+                  placeholder="Код 474"
+                  style={{ width: 90, padding: '8px 10px', borderRadius: 10, border: '1px solid var(--border)' }}
+                />
+                <input
+                  value={efName}
+                  onChange={(e) => setEfName(e.target.value)}
+                  placeholder="Название (опц.)"
+                  style={{ flex: 1, minWidth: 120, padding: '8px 10px', borderRadius: 10, border: '1px solid var(--border)' }}
+                />
+                <input
+                  value={efModelIds}
+                  onChange={(e) => setEfModelIds(e.target.value)}
+                  placeholder="id моделей через запятую"
+                  style={{ flex: 1, minWidth: 180, padding: '8px 10px', borderRadius: 10, border: '1px solid var(--border)' }}
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    const code = efCode.replace(/\s+/g, '');
+                    if (!code) { toast.error('Код обязателен'); return; }
+                    const ids = efModelIds.split(/[,\s]+/).map((x) => parseInt(x, 10)).filter((n) => n > 0);
+                    addEfMut.mutate({ code, name: efName.trim() || null, is_active: true, vehicle_model_ids: ids.length ? ids : null });
+                  }}
+                  disabled={addEfMut.isPending}
+                >
+                  Код
+                </button>
+              </div>
+            </div>
+            <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 4 }}>Коды в справочнике</div>
+            <div style={{ maxHeight: 160, overflow: 'auto', fontSize: 12, lineHeight: 1.5 }}>
+              {engFamilies.length === 0 && <div>—</div>}
+              {engFamilies.map((f) => (
+                <div key={f.id}>
+                  <b>{f.code}</b>
+                  {f.name ? ` — ${f.name}` : ''}
+                </div>
+              ))}
             </div>
           </div>
         </div>

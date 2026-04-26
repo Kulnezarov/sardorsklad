@@ -18,7 +18,7 @@ import bootstrap_admin
 from fastapi.middleware.cors import CORSMiddleware
 from routers import auth, products, sales, reserve, history, revision, settings
 from routers import wish_orders
-from routers import public, categories, orders
+from routers import public, categories, orders, compatibility
 from config.logger import setup_logger
 
 # ============================================================================
@@ -266,6 +266,7 @@ app.include_router(public.router)
 app.include_router(categories.router)
 app.include_router(categories.brands_router)
 app.include_router(orders.router)
+app.include_router(compatibility.router)
 
 
 # ============================================================================

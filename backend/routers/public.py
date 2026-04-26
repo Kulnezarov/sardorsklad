@@ -4,12 +4,13 @@ import os
 import re
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-from sqlalchemy import asc, desc, func, or_
+from sqlalchemy import and_, asc, desc, func, or_
 from sqlalchemy.orm import Session, joinedload
 
 import models
 import schemas
 from database import get_db
+from services.product_compatibility import build_compatibility_map, build_compatibility_out
 from services.public_rate_limit import check_public_order_rate_limit
 from services.telegram_orders import send_new_order_notification
 
@@ -133,11 +134,22 @@ def _client_ip(request: Request) -> str:
     return "unknown"
 
 
-def product_to_public(p: models.Product) -> schemas.PublicProductResponse:
+def product_to_public(
+    p: models.Product,
+    db: Session | None = None,
+    *,
+    compatibility: schemas.ProductCompatibilityOut | None = None,
+) -> schemas.PublicProductResponse:
     cat = getattr(p, "category_rel", None)
     br = getattr(p, "brand_rel", None)
     category_name = _strip_or_none(cat.name if cat else None) or _strip_or_none(getattr(p, "category", None))
     brand_name = _strip_or_none(br.name if br else None) or _strip_or_none(getattr(p, "brand", None))
+    if compatibility is not None:
+        comp = compatibility
+    elif db is not None:
+        comp = build_compatibility_out(db, p.id)
+    else:
+        comp = schemas.ProductCompatibilityOut()
     return schemas.PublicProductResponse(
         id=p.id,
         name=p.name,
@@ -148,8 +160,10 @@ def product_to_public(p: models.Product) -> schemas.PublicProductResponse:
         category_name=category_name,
         brand_id=p.brand_id,
         brand_name=brand_name,
+        model=_strip_or_none(getattr(p, "model", None)),
         article=p.sku,
         oem=p.barcode,
+        compatibility=comp,
     )
 
 
@@ -219,6 +233,9 @@ def _apply_product_filters(
     model: str | None,
     year: str | None,
     in_stock: bool | None,
+    vehicle_brand_id: int | None = None,
+    vehicle_model_id: int | None = None,
+    engine_family_id: int | None = None,
 ):
     if q:
         term = q.strip()
@@ -231,6 +248,7 @@ def _apply_product_filters(
                     models.Product.barcode.ilike(like),
                     models.Product.category.ilike(like),
                     models.Product.brand.ilike(like),
+                    models.Product.model.ilike(like),
                     models.Category.name.ilike(like),
                     models.Brand.name.ilike(like),
                     models.Product.description.ilike(like),
@@ -277,7 +295,11 @@ def _apply_product_filters(
     if model and model.strip():
         m = f"%{model.strip()}%"
         query = query.filter(
-            or_(models.Product.name.ilike(m), models.Product.description.ilike(m))
+            or_(
+                models.Product.model.ilike(m),
+                models.Product.name.ilike(m),
+                models.Product.description.ilike(m),
+            )
         )
     if year and str(year).strip():
         y = f"%{str(year).strip()}%"
@@ -288,6 +310,67 @@ def _apply_product_filters(
         query = query.filter(models.Product.quantity > 0)
     elif in_stock is False:
         query = query.filter(models.Product.quantity <= 0)
+
+    if engine_family_id is not None:
+        pids = db.query(models.ProductEngineFamilyLink.product_id).filter(
+            models.ProductEngineFamilyLink.engine_family_id == engine_family_id
+        )
+        query = query.filter(models.Product.id.in_(pids))
+
+    if vehicle_model_id is not None:
+        direct = db.query(models.ProductVehicleModelLink.product_id).filter(
+            models.ProductVehicleModelLink.vehicle_model_id == vehicle_model_id
+        )
+        via_ef = (
+            db.query(models.ProductEngineFamilyLink.product_id)
+            .join(
+                models.EngineFamilyModel,
+                and_(
+                    models.EngineFamilyModel.engine_family_id
+                    == models.ProductEngineFamilyLink.engine_family_id,
+                    models.EngineFamilyModel.vehicle_model_id == vehicle_model_id,
+                ),
+            )
+        )
+        query = query.filter(
+            or_(
+                models.Product.id.in_(direct),
+                models.Product.id.in_(via_ef),
+            )
+        )
+
+    if vehicle_brand_id is not None:
+        mids = [
+            r[0]
+            for r in db.query(models.VehicleModel.id)
+            .filter(models.VehicleModel.vehicle_brand_id == vehicle_brand_id)
+            .all()
+        ]
+        if not mids:
+            query = query.filter(models.Product.id == -1)
+        else:
+            direct = (
+                db.query(models.ProductVehicleModelLink.product_id).filter(
+                    models.ProductVehicleModelLink.vehicle_model_id.in_(mids)
+                )
+            )
+            via_ef = (
+                db.query(models.ProductEngineFamilyLink.product_id)
+                .join(
+                    models.EngineFamilyModel,
+                    and_(
+                        models.EngineFamilyModel.engine_family_id
+                        == models.ProductEngineFamilyLink.engine_family_id,
+                        models.EngineFamilyModel.vehicle_model_id.in_(mids),
+                    ),
+                )
+            )
+            query = query.filter(
+                or_(
+                    models.Product.id.in_(direct),
+                    models.Product.id.in_(via_ef),
+                )
+            )
     return query
 
 
@@ -318,6 +401,15 @@ def list_public_products(
     model: str | None = Query(None),
     year: str | None = Query(None, description="Подстрока в названии/описании (отдельных полей года в БД нет)"),
     in_stock: bool | None = Query(None),
+    vehicle_brand_id: int | None = Query(
+        None, description="Марка авто (таблица vehicle_brands) для совместимости"
+    ),
+    vehicle_model_id: int | None = Query(
+        None, description="Модель авто (таблица vehicle_models) — прямая или через код"
+    ),
+    engine_family_id: int | None = Query(
+        None, description="Код совместимости (двигатель, engine_families.id)"
+    ),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     sort: str | None = Query(
@@ -341,6 +433,9 @@ def list_public_products(
             model=model,
             year=year,
             in_stock=in_stock,
+            vehicle_brand_id=vehicle_brand_id,
+            vehicle_model_id=vehicle_model_id,
+            engine_family_id=engine_family_id,
         )
 
     total = _filtered().with_entities(func.count(models.Product.id.distinct())).scalar() or 0
@@ -357,7 +452,10 @@ def list_public_products(
         .limit(limit)
         .all()
     )
-    items = [product_to_public(p) for p in rows]
+    cmap = build_compatibility_map(db, [p.id for p in rows])
+    items = [
+        product_to_public(p, compatibility=cmap.get(p.id) or schemas.ProductCompatibilityOut()) for p in rows
+    ]
     return schemas.PublicProductListResponse(items=items, total=total)
 
 
@@ -374,7 +472,7 @@ def get_public_product(product_id: int, db: Session = Depends(get_db)):
     )
     if not p:
         raise HTTPException(status_code=404, detail="Product not found")
-    return product_to_public(p)
+    return product_to_public(p, db)
 
 
 @router.get("/categories", response_model=list[schemas.PublicCategoryItem])
@@ -394,6 +492,57 @@ def list_public_categories(db: Session = Depends(get_db)):
         items.append(schemas.PublicCategoryItem(id=LEGACY_CATEGORY_ID_BASE + idx, name=name))
     items.sort(key=lambda x: x.name.casefold())
     return items
+
+
+@router.get("/compatibility/vehicle-brands", response_model=list[schemas.VehicleBrandResponse])
+def list_public_vehicle_brands(db: Session = Depends(get_db)):
+    rows = (
+        db.query(models.VehicleBrand)
+        .filter(models.VehicleBrand.is_active.is_(True))
+        .order_by(asc(models.VehicleBrand.name))
+        .all()
+    )
+    return [schemas.VehicleBrandResponse.model_validate(b, from_attributes=True) for b in rows]
+
+
+@router.get("/compatibility/vehicle-models", response_model=list[schemas.VehicleModelResponse])
+def list_public_vehicle_models(
+    db: Session = Depends(get_db),
+    vehicle_brand_id: int | None = None,
+):
+    qry = (
+        db.query(models.VehicleModel)
+        .options(joinedload(models.VehicleModel.vehicle_brand))
+        .filter(models.VehicleModel.is_active.is_(True))
+    )
+    if vehicle_brand_id is not None:
+        qry = qry.filter(models.VehicleModel.vehicle_brand_id == vehicle_brand_id)
+    rows = qry.order_by(asc(models.VehicleModel.name)).all()
+    out: list[schemas.VehicleModelResponse] = []
+    for r in rows:
+        d = schemas.VehicleModelResponse.model_validate(r, from_attributes=True)
+        if r.vehicle_brand:
+            d = d.model_copy(
+                update={
+                    "brand": schemas.VehicleBrandResponse.model_validate(
+                        r.vehicle_brand, from_attributes=True
+                    )
+                }
+            )
+        out.append(d)
+    return out
+
+
+@router.get("/compatibility/engine-families", response_model=list[schemas.EngineFamilyResponse])
+def list_public_engine_families(db: Session = Depends(get_db), limit: int = Query(200, ge=1, le=2000)):
+    rows = (
+        db.query(models.EngineFamily)
+        .filter(models.EngineFamily.is_active.is_(True))
+        .order_by(asc(models.EngineFamily.code))
+        .limit(limit)
+        .all()
+    )
+    return [schemas.EngineFamilyResponse.model_validate(f, from_attributes=True) for f in rows]
 
 
 @router.get("/brands", response_model=list[schemas.PublicBrandItem])

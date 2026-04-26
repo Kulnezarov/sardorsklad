@@ -8,7 +8,7 @@ import {
   FiTag, FiUpload, FiDownload, FiX, FiLoader, FiClock, FiPackage,
 } from 'react-icons/fi';
 import { Button, Modal, Input, TextArea, LoadingSpinner, Alert } from '../components/ui';
-import { productApi, resolveUploadedAssetUrl } from '../api/client';
+import { productApi, resolveUploadedAssetUrl, compatibilityApi } from '../api/client';
 import { importExcelStream } from '../api/importExcelStream';
 import { settingsApi } from '../api/settings';
 import { generateEAN13 } from '../utils/barcodeGen';
@@ -78,10 +78,12 @@ function getCatColor(cat) {
 }
 
 const emptyForm = () => ({
-  id: null, name: '', sku: '', barcode: '', brand: '', category: '',
+  id: null, name: '', sku: '', barcode: '', brand: '', model: '', category: '',
   purchase_price: 0, sale_price: 0, cny_price: '', delivery_cost_kzt: '', delivery_weight_kg: '',
   quantity: 0, min_quantity: 0, description: '', supplier: '', storage_location: '',
   image_url: '',
+  compatibility_vehicle_model_ids: [],
+  compatibility_engine_family_ids: [],
 });
 
 const num = (v) => { if (v === '' || v == null) return 0; const n = parseFloat(String(v).replace(',', '.')); return Number.isFinite(n) ? n : 0; };
@@ -115,12 +117,15 @@ function buildPayload(formData, cnyRate = 65) {
   const skuTrim = formData.sku?.trim();
   const cny = optionalNum(formData.cny_price);
   const purchase = effectivePurchaseTenge(formData, cnyRate);
+  const efs = formData.compatibility_engine_family_ids || [];
+  const vms = formData.compatibility_vehicle_model_ids || [];
   return {
     id: formData.id ?? null,
     name: formData.name.trim(),
     sku: skuTrim || undefined,
     barcode: formData.barcode?.trim() || null,
     brand: formData.brand?.trim() || null,
+    model: formData.model?.trim() || null,
     category: formData.category?.trim() || null,
     description: formData.description?.trim() || null,
     image_url: (formData.image_url || '').split('?')[0].trim() || null,
@@ -133,6 +138,12 @@ function buildPayload(formData, cnyRate = 65) {
     delivery_weight_kg: optionalNum(formData.delivery_weight_kg),
     quantity: parseInt(formData.quantity, 10) || 0,
     min_quantity: parseInt(formData.min_quantity, 10) || 0,
+    ...(formData.id
+      ? { compatibility_engine_family_ids: efs, compatibility_vehicle_model_ids: vms }
+      : {
+          ...(efs.length ? { compatibility_engine_family_ids: efs } : {}),
+          ...(vms.length ? { compatibility_vehicle_model_ids: vms } : {}),
+        }),
   };
 }
 
@@ -238,6 +249,17 @@ const Products = () => {
   const cnyRate = Number(settingsRow?.cny_rate) || 65;
   const deliveryKztPerKg = Number(settingsRow?.delivery_kzt_per_kg) || 800;
 
+  const { data: compatEngineFamilies = [] } = useQuery({
+    queryKey: ['compatibility', 'engine-families'],
+    queryFn: () => compatibilityApi.engineFamilies().then((r) => r.data),
+    staleTime: 60000,
+  });
+  const { data: compatVehicleModels = [] } = useQuery({
+    queryKey: ['compatibility', 'vehicle-models'],
+    queryFn: () => compatibilityApi.vehicleModels().then((r) => r.data),
+    staleTime: 60000,
+  });
+
   // openVoiceAdd: открыть форму нового товара (как «Добавить»)
   // openAdd + barcode: со страницы продаж
   useEffect(() => {
@@ -320,6 +342,7 @@ const Products = () => {
       const entries = [
         { val: p.name, type: 'Товар' },
         { val: p.brand, type: 'Марка' },
+        { val: p.model, type: 'Модель' },
         { val: p.category, type: 'Категория' },
       ];
       for (const { val, type } of entries) {
@@ -339,7 +362,7 @@ const Products = () => {
     queryKey: ['categories'],
     queryFn: async () => {
       try {
-        const r = await productApi.getCategories({ limit: 30 });
+        const r = await productApi.getCategories({ limit: 500 });
         const data = r.data;
         if (Array.isArray(data)) return data;
         if (Array.isArray(data?.items)) return data.items;
@@ -632,25 +655,34 @@ const Products = () => {
     return () => document.removeEventListener('keydown', handleKey, true);
   }, []);
 
-  const handleEdit = (product) => {
+  const handleEdit = async (product) => {
+    let p = { ...product };
+    if (product?.id) {
+      try {
+        const { data } = await productApi.getById(product.id);
+        p = { ...p, ...data };
+      } catch { /* list row only */ }
+    }
     const rate = Number(settingsRow?.delivery_kzt_per_kg) || 800;
-    const delNum = product.delivery_cost_kzt != null ? Number(product.delivery_cost_kzt) : null;
-    let wKg = product.delivery_weight_kg != null ? String(product.delivery_weight_kg) : '';
+    const delNum = p.delivery_cost_kzt != null ? Number(p.delivery_cost_kzt) : null;
+    let wKg = p.delivery_weight_kg != null ? String(p.delivery_weight_kg) : '';
     if (!wKg && delNum != null && delNum > 0 && rate > 0) {
       const kg = roundKgVal(delNum / rate);
       wKg = kg != null ? String(kg) : '';
     }
     setFormData({
       ...emptyForm(),
-      ...product,
-      sku: product.sku || '',
-      purchase_price: product.purchase_price != null ? Number(product.purchase_price) : 0,
-      cny_price: product.cny_price != null ? String(product.cny_price) : '',
-      delivery_cost_kzt: product.delivery_cost_kzt != null ? String(product.delivery_cost_kzt) : '',
+      ...p,
+      sku: p.sku || '',
+      purchase_price: p.purchase_price != null ? Number(p.purchase_price) : 0,
+      cny_price: p.cny_price != null ? String(p.cny_price) : '',
+      delivery_cost_kzt: p.delivery_cost_kzt != null ? String(p.delivery_cost_kzt) : '',
       delivery_weight_kg: wKg,
-      supplier: product.supplier || '',
-      storage_location: product.location_zone || '',
-      image_url: product.image_url || '',
+      supplier: p.supplier || '',
+      storage_location: p.location_zone || '',
+      image_url: p.image_url || '',
+      compatibility_engine_family_ids: (p.compatibility?.engine_families || []).map((x) => x.id),
+      compatibility_vehicle_model_ids: (p.compatibility?.vehicle_models || []).map((x) => x.id),
     });
     setImageBlobUrl((prev) => {
       if (prev) URL.revokeObjectURL(prev);
@@ -731,7 +763,12 @@ const Products = () => {
         return '';
       });
       await queryClient.invalidateQueries({ queryKey: ['products'] });
-      toast.success('Фото обновлено');
+      const w = response?.data?.width;
+      const h = response?.data?.height;
+      const b = response?.data?.size_bytes;
+      const dim = w && h ? ` ${w}×${h} px` : '';
+      const sz = b != null ? `, ${(b / 1024).toFixed(1)} КБ` : '';
+      toast.success(`Фото сохранено${dim}${sz}`);
     } catch (err) {
       toast.error(err.response?.data?.detail || 'Не удалось загрузить фото');
     } finally {
@@ -957,7 +994,7 @@ const Products = () => {
           <table className="products-catalog-table">
             <thead className="products-catalog-thead">
               <tr>
-                {['Штрих-код', 'Название', 'Марка', 'Категория', 'Закуп', 'Продажа', 'Прибыль', 'Место', 'Остаток', ''].map((h) => (
+                {['Штрих-код', 'Название', 'Марка', 'Модель', 'Категория', 'Закуп', 'Продажа', 'Прибыль', 'Место', 'Остаток', ''].map((h) => (
                   <th key={h}>{h}</th>
                 ))}
               </tr>
@@ -965,7 +1002,7 @@ const Products = () => {
             <tbody>
               {catalogVirtual.padTop > 0 && (
                 <tr aria-hidden="true" style={{ height: catalogVirtual.padTop, pointerEvents: 'none' }}>
-                  <td colSpan={10} style={{ padding: 0, border: 'none', height: catalogVirtual.padTop, lineHeight: 0 }} />
+                  <td colSpan={11} style={{ padding: 0, border: 'none', height: catalogVirtual.padTop, lineHeight: 0 }} />
                 </tr>
               )}
               {catalogVirtual.slice.map((row) => {
@@ -987,6 +1024,7 @@ const Products = () => {
                       <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.name}</div>
                     </td>
                     <td style={{ padding: '12px 14px', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>{row.brand || <span style={{ color: 'var(--text-muted)' }}>—</span>}</td>
+                    <td style={{ padding: '12px 14px', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>{row.model || <span style={{ color: 'var(--text-muted)' }}>—</span>}</td>
                     <td style={{ padding: '12px 14px' }}>
                       {row.category
                         ? <span style={{ display: 'inline-flex', alignItems: 'center', borderRadius: 999, padding: '3px 10px', fontSize: 12, fontWeight: 600, background: catColor.bg, color: catColor.color, whiteSpace: 'nowrap', border: '1px solid var(--border-light)' }}>{row.category}</span>
@@ -1013,7 +1051,7 @@ const Products = () => {
               })}
               {catalogVirtual.padBottom > 0 && (
                 <tr aria-hidden="true" style={{ height: catalogVirtual.padBottom, pointerEvents: 'none' }}>
-                  <td colSpan={10} style={{ padding: 0, border: 'none', height: catalogVirtual.padBottom, lineHeight: 0 }} />
+                  <td colSpan={11} style={{ padding: 0, border: 'none', height: catalogVirtual.padBottom, lineHeight: 0 }} />
                 </tr>
               )}
             </tbody>
@@ -1097,6 +1135,7 @@ const Products = () => {
                 <div style={{ fontSize: 20, fontWeight: 800, letterSpacing: '-0.03em', color: 'var(--text)', lineHeight: 1.2, wordBreak: 'break-word' }}>{sideProduct.name}</div>
                 <div style={{ marginTop: 8, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
                   {sideProduct.brand && <span style={{ fontSize: 13, color: 'var(--text-secondary)', fontWeight: 600 }}>{sideProduct.brand}</span>}
+                  {sideProduct.model && <span style={{ fontSize: 13, color: 'var(--primary)', fontWeight: 700 }}>Модель: {sideProduct.model}</span>}
                   {sideProduct.category && (() => { const cc = getCatColor(sideProduct.category); return <span style={{ padding: '2px 10px', borderRadius: 999, fontSize: 12, fontWeight: 600, background: cc.bg, color: cc.color }}>{sideProduct.category}</span>; })()}
                 </div>
               </div>
@@ -1107,6 +1146,7 @@ const Products = () => {
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 18 }}>
                 {[
                   ['Штрих-код', sideProduct.barcode || sideProduct.sku || '—', true],
+                  ['Модель', sideProduct.model || '—'],
                   ['Поставщик', sideProduct.supplier || '—'],
                   ['Закуп (₸)', `${Number(sideProduct.purchase_price || 0).toLocaleString('ru-RU')} ₸`],
                   ['Доставка', sideProduct.delivery_cost_kzt ? `${Number(sideProduct.delivery_cost_kzt).toLocaleString('ru-RU')} ₸` : '—'],
@@ -1350,6 +1390,57 @@ const Products = () => {
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
             <Input label="Название *" placeholder="Например: Мотор" value={formData.name} onChange={(e) => setFormData({ ...formData, name: e.target.value })} style={formData.id ? { border: '1px solid var(--primary)' } : {}} />
             <Input label="Марка" placeholder="Bosch, Changan…" value={formData.brand || ''} onChange={(e) => setFormData({ ...formData, brand: e.target.value })} style={formData.id ? { border: '1px solid var(--primary)' } : {}} />
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <Input label="Модель (текст / кэш)" placeholder="Заполняется из кода/марок ниже" value={formData.model || ''} onChange={(e) => setFormData({ ...formData, model: e.target.value })} style={formData.id ? { border: '1px solid var(--primary)' } : {}} />
+            <div style={{ gridColumn: '1 / -1', display: 'grid', gap: 8 }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-muted)' }}>Совместимость (справочник)</div>
+              <div className="ios-input" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                <div>
+                  <div style={{ fontSize: 11, marginBottom: 4 }}>Коды (474, 465Q…). Ctrl+клик — несколько</div>
+                  <select
+                    multiple
+                    className="ios-input"
+                    style={{ width: '100%', minHeight: 88, fontSize: 13, padding: 8 }}
+                    value={(formData.compatibility_engine_family_ids || []).map(String)}
+                    onChange={(e) => {
+                      const sel = Array.from(e.target.selectedOptions, (o) => parseInt(o.value, 10));
+                      setFormData({ ...formData, compatibility_engine_family_ids: sel });
+                    }}
+                  >
+                    {compatEngineFamilies.map((ef) => (
+                      <option key={ef.id} value={ef.id}>
+                        {ef.code}
+                        {ef.name ? ` — ${ef.name}` : ''}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <div style={{ fontSize: 11, marginBottom: 4 }}>Марки/модели авто. Ctrl+клик</div>
+                  <select
+                    multiple
+                    className="ios-input"
+                    style={{ width: '100%', minHeight: 88, fontSize: 13, padding: 8 }}
+                    value={(formData.compatibility_vehicle_model_ids || []).map(String)}
+                    onChange={(e) => {
+                      const sel = Array.from(e.target.selectedOptions, (o) => parseInt(o.value, 10));
+                      setFormData({ ...formData, compatibility_vehicle_model_ids: sel });
+                    }}
+                  >
+                    {compatVehicleModels.map((vm) => (
+                      <option key={vm.id} value={vm.id}>
+                        {(vm.brand && vm.brand.name) || '—'} — {vm.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            </div>
+            <div style={{ fontSize: 12, color: 'var(--text-muted)', alignSelf: 'end', paddingBottom: 10, lineHeight: 1.45 }}>
+              Марка — производитель/бренд, модель — автомобиль или серия. Это поле уйдёт на витрину для фильтрации.
+            </div>
           </div>
 
           <div>

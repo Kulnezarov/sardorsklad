@@ -122,6 +122,7 @@ def test_public_products_returns_safe_fields():
             "category_name",
             "brand_id",
             "brand_name",
+            "model",
             "article",
             "oem",
         ]

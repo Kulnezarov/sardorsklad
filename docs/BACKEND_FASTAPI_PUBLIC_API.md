@@ -8,7 +8,7 @@
 
 | Метод | Путь | Назначение |
 |-------|------|------------|
-| GET | `/public/products` | Каталог (`q`, `category_id`, `brand_id`, `limit`, `offset`, `sort`, `in_stock`, …). Ответ: `{ "items", "total" }`. |
+| GET | `/public/products` | Каталог (`q`, `category_id`, `brand_id`, `model`, `limit`, `offset`, `sort`, `in_stock`, …). Ответ: `{ "items", "total" }`. |
 | GET | `/public/products/{id}` | Карточка товара |
 | POST | `/public/orders` | Оформление заказа; ответ `{ "ok", "reserve_id" }` (это id резерва) |
 | GET | `/public/orders/{reserve_id}` | Статус заказа, query: `phone` (как при оформлении) |
@@ -21,6 +21,10 @@
 - Те же правила, что и у `/public/orders/{id}`: заказ `source=website`, телефон должен совпадать.
 - `items[].line_status`: `pending` | `fulfilled` | `cancelled` (в БД нет статуса по строке — наследуется от заказа).
 - Сумма: `total_amount` (тенге, строка с двумя знаками).
+
+### Поля товара для витрины
+
+В `items[]` у `/public/products` есть отдельное поле `model` (модель/серия авто), отдельно от `brand_name` (марка/бренд). Фильтр `model=...` ищет по этой колонке и дополнительно по названию/описанию для совместимости со старыми карточками.
 
 ## Защищённые (staff) API
 
