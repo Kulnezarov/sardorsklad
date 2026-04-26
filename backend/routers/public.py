@@ -138,6 +138,39 @@ def _client_ip(request: Request) -> str:
     return "unknown"
 
 
+def _storefront_compatibility(comp: schemas.ProductCompatibilityOut) -> schemas.ProductCompatibilityOut:
+    """
+    Витрина (chparts): без внутренних кодов двигателя — они только в складе.
+    Клиенту отдаём привязки к маркам/моделям авто.
+    """
+    vms = list(comp.vehicle_models) if comp else []
+    return schemas.ProductCompatibilityOut(engine_families=[], vehicle_models=vms)
+
+
+def _storefront_model_text(p: models.Product, comp: schemas.ProductCompatibilityOut) -> str | None:
+    """Текст «применимости» для витрины: без сегмента «Коды: …» из кэша склада."""
+    if comp and comp.vehicle_models:
+        labels: list[str] = []
+        for v in comp.vehicle_models:
+            b = (v.brand_name or "").strip()
+            n = (v.name or "").strip()
+            s = f"{b} {n}".strip() if b else n
+            if s:
+                labels.append(s)
+        if labels:
+            return ", ".join(dict.fromkeys(labels))
+    raw = _strip_or_none(getattr(p, "model", None))
+    if not raw:
+        return None
+    parts = [x.strip() for x in raw.split("·") if x.strip() and not x.strip().startswith("Коды:")]
+    if not parts:
+        return None
+    out = " · ".join(parts)
+    if out.startswith("Совм.:"):
+        out = out.replace("Совм.:", "", 1).strip()
+    return out or None
+
+
 def product_to_public(
     p: models.Product,
     db: Session | None = None,
@@ -154,6 +187,8 @@ def product_to_public(
         comp = build_compatibility_out(db, p.id)
     else:
         comp = schemas.ProductCompatibilityOut()
+    comp = _storefront_compatibility(comp)
+    model_public = _storefront_model_text(p, comp)
     return schemas.PublicProductResponse(
         id=p.id,
         name=p.name,
@@ -164,7 +199,7 @@ def product_to_public(
         category_name=category_name,
         brand_id=p.brand_id,
         brand_name=brand_name,
-        model=_strip_or_none(getattr(p, "model", None)),
+        model=model_public,
         article=p.sku,
         oem=p.barcode,
         compatibility=comp,
@@ -534,15 +569,12 @@ def list_public_vehicle_models(
 
 
 @router.get("/compatibility/engine-families", response_model=list[schemas.EngineFamilyResponse])
-def list_public_engine_families(db: Session = Depends(get_db), limit: int = Query(200, ge=1, le=2000)):
-    rows = (
-        db.query(models.EngineFamily)
-        .filter(models.EngineFamily.is_active.is_(True))
-        .order_by(asc(models.EngineFamily.code))
-        .limit(limit)
-        .all()
-    )
-    return [schemas.EngineFamilyResponse.model_validate(f, from_attributes=True) for f in rows]
+def list_public_engine_families():
+    """
+    Справочник кодов двигателя витрине не отдаётся (только склад).
+    Эндпоинт оставлен для обратной совместимости — всегда пустой список.
+    """
+    return []
 
 
 @router.get("/brands", response_model=list[schemas.PublicBrandItem])

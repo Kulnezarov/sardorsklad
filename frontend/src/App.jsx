@@ -14,6 +14,8 @@ import Reserve from './pages/Reserve';
 import History from './pages/History';
 import Settings from './pages/Settings';
 import Orders from './pages/Orders';
+import NotFoundPage from './pages/NotFoundPage';
+import OnlineOverlay from './components/OnlineOverlay';
 
 class ErrorBoundary extends Component {
   constructor(props) { super(props); this.state = { hasError: false, error: null }; }
@@ -63,6 +65,7 @@ function AppShell() {
               <Route path="/history" element={<History />} />
               <Route path="/astra" element={<Navigate to="/dashboard" replace />} />
               <Route path="/settings" element={<Settings />} />
+              <Route path="*" element={<NotFoundPage />} />
             </Routes>
           </ErrorBoundary>
         </div>
@@ -74,6 +77,7 @@ function AppShell() {
 function App() {
   return (
     <AuthProvider>
+      <OnlineOverlay />
       <Router>
         <Routes>
           <Route path="/login" element={<LoginPage />} />

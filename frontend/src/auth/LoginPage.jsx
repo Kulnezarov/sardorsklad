@@ -34,9 +34,10 @@ const LoginPage = () => {
   };
 
   return (
-    <div className="login-container">
-      <div className="login-bg-orb login-bg-orb-top" />
-      <div className="login-bg-orb login-bg-orb-bottom" />
+    <div className="static-page-root login-page-wrap">
+      <div className="static-page-mesh" aria-hidden />
+      <div className="static-page-orb static-page-orb--tl" aria-hidden />
+      <div className="static-page-orb static-page-orb--br" aria-hidden />
       <div className="login-card">
         <div className="login-logo">
           <div className="login-logo-icon">
@@ -45,12 +46,12 @@ const LoginPage = () => {
             </svg>
           </div>
           <h2 className="login-title">SkladPro</h2>
-          <p className="login-subtitle">Вход в систему склада</p>
+          <p className="login-subtitle">Вход для сотрудников склада</p>
         </div>
         
         <form className="login-form" onSubmit={handleSubmit}>
           <div className="form-group">
-            <label className="form-label">Email</label>
+            <label className="form-label">Логин (email)</label>
             <input
               type="email"
               value={loginValue}

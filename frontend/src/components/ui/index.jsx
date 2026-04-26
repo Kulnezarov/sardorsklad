@@ -487,21 +487,23 @@ export const Modal = ({
 
   return createPortal(
     <div
+      className="app-modal-overlay"
       style={{
         position: 'fixed',
         inset: 0,
-        background: '#6b7280',
+        background: 'rgba(107, 114, 128, 0.45)',
         display: 'flex',
         alignItems: 'flex-start',
         justifyContent: 'center',
         padding: '20px',
         zIndex: 1000,
         overflowY: 'auto',
-        paddingTop: '60px'
+        paddingTop: '60px',
       }}
       onClick={onClose}
     >
       <div
+        className="app-modal-box"
         style={{
           width: '100%',
           maxWidth: width,
@@ -554,7 +556,7 @@ export const Modal = ({
         </div>
 
         {/* Content */}
-        <div style={{ padding: '24px' }}>
+        <div className="app-modal-body" style={{ padding: '24px' }}>
           {children}
         </div>
 

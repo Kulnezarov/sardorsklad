@@ -216,8 +216,6 @@ const Products = () => {
   const importFileRef = useRef(null);
   const barcodeCanvasRef = useRef(null);
   const formRef = useRef(formData);
-  /** Пользователь вручную правит поле «Совместимость» — не перезаписывать при выборе кода */
-  const compatibilityTextTouchedRef = useRef(false);
   const productsRef = useRef([]);
   const scanBufRef = useRef('');
   const scanLastRef = useRef(0);
@@ -287,15 +285,17 @@ const Products = () => {
 
   const codeDerivedSync = useMemo(() => {
     if (!hasEngineCodes) {
-      return { ready: true, noCodes: true, vmIds: [], line: '', vms: [] };
+      return { ready: true, noCodes: true, vmIds: [], vms: [], carBrand: '', carModel: '' };
     }
     if (!codeFamilyQueries.length || !codeFamilyQueries.every((q) => q.isSuccess && q.data)) {
-      return { ready: false, noCodes: false, vmIds: [], line: '', vms: [] };
+      return { ready: false, noCodes: false, vmIds: [], vms: [], carBrand: '', carModel: '' };
     }
     const vmIdSet = new Set();
     const vmsList = [];
     const seen = new Set();
-    const lineParts = [];
+    const brandOrder = [];
+    const brandSeen = new Set();
+    const modelParts = [];
     for (const q of codeFamilyQueries) {
       const vms = q.data?.vehicle_models || [];
       for (const m of vms) {
@@ -304,17 +304,23 @@ const Products = () => {
           seen.add(m.id);
           vmsList.push(m);
         }
-        const one = [m.brand?.name, m.name].filter(Boolean).join(' ').trim();
-        if (one) lineParts.push(one);
+        const bn = (m.brand && m.brand.name) || '';
+        if (bn && !brandSeen.has(bn)) {
+          brandSeen.add(bn);
+          brandOrder.push(bn);
+        }
+        if (m.name) modelParts.push(m.name);
       }
     }
-    const line = [...new Set(lineParts)].join('\n');
+    const carBrand = brandOrder.join(', ');
+    const carModel = [...new Set(modelParts)].join(', ');
     return {
       ready: true,
       noCodes: false,
       vmIds: [...vmIdSet],
-      line,
       vms: vmsList,
+      carBrand,
+      carModel,
     };
   }, [hasEngineCodes, codeFamilyQueries]);
 
@@ -336,13 +342,14 @@ const Products = () => {
       const a = [...nextVm].sort((x, y) => x - y);
       const b = [...prevVm].sort((x, y) => x - y);
       const sameIds = a.length === b.length && a.every((id, i) => id === b[i]);
-      const line = codeDerivedSync.line;
-      const same = sameIds && p.model === line;
+      const { carBrand, carModel } = codeDerivedSync;
+      const same = sameIds && p.brand === carBrand && p.model === carModel;
       if (same) return p;
       return {
         ...p,
         compatibility_vehicle_model_ids: nextVm,
-        model: line,
+        brand: carBrand,
+        model: carModel,
       };
     });
   }, [showForm, hasEngineCodes, codeDerivedSync]);
@@ -661,7 +668,6 @@ const Products = () => {
 
   /* form helpers */
   const resetForm = () => {
-    compatibilityTextTouchedRef.current = false;
     setImageBlobUrl((prev) => {
       if (prev) URL.revokeObjectURL(prev);
       return '';
@@ -768,7 +774,6 @@ const Products = () => {
   }, []);
 
   const handleEdit = async (product) => {
-    compatibilityTextTouchedRef.current = false;
     let p = { ...product };
     if (product?.id) {
       try {
@@ -813,7 +818,6 @@ const Products = () => {
   };
 
   const openNew = () => {
-    compatibilityTextTouchedRef.current = false;
     setImageBlobUrl((prev) => {
       if (prev) URL.revokeObjectURL(prev);
       return '';
@@ -1503,127 +1507,40 @@ const Products = () => {
             </div>
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-            <Input label="Название *" placeholder="Например: Мотор" value={formData.name} onChange={(e) => setFormData({ ...formData, name: e.target.value })} style={formData.id ? { border: '1px solid var(--primary)' } : {}} />
+          <div style={{ display: 'grid', gap: 10 }}>
             <Input
-              label="Марка (запчасть, OEM…)"
-              placeholder="Bosch, NGK…"
-              value={formData.brand || ''}
-              onChange={(e) => setFormData({ ...formData, brand: e.target.value })}
+              label="Название *"
+              placeholder="Например: Мотор"
+              value={formData.name}
+              onChange={(e) => setFormData({ ...formData, name: e.target.value })}
               style={formData.id ? { border: '1px solid var(--primary)' } : {}}
             />
-          </div>
-
-          <div style={{ display: 'grid', gap: 10 }}>
-            {hasEngineCodes ? (
-              <div>
-                <span
-                  style={{
-                    display: 'block',
-                    marginBottom: 8,
-                    fontSize: 13,
-                    fontWeight: 600,
-                    color: 'var(--text)',
-                  }}
-                >
-                  Совместимость для витрины
-                </span>
-                <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '0 0 8px', lineHeight: 1.4 }}>
-                  Подставляется из выбранных ниже кодов. Редактирование отключено — измените привязки в «Настройки →
-                  Коды», либо снимите все коды и заполните вручную.
-                </p>
-                {codeFamilyQueries.some((q) => q.isLoading) && (
-                  <div style={{ fontSize: 12, color: 'var(--text-muted)', padding: '8px 0' }}>Загрузка данных кода…</div>
-                )}
-                {codeFamilyQueries.some((q) => q.isError) && (
-                  <div style={{ fontSize: 12, color: 'var(--danger)' }}>Не удалось загрузить справочник кода. Повторите позже.</div>
-                )}
-                {codeDerivedSync.ready && !codeFamilyQueries.some((q) => q.isLoading) && (
-                  <>
-                    <textarea
-                      className="ios-input"
-                      readOnly
-                      value={formData.model || ''}
-                      rows={Math.min(8, Math.max(3, String(formData.model || '').split('\n').length + 1))}
-                      style={{
-                        width: '100%',
-                        minHeight: 72,
-                        resize: 'none',
-                        opacity: 0.95,
-                        cursor: 'default',
-                        ...formData.id ? { border: '1px solid var(--primary)' } : {},
-                      }}
-                      aria-label="Совместимость для витрины (по коду)"
-                    />
-                    {codeDerivedSync.vms && codeDerivedSync.vms.length > 0 && (
-                      <div
-                        style={{
-                          marginTop: 8,
-                          border: '1px solid var(--border)',
-                          borderRadius: 'var(--radius-ios)',
-                          background: 'var(--ios-grouped-bg)',
-                          overflow: 'auto',
-                          maxHeight: 160,
-                        }}
-                      >
-                        <table
-                          className="compat-code-preview-table"
-                          style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}
-                        >
-                          <thead>
-                            <tr style={{ borderBottom: '1px solid var(--border)' }}>
-                              <th
-                                style={{
-                                  textAlign: 'left',
-                                  padding: '6px 10px',
-                                  fontWeight: 600,
-                                  color: 'var(--text-muted)',
-                                }}
-                              >
-                                Марка
-                              </th>
-                              <th
-                                style={{
-                                  textAlign: 'left',
-                                  padding: '6px 10px',
-                                  fontWeight: 600,
-                                  color: 'var(--text-muted)',
-                                }}
-                              >
-                                Модель
-                              </th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {codeDerivedSync.vms.map((m) => (
-                              <tr key={m.id} style={{ borderBottom: '1px solid var(--border)' }}>
-                                <td style={{ padding: '6px 10px' }}>{(m.brand && m.brand.name) || '—'}</td>
-                                <td style={{ padding: '6px 10px' }}>{m.name || '—'}</td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    )}
-                    {codeDerivedSync.vms && codeDerivedSync.vms.length === 0 && (
-                      <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: '6px 0 0' }}>
-                        К выбранным кодам пока не привязаны марки и модели в настройках.
-                      </p>
-                    )}
-                  </>
-                )}
-              </div>
-            ) : (
-              <TextArea
-                label="Совместимость для витрины"
-                placeholder="Свой текст для витрины: марки, кроссы, уточнения. Без кода снизу вы можете вручную отметить авто (чипы)."
-                value={formData.model || ''}
-                onChange={(e) => {
-                  compatibilityTextTouchedRef.current = true;
-                  setFormData({ ...formData, model: e.target.value });
-                }}
-                style={{ minHeight: 88, ...formData.id ? { border: '1px solid var(--primary)' } : {} }}
-              />
+            <Input
+              label="Марка авто"
+              placeholder="Например: FAW, Changan"
+              value={formData.brand || ''}
+              readOnly={hasEngineCodes}
+              onChange={(e) => {
+                if (hasEngineCodes) return;
+                setFormData({ ...formData, brand: e.target.value });
+              }}
+              style={formData.id ? { border: '1px solid var(--primary)' } : {}}
+            />
+            <Input
+              label="Модель авто"
+              placeholder="Например: Bestune T77"
+              value={formData.model || ''}
+              readOnly={hasEngineCodes}
+              onChange={(e) => {
+                if (hasEngineCodes) return;
+                setFormData({ ...formData, model: e.target.value });
+              }}
+              style={formData.id ? { border: '1px solid var(--primary)' } : {}}
+            />
+            {hasEngineCodes && (
+              <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0, lineHeight: 1.45 }}>
+                Марка и модель подставляются из выбранных кодов. Редактирование: «Настройки → Коды» или снимите коды.
+              </p>
             )}
             <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-muted)' }}>Коды из справочника</div>
             <div className="catalog-chips-scroll" style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
@@ -1646,6 +1563,66 @@ const Products = () => {
                 );
               })}
             </div>
+            {hasEngineCodes && codeFamilyQueries.some((q) => q.isLoading) && (
+              <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Загрузка данных кода…</div>
+            )}
+            {hasEngineCodes && codeFamilyQueries.some((q) => q.isError) && (
+              <div style={{ fontSize: 12, color: 'var(--danger)' }}>Не удалось загрузить справочник кода. Повторите позже.</div>
+            )}
+            {hasEngineCodes && codeDerivedSync.ready && !codeFamilyQueries.some((q) => q.isLoading) && codeDerivedSync.vms && codeDerivedSync.vms.length > 0 && (
+              <div
+                style={{
+                  border: '1px solid var(--border)',
+                  borderRadius: 'var(--radius-ios)',
+                  background: 'var(--ios-grouped-bg)',
+                  overflow: 'auto',
+                  maxHeight: 200,
+                }}
+              >
+                <table
+                  className="compat-code-preview-table"
+                  style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}
+                >
+                  <thead>
+                    <tr style={{ borderBottom: '1px solid var(--border)' }}>
+                      <th
+                        style={{
+                          textAlign: 'left',
+                          padding: '6px 10px',
+                          fontWeight: 600,
+                          color: 'var(--text-muted)',
+                        }}
+                      >
+                        Марка
+                      </th>
+                      <th
+                        style={{
+                          textAlign: 'left',
+                          padding: '6px 10px',
+                          fontWeight: 600,
+                          color: 'var(--text-muted)',
+                        }}
+                      >
+                        Модель
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {codeDerivedSync.vms.map((m) => (
+                      <tr key={m.id} style={{ borderBottom: '1px solid var(--border)' }}>
+                        <td style={{ padding: '6px 10px' }}>{(m.brand && m.brand.name) || '—'}</td>
+                        <td style={{ padding: '6px 10px' }}>{m.name || '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            {hasEngineCodes && codeDerivedSync.ready && !codeFamilyQueries.some((q) => q.isLoading) && (!codeDerivedSync.vms || codeDerivedSync.vms.length === 0) && (
+              <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: 0 }}>
+                К выбранным кодам пока не привязаны марки и модели в настройках.
+              </p>
+            )}
             {!hasEngineCodes && (
               <>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
