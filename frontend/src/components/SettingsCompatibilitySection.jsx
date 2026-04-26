@@ -18,17 +18,16 @@ function parseModelNames(raw) {
 }
 
 /**
- * Код (465) → внутри: марка в справочник + блоки «марка + несколько моделей (строки)» → в код.
+ * Код (465) → блоки «марка + модели (строки)»; при «Добавить в код» несуществующие марки создаются в справочнике.
  */
 function SettingsCompatibilitySection() {
   const qc = useQueryClient();
   const [newCode, setNewCode] = useState('');
   const [newCodeName, setNewCodeName] = useState('');
   const [expandedId, setExpandedId] = useState(null);
-  const [newBrandName, setNewBrandName] = useState('');
   const [brandBlocks, setBrandBlocks] = useState([emptyBlock()]);
 
-  const { data: vehBrands = [], refetch: refetchVehBrands } = useQuery({
+  const { data: vehBrands = [] } = useQuery({
     queryKey: ['compatibility', 'vehicle-brands'],
     queryFn: () => compatibilityApi.vehicleBrands().then((r) => r.data),
   });
@@ -71,17 +70,6 @@ function SettingsCompatibilitySection() {
     },
     onError: (e) => toast.error(getApiErrorMessage(e, 'Не удалось')),
   });
-  const addVb = useMutation({
-    mutationFn: (name) => compatibilityApi.createVehicleBrand({ name, is_active: true }),
-    onSuccess: () => {
-      toast.success('Марка добавлена');
-      setNewBrandName('');
-      refetchVehBrands();
-      qc.invalidateQueries({ queryKey: ['compatibility'] });
-    },
-    onError: (e) => toast.error(getApiErrorMessage(e, 'Не удалось создать марку')),
-  });
-
   const addBatchToCode = useMutation({
     mutationFn: async ({ efId, blocks, brandsSnapshot }) => {
       const list = brandsSnapshot || (await compatibilityApi.vehicleBrands().then((r) => r.data));
@@ -215,33 +203,8 @@ function SettingsCompatibilitySection() {
                         <>
                           <div className="compat-subhead">
                             <FiLayers size={14} style={{ marginRight: 6, opacity: 0.7 }} />
-                            Марка в справочник
+                            Код {f.code}: марка и модели (блок = одна марка)
                           </div>
-                          <div className="compat-row">
-                            <input
-                              className="compat-input compat-input-grow"
-                              value={newBrandName}
-                              onChange={(e) => setNewBrandName(e.target.value)}
-                              placeholder="Новая марка, напр. Changan"
-                            />
-                            <button
-                              type="button"
-                              className="compat-btn-secondary"
-                              onClick={() => {
-                                if (!newBrandName.trim()) {
-                                  toast.error('Введите марку');
-                                  return;
-                                }
-                                addVb.mutate(newBrandName.trim());
-                              }}
-                              disabled={addVb.isPending}
-                            >
-                              <FiPlus size={14} style={{ marginRight: 4, verticalAlign: 'middle' }} />
-                              В справочник
-                            </button>
-                          </div>
-
-                          <div className="compat-subhead">Код {f.code}: марка и модели (блок = одна марка)</div>
 
                           {brandBlocks.map((b, idx) => (
                             <div key={b.k} className="compat-brand-card">
