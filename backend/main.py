@@ -4,11 +4,12 @@ import json
 from pathlib import Path
 from decimal import Decimal
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.exceptions import RequestValidationError
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from fastapi.staticfiles import StaticFiles
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from enum import Enum
 from sqlalchemy.exc import OperationalError
 
@@ -208,9 +209,15 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
         content={
             "detail": "Validation error",
             "errors": exc.errors(),
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
         },
     )
+
+
+@app.exception_handler(StarletteHTTPException)
+async def starlette_http_exception_handler(_request: Request, exc: StarletteHTTPException):
+    """4xx/4xx-style ответы (HTTPException) — иначе ловил бы generic handler и отдавал 500."""
+    return DecimalJSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
 
 
 @app.exception_handler(Exception)
@@ -223,7 +230,7 @@ async def global_exception_handler(request: Request, exc: Exception):
         content={
             "error": "Internal server error",
             "detail": str(exc) if not isinstance(exc, str) else exc,
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
             "path": str(request.url),
         },
     )
@@ -235,11 +242,11 @@ async def global_exception_handler(request: Request, exc: Exception):
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
     """Log incoming requests."""
-    start_time = datetime.utcnow()
+    start_time = datetime.now(UTC)
 
     response = await call_next(request)
 
-    duration = (datetime.utcnow() - start_time).total_seconds()
+    duration = (datetime.now(UTC) - start_time).total_seconds()
 
     logger.info(
         f"{request.method} {request.url.path} - "
@@ -285,7 +292,7 @@ def read_root():
             "redoc": "/api/redoc",
             "openapi": "/api/openapi.json",
         },
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": datetime.now(UTC).isoformat(),
     }
 
 
@@ -305,7 +312,7 @@ def health_check():
     return {
         "status": "healthy" if db_status == "healthy" else "degraded",
         "database": db_status,
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": datetime.now(UTC).isoformat(),
     }
 
 

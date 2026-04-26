@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -60,7 +60,7 @@ def clear_all_history(db: Session = Depends(get_db)):
 def cleanup_old_history(db: Session = Depends(get_db)):
     settings = db.query(models.Settings).first()
     retention_days = settings.history_auto_clean_days if settings else 30
-    cutoff_date = datetime.utcnow() - timedelta(days=retention_days)
+    cutoff_date = datetime.now(UTC) - timedelta(days=retention_days)
 
     count = db.query(models.History).filter(models.History.created_at < cutoff_date).count()
     db.query(models.History).filter(models.History.created_at < cutoff_date).delete()

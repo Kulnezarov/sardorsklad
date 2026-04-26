@@ -74,6 +74,36 @@ export function resolveUploadedAssetUrl(relativeOrAbsolute) {
   return `${root}${path}`
 }
 
+/**
+ * Текст ошибки из ответа API (body.detail) или сети — для toast и форм.
+ * @param {unknown} error — обычно AxiosError
+ * @param {string} [fallback]
+ * @returns {string}
+ */
+export function getApiErrorMessage(error, fallback = 'Произошла ошибка') {
+  if (error == null) return fallback
+  const d = error.response?.data
+  if (typeof d?.detail === 'string' && d.detail.trim()) return d.detail
+  if (Array.isArray(d?.detail) && d.detail.length) {
+    const x = d.detail[0]
+    if (typeof x === 'string') return x
+    if (x && typeof x === 'object' && x.msg) return String(x.msg)
+  }
+  if (d?.detail && typeof d.detail === 'object') {
+    const s = d.detail.message
+    if (typeof s === 'string' && s.trim()) return s
+  }
+  if (typeof d?.error === 'string' && d.error.trim()) return d.error
+  const msg = error.message && String(error.message).trim() ? String(error.message) : ''
+  if (msg) {
+    if (error.code === 'ERR_NETWORK' || msg === 'Network Error') {
+      return 'Нет сети или сервер недоступен'
+    }
+    return msg
+  }
+  return fallback
+}
+
 const apiClient = axios.create({
   baseURL: '',
   headers: {

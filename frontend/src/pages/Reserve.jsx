@@ -1,16 +1,16 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 import {
-  FiPlus, FiX, FiPackage, FiTruck, FiShoppingCart, FiCheck, FiClock,
+  FiPlus, FiX, FiPackage, FiTruck, FiShoppingCart, FiCheck,
   FiUpload, FiDownload, FiCamera, FiTrash2, FiEdit2, FiRefreshCw,
   FiChevronDown, FiChevronRight, FiAlertTriangle, FiRotateCcw,
 } from 'react-icons/fi';
 import { wishApi, poApi } from '../api/reserve';
 import { settingsApi } from '../api/settings';
-import { fetchAllProducts } from '../api/client';
+import { fetchAllProducts, getApiErrorMessage } from '../api/client';
 import { generateEAN13 } from '../utils/barcodeGen';
 
 /* ── helpers ── */
@@ -118,7 +118,7 @@ function PhotoZone({ photoData, onPhoto, onRemove }) {
 }
 
 /* ── Wish Card ── */
-function WishCard({ item, categories, onOrder, onEdit, onDelete }) {
+function WishCard({ item, categories: _categories, onOrder, onEdit, onDelete }) {
   const cat = getCatColor(item.category);
   return (
     <div className="wish-card">
@@ -205,7 +205,6 @@ const Reserve = () => {
 
   // ── Tabs ──
   const [mainTab, setMainTab] = useState('wish');      // 'wish' | 'orders'
-  const [orderSub, setOrderSub] = useState('in_transit'); // 'in_transit' | 'cancelled'
   const [partialFilter, setPartialFilter] = useState(false);
   const [showCancelledBlock, setShowCancelledBlock] = useState(false);
 
@@ -335,14 +334,14 @@ const Reserve = () => {
 
   const acceptMutation = useMutation({
     mutationFn: ({ id, data }) => poApi.accept(id, data),
-    onSuccess: (res) => {
+    onSuccess: () => {
       queryClient.invalidateQueries(['purchase-orders']);
       queryClient.invalidateQueries(['products']);
       toast.success('Товар добавлен в склад! ✅');
       setAcceptPO(null);
       setAcceptForm(emptyAccept());
     },
-    onError: (e) => toast.error(e?.response?.data?.detail || 'Ошибка приёмки'),
+    onError: (e) => toast.error(getApiErrorMessage(e, 'Ошибка приёмки')),
   });
 
   const cancelPO = useMutation({

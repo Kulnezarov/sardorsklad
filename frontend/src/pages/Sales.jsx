@@ -4,9 +4,9 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 import {
   FiSearch, FiGrid, FiShoppingCart, FiX, FiPlus, FiMinus,
-  FiCheckCircle, FiTrash2, FiZap,
+  FiZap,
 } from 'react-icons/fi';
-import { saleApi, fetchAllProducts, productApi } from '../api/client';
+import { saleApi, fetchAllProducts, productApi, getApiErrorMessage } from '../api/client';
 
 /* ── helpers ── */
 const num = (v) => { const n = parseFloat(String(v || 0).replace(',', '.')); return Number.isFinite(n) ? n : 0; };
@@ -14,7 +14,7 @@ const num = (v) => { const n = parseFloat(String(v || 0).replace(',', '.')); ret
 const formatMoney = (v) => Number(v || 0).toLocaleString('ru-RU');
 
 /** Сканеры часто шлют пробелы / перевод строки после кода */
-const normalizeScanCode = (s) => String(s ?? '').replace(/[\s\r\n\t\u0000]+/g, '').trim();
+const normalizeScanCode = (s) => String(s ?? '').replaceAll('\u0000', '').replace(/[\s\r\n\t]+/g, '').trim();
 
 /* ── POS component ── */
 const Sales = () => {
@@ -65,7 +65,9 @@ const Sales = () => {
       } else {
         localStorage.removeItem(CART_STORAGE_KEY);
       }
-    } catch {}
+    } catch {
+      /* private mode / quota */
+    }
   }, [cart]);
 
   useEffect(() => {
@@ -237,10 +239,12 @@ const Sales = () => {
         gain.gain.setValueAtTime(0.15, ctx.currentTime);
         gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.3);
         osc.start(); osc.stop(ctx.currentTime + 0.3);
-      } catch (_) {}
+      } catch {
+        /* AudioContext / автозапуск */
+      }
       setTimeout(() => { setShowSuccess(false); setCart([]); localStorage.removeItem(CART_STORAGE_KEY); }, 1500);
     },
-    onError: (err) => { toast.error(err.message || 'Ошибка при продаже'); },
+    onError: (err) => { toast.error(getApiErrorMessage(err, 'Ошибка при продаже')); },
   });
 
   /* ─── RENDER ─── */

@@ -1,4 +1,4 @@
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 
 import os
@@ -41,7 +41,7 @@ def get_dashboard_stats(db: Session = Depends(get_db)):
         models.Product.quantity <= settings.low_stock_threshold,
     ).scalar() or 0
 
-    cutoff = datetime.utcnow() - timedelta(days=30)
+    cutoff = datetime.now(UTC) - timedelta(days=30)
     stale_count = db.query(func.count(models.Product.id)).filter(
         models.Product.is_active == True,
         models.Product.quantity > 0,

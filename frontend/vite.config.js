@@ -19,6 +19,8 @@ export default defineConfig({
   },
   build: {
     outDir: 'dist',
-    sourcemap: true
+    sourcemap: true,
+    /* один основной бандл ~600k — предупреждение Vite не информативно для сценария */
+    chunkSizeWarningLimit: 700,
   }
 })

@@ -1,6 +1,6 @@
 import json
 import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 from urllib.parse import quote_plus
 from urllib.request import urlopen
 
@@ -80,17 +80,17 @@ def send_new_order_notification(db: Session, order: models.Reserve) -> None:
             logger.warning("Telegram send to chat %s failed: %s", chat_id, exc)
     if sent_any and not errors:
         notif.status = "sent"
-        notif.sent_at = datetime.utcnow()
+        notif.sent_at = datetime.now(UTC)
         notif.error_message = None
     elif sent_any:
         notif.status = "sent"
-        notif.sent_at = datetime.utcnow()
+        notif.sent_at = datetime.now(UTC)
         notif.error_message = "; ".join(errors)[:1000]
     else:
         notif.status = "failed"
         notif.error_message = "; ".join(errors)[:1000] if errors else "unknown"
     notif.attempts += 1
-    notif.last_attempt_at = datetime.utcnow()
+    notif.last_attempt_at = datetime.now(UTC)
     db.commit()
 
 
@@ -126,7 +126,7 @@ def retry_failed_notifications(db: Session, limit: int = 20) -> int:
                     logger.warning("Telegram retry to chat %s failed: %s", chat_id, exc)
             if ok_any:
                 row.status = "sent"
-                row.sent_at = datetime.utcnow()
+                row.sent_at = datetime.now(UTC)
                 row.error_message = "; ".join(errs)[:1000] if errs else None
                 sent += 1
             else:
@@ -137,6 +137,6 @@ def retry_failed_notifications(db: Session, limit: int = 20) -> int:
             row.error_message = str(exc)[:1000]
         finally:
             row.attempts += 1
-            row.last_attempt_at = datetime.utcnow()
+            row.last_attempt_at = datetime.now(UTC)
     db.commit()
     return sent

@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { getApiErrorMessage } from '../api/client';
 import { useAuth } from './AuthContext';
 import toast from 'react-hot-toast';
 import './LoginPage.css';
@@ -26,10 +27,7 @@ const LoginPage = () => {
       toast.success('Вход выполнен успешно');
       navigate('/dashboard');
     } catch (error) {
-      const d = error?.response?.data?.detail;
-      const msg =
-        typeof d === 'string' ? d : Array.isArray(d) ? d.map((x) => x.msg).join(', ') : error?.message;
-      toast.error(msg || 'Ошибка при входе');
+      toast.error(getApiErrorMessage(error, 'Ошибка при входе'));
     } finally {
       setLoading(false);
     }

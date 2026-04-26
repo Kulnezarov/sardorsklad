@@ -5,16 +5,18 @@ import QRCodeLib from 'qrcode';
 import { FiPrinter, FiX, FiRefreshCw, FiTag, FiShare2, FiLoader } from 'react-icons/fi';
 
 /**
- * Единый размер этикетки: 6 см × 4 см.
- * На печати только код (штрих-код или QR) и для штрих-кода — строка цифр под полосами.
+ * Три физ. размера; по умолчанию «малый» — обычно только штрих-код.
+ * «Название + штрихкод» или «только штрихкод» (для малых этикеток).
  */
-const LABEL = {
-  label: '6 × 4 см',
-  w: '60mm',
-  h: '40mm',
-  previewW: 300,
-  previewH: 200,
+const SPECS = {
+  small: { wmm: 50, hmm: 30, label: '5×3 см', previewW: 250, previewH: 150 },
+  medium: { wmm: 60, hmm: 40, label: '6×4 см', previewW: 300, previewH: 200 },
+  large: { wmm: 80, hmm: 50, label: '8×5 см', previewW: 360, previewH: 220 },
 };
+
+function getSpec(k) {
+  return SPECS[k] || SPECS.small;
+}
 
 const escHtml = (s) =>
   String(s || '')
@@ -61,11 +63,14 @@ function generateBarcodeDataUrl(value) {
   });
 }
 
-const LabelPrint = ({ isOpen, onClose, product, settings, initialLabelType = 'barcode' }) => {
+const LabelPrint = ({ isOpen, onClose, product, settings: _settings, initialLabelType = 'barcode', labelSize: labelSizeProp = 'small' }) => {
   const [type, setType] = useState(initialLabelType);
   const [custom, setCustom] = useState('');
   const [printing, setPrinting] = useState(false);
   const [sharing, setSharing] = useState(false);
+  /** name_barcode | barcode_only */
+  const [contentLayout, setContentLayout] = useState('barcode_only');
+  const [sizeKey, setSizeKey] = useState(labelSizeProp);
 
   const barcodeCanvasRef = useRef(null);
   const [qrPreviewUrl, setQrPreviewUrl] = useState('');
@@ -73,13 +78,17 @@ const LabelPrint = ({ isOpen, onClose, product, settings, initialLabelType = 'ba
   const barcodeVal = custom.trim() || product?.barcode || product?.sku || String(product?.id || '');
   const qrVal = product?.barcode || product?.sku || String(product?.id || '');
 
+  const spec = getSpec(sizeKey);
+
   useEffect(() => {
     if (isOpen) {
       setType(initialLabelType);
       setCustom('');
       setQrPreviewUrl('');
+      setSizeKey(['small', 'medium', 'large'].includes(String(labelSizeProp)) ? labelSizeProp : 'small');
+      setContentLayout(String(labelSizeProp) === 'small' ? 'barcode_only' : 'name_barcode');
     }
-  }, [isOpen, initialLabelType]);
+  }, [isOpen, initialLabelType, labelSizeProp]);
 
   useEffect(() => {
     if (!isOpen || type !== 'barcode' || !barcodeCanvasRef.current || !barcodeVal) return;
@@ -107,9 +116,11 @@ const LabelPrint = ({ isOpen, onClose, product, settings, initialLabelType = 'ba
           background: '#ffffff',
           lineColor: '#000000',
         });
-      } catch (_) {}
+      } catch {
+        /* нечитаемый штрих для CODE128/auto */
+      }
     }
-  }, [isOpen, type, barcodeVal]);
+  }, [isOpen, type, barcodeVal, contentLayout]);
 
   useEffect(() => {
     if (!isOpen || type !== 'qrcode' || !qrVal) return;
@@ -126,6 +137,10 @@ const LabelPrint = ({ isOpen, onClose, product, settings, initialLabelType = 'ba
   const handlePrint = async () => {
     if (!product) return;
     setPrinting(true);
+
+    const wmm = spec.wmm;
+    const hmm = spec.hmm;
+    const maxIn = Math.max(10, wmm - 4);
 
     let codeImgUrl = '';
     if (type === 'barcode') {
@@ -144,6 +159,11 @@ const LabelPrint = ({ isOpen, onClose, product, settings, initialLabelType = 'ba
     }
 
     const isQr = type === 'qrcode';
+    const showName = contentLayout === 'name_barcode' && (product.name || '').trim();
+    const nameBlock = showName
+      ? `<div class="label-name">${escHtml(product.name)}</div>`
+      : '';
+
     const codeBlock = codeImgUrl
       ? `<div class="code-wrap">
            <img src="${codeImgUrl}" alt="" />
@@ -151,28 +171,20 @@ const LabelPrint = ({ isOpen, onClose, product, settings, initialLabelType = 'ba
          ${!isQr ? `<div class="code-digits">${escHtml(barcodeVal)}</div>` : ''}`
       : `<div class="code-fail">Не удалось сгенерировать код</div>`;
 
-    const labelHtml = Array.from({ length: 1 })
-      .map(
-        () =>
-          `<div class="label ${isQr ? 'label--qr' : 'label--barcode'}">
+    const labelHtml = `<div class="label ${isQr ? 'label--qr' : 'label--barcode'}">
+            ${nameBlock}
             ${codeBlock}
-          </div>`
-      )
-      .join('');
+          </div>`;
 
     const html = `<!DOCTYPE html>
 <html lang="ru">
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <title>Этикетка SkladPro 60×40</title>
+  <title>Этикетка SkladPro</title>
   <style>
-    /*
-      Печать: одна страница = одна этикетка 60×40 mm (ширина × высота по CSS @page).
-      margin: 0 на @page — меньше конфликтов с CUPS; микро-отступ только внутри .label.
-    */
     @page {
-      size: 60mm 40mm;
+      size: ${wmm}mm ${hmm}mm;
       margin: 0;
     }
     *, *::before, *::after {
@@ -181,12 +193,12 @@ const LabelPrint = ({ isOpen, onClose, product, settings, initialLabelType = 'ba
       padding: 0;
     }
     html {
-      width: 60mm;
+      width: ${wmm}mm;
       margin: 0;
       padding: 0;
     }
     body {
-      width: 60mm;
+      width: ${wmm}mm;
       margin: 0;
       padding: 0;
       font-family: 'Helvetica Neue', Arial, sans-serif;
@@ -195,12 +207,11 @@ const LabelPrint = ({ isOpen, onClose, product, settings, initialLabelType = 'ba
       -webkit-print-color-adjust: exact;
       print-color-adjust: exact;
     }
-    /* Каждая этикетка — ровно один лист фиксированного размера (не % от «виртуальной» страницы) */
     .label {
-      width: 60mm;
-      height: 40mm;
-      max-width: 60mm;
-      max-height: 40mm;
+      width: ${wmm}mm;
+      height: ${hmm}mm;
+      max-width: ${wmm}mm;
+      max-height: ${hmm}mm;
       overflow: hidden;
       display: flex;
       flex-direction: column;
@@ -211,11 +222,25 @@ const LabelPrint = ({ isOpen, onClose, product, settings, initialLabelType = 'ba
       page-break-inside: avoid;
       break-after: page;
       break-inside: avoid;
-      padding: 1mm 1.5mm;
+      padding: 1mm 1.2mm;
     }
     .label:last-child {
       page-break-after: auto;
       break-after: auto;
+    }
+    .label-name {
+      flex-shrink: 0;
+      width: 100%;
+      max-height: 9mm;
+      font-size: ${wmm >= 60 ? 8 : 6.5}pt;
+      font-weight: 700;
+      line-height: 1.15;
+      padding: 0 1mm 0.6mm;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
     }
     .code-wrap {
       display: flex;
@@ -228,8 +253,8 @@ const LabelPrint = ({ isOpen, onClose, product, settings, initialLabelType = 'ba
     .code-wrap img {
       display: block;
       margin: 0 auto;
-      max-width: 56mm;
-      max-height: 24mm;
+      max-width: ${maxIn}mm;
+      max-height: ${showName ? (isQr ? '22mm' : '18mm') : isQr ? '26mm' : '22mm'};
       width: auto;
       height: auto;
       object-fit: contain;
@@ -237,36 +262,36 @@ const LabelPrint = ({ isOpen, onClose, product, settings, initialLabelType = 'ba
       transform: none;
     }
     .label--qr .code-wrap img {
-      max-width: 30mm;
-      max-height: 30mm;
+      max-width: ${Math.min(40, wmm - 6)}mm;
+      max-height: ${Math.min(32, hmm - 8)}mm;
     }
     .code-digits {
       flex-shrink: 0;
-      margin-top: 0.8mm;
+      margin-top: 0.5mm;
       padding: 0 1mm;
       font-family: ui-monospace, 'Courier New', monospace;
-      font-size: 7pt;
+      font-size: 6.5pt;
       font-weight: 700;
-      letter-spacing: 0.1em;
+      letter-spacing: 0.05em;
       color: #000;
       line-height: 1.1;
-      max-width: 56mm;
+      max-width: ${maxIn}mm;
       word-break: break-all;
     }
     .code-fail { font-size: 8pt; color: #c00; padding: 2mm; }
 
     @media print {
       html, body {
-        width: 60mm !important;
+        width: ${wmm}mm !important;
         margin: 0 !important;
         padding: 0 !important;
         height: auto !important;
       }
       .label {
-        width: 60mm !important;
-        height: 40mm !important;
-        max-width: 60mm !important;
-        max-height: 40mm !important;
+        width: ${wmm}mm !important;
+        height: ${hmm}mm !important;
+        max-width: ${wmm}mm !important;
+        max-height: ${hmm}mm !important;
       }
     }
   </style>
@@ -289,7 +314,9 @@ const LabelPrint = ({ isOpen, onClose, product, settings, initialLabelType = 'ba
       try {
         win.focus();
         win.print();
-      } catch (_) {}
+      } catch {
+        /* focus/print заблокированы */
+      }
       setPrinting(false);
     }, 500);
   };
@@ -440,9 +467,95 @@ const LabelPrint = ({ isOpen, onClose, product, settings, initialLabelType = 'ba
 
         {product && (
           <div style={{ padding: '20px 22px' }}>
-            <div style={{ marginBottom: 14, fontSize: 12, color: 'var(--text-muted)', textAlign: 'center' }}>
-              Размер этикетки: <strong style={{ color: 'var(--text)' }}>{LABEL.label}</strong> — только код по центру
+            <div style={{ marginBottom: 12, fontSize: 12, color: 'var(--text-muted)', textAlign: 'center' }}>
+              Размер: <strong style={{ color: 'var(--text)' }}>{spec.label}</strong> — по умолчанию в настройках «малый», часто печать только штрихкода
             </div>
+
+            <div style={{ marginBottom: 16 }}>
+              <div
+                style={{
+                  fontSize: 11,
+                  fontWeight: 700,
+                  color: 'var(--text-muted)',
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.07em',
+                  marginBottom: 10,
+                }}
+              >
+                Размер этикетки
+              </div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                {[
+                  { v: 'small', t: 'Малый' },
+                  { v: 'medium', t: 'Средний' },
+                  { v: 'large', t: 'Большой' },
+                ].map((x) => (
+                  <button
+                    key={x.v}
+                    type="button"
+                    onClick={() => {
+                      setSizeKey(x.v);
+                      if (x.v === 'small') setContentLayout('barcode_only');
+                    }}
+                    style={{
+                      flex: 1,
+                      padding: '9px 8px',
+                      borderRadius: 12,
+                      border: `2px solid ${sizeKey === x.v ? 'var(--primary)' : 'var(--border)'}`,
+                      background: sizeKey === x.v ? 'var(--primary-light)' : 'var(--surface)',
+                      color: sizeKey === x.v ? 'var(--primary)' : 'var(--text-secondary)',
+                      fontWeight: 700,
+                      fontSize: 12,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    {x.t}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {(type === 'barcode' || type === 'qrcode') && (
+              <div style={{ marginBottom: 16 }}>
+                <div
+                  style={{
+                    fontSize: 11,
+                    fontWeight: 700,
+                    color: 'var(--text-muted)',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.07em',
+                    marginBottom: 10,
+                  }}
+                >
+                  {type === 'qrcode' ? 'Содержимое (QR)' : 'Содержимое (штрих-код)'}
+                </div>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  {[
+                    { v: 'name_barcode', t: type === 'qrcode' ? 'Название + QR' : 'Название + штрих' },
+                    { v: 'barcode_only', t: type === 'qrcode' ? 'Только QR' : 'Только штрих' },
+                  ].map((x) => (
+                    <button
+                      key={x.v}
+                      type="button"
+                      onClick={() => setContentLayout(x.v)}
+                      style={{
+                        flex: 1,
+                        padding: '9px 8px',
+                        borderRadius: 12,
+                        border: `2px solid ${contentLayout === x.v ? 'var(--primary)' : 'var(--border)'}`,
+                        background: contentLayout === x.v ? 'var(--primary-light)' : 'var(--surface)',
+                        color: contentLayout === x.v ? 'var(--primary)' : 'var(--text-secondary)',
+                        fontWeight: 700,
+                        fontSize: 12,
+                        cursor: 'pointer',
+                      }}
+                    >
+                      {x.t}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
 
             <div style={{ marginBottom: 18 }}>
               <div
@@ -496,7 +609,7 @@ const LabelPrint = ({ isOpen, onClose, product, settings, initialLabelType = 'ba
                   marginBottom: 10,
                 }}
               >
-                Предпросмотр ({LABEL.label})
+                Предпросмотр ({spec.label})
               </div>
               <div
                 style={{
@@ -511,9 +624,9 @@ const LabelPrint = ({ isOpen, onClose, product, settings, initialLabelType = 'ba
               >
                 <div
                   style={{
-                    width: LABEL.previewW,
-                    height: LABEL.previewH,
-                    aspectRatio: '3 / 2',
+                    width: spec.previewW,
+                    height: spec.previewH,
+                    aspectRatio: `${spec.wmm} / ${spec.hmm}`,
                     background: '#fff',
                     border: '1px solid #ddd',
                     borderRadius: 8,
@@ -521,12 +634,31 @@ const LabelPrint = ({ isOpen, onClose, product, settings, initialLabelType = 'ba
                     flexDirection: 'column',
                     alignItems: 'center',
                     justifyContent: 'center',
-                    padding: '12px 10px',
+                    padding: '10px 8px',
                     boxSizing: 'border-box',
                   }}
                 >
                   {type === 'barcode' ? (
                     <>
+                      {contentLayout === 'name_barcode' && product?.name && (
+                        <div
+                          style={{
+                            fontSize: 12,
+                            fontWeight: 800,
+                            textAlign: 'center',
+                            lineHeight: 1.2,
+                            marginBottom: 6,
+                            color: '#111',
+                            maxHeight: 38,
+                            overflow: 'hidden',
+                            display: '-webkit-box',
+                            WebkitLineClamp: 2,
+                            WebkitBoxOrient: 'vertical',
+                          }}
+                        >
+                          {product.name}
+                        </div>
+                      )}
                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 1, minHeight: 0, width: '100%' }}>
                         <canvas ref={barcodeCanvasRef} style={{ maxWidth: '100%', height: 'auto', display: 'block' }} />
                       </div>
@@ -547,13 +679,34 @@ const LabelPrint = ({ isOpen, onClose, product, settings, initialLabelType = 'ba
                       </div>
                     </>
                   ) : qrPreviewUrl ? (
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 1, width: '100%' }}>
-                      <img
-                        src={qrPreviewUrl}
-                        alt=""
-                        style={{ width: Math.min(140, LABEL.previewW - 40), height: Math.min(140, LABEL.previewW - 40), display: 'block' }}
-                      />
-                    </div>
+                    <>
+                      {contentLayout === 'name_barcode' && product?.name && (
+                        <div
+                          style={{
+                            fontSize: 12,
+                            fontWeight: 800,
+                            textAlign: 'center',
+                            lineHeight: 1.2,
+                            marginBottom: 6,
+                            color: '#111',
+                            maxHeight: 38,
+                            overflow: 'hidden',
+                            display: '-webkit-box',
+                            WebkitLineClamp: 2,
+                            WebkitBoxOrient: 'vertical',
+                          }}
+                        >
+                          {product.name}
+                        </div>
+                      )}
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 1, width: '100%', minHeight: 0 }}>
+                        <img
+                          src={qrPreviewUrl}
+                          alt=""
+                          style={{ width: Math.min(140, spec.previewW - 40), height: Math.min(140, spec.previewW - 40), display: 'block' }}
+                        />
+                      </div>
+                    </>
                   ) : (
                     <div style={{ fontSize: 11, color: '#999' }}>Генерация…</div>
                   )}

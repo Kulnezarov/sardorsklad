@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 from sqlalchemy import desc, and_
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import List, Optional
 from decimal import Decimal
 import time
@@ -113,7 +113,7 @@ def create_reserve(
     total_kzt = total_cny * Decimal(str(cny_rate))
 
     # Generate order code
-    order_code = f"ORD-{int(datetime.utcnow().timestamp())}"
+    order_code = f"ORD-{int(datetime.now(UTC).timestamp())}"
 
     # Create reserve
     db_reserve = models.Reserve(
@@ -260,7 +260,7 @@ def complete_reserve(reserve_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Reserve not found")
 
     db_reserve.status = models.ReserveStatus.COMPLETED
-    db_reserve.completed_at = datetime.utcnow()
+    db_reserve.completed_at = datetime.now(UTC)
     db.commit()
 
     return {"message": "Reserve completed"}
@@ -339,4 +339,4 @@ def delete_reserve(reserve_id: int, db: Session = Depends(get_db)):
 def get_exchange_rate(db: Session = Depends(get_db)):
     """Get current CNY to KZT exchange rate."""
     rate = get_cny_rate(db)
-    return {"cny_rate": rate, "timestamp": datetime.utcnow().isoformat()}
+    return {"cny_rate": rate, "timestamp": datetime.now(UTC).isoformat()}

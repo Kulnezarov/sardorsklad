@@ -3,15 +3,13 @@ import { createPortal } from 'react-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 import {
-  FiX, FiSearch, FiCheck, FiAlertTriangle, FiClock,
+  FiX, FiSearch, FiCheck, FiAlertTriangle,
   FiChevronDown, FiChevronRight, FiDownload, FiPlay,
   FiRefreshCw, FiClipboard,
 } from 'react-icons/fi';
 import { revisionApi, fetchAllProducts } from '../api/client';
 
 /* ── helpers ── */
-const money = (v) => Number(v || 0).toLocaleString('ru-RU');
-
 function downloadCSV(filename, headers, rows) {
   const csv = [
     headers.join(','),
@@ -390,7 +388,6 @@ const Revision = () => {
                 <tbody>
                   {displayItems.map((item) => {
                     const diff = item.actual !== null ? item.actual - item.expected : null;
-                    const hasDiff = diff !== null && diff !== 0;
                     let rowBg = 'transparent';
                     if (diff !== null && diff < 0) rowBg = 'rgba(239,68,68,0.05)';
                     if (diff !== null && diff > 0) rowBg = 'rgba(34,197,94,0.05)';
@@ -727,8 +724,6 @@ const Revision = () => {
             {(() => {
               const items = detailSession.items || [];
               const disc = items.filter((i) => i.quantity_actual != null && i.quantity_actual !== i.quantity_expected);
-              const totalExp = items.reduce((s, i) => s + (i.quantity_expected || 0), 0);
-              const totalAct = items.reduce((s, i) => s + (i.quantity_actual ?? i.quantity_expected), 0);
               return (
                 <>
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 20 }}>

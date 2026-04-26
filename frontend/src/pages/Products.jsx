@@ -8,7 +8,7 @@ import {
   FiTag, FiUpload, FiDownload, FiX, FiLoader, FiClock, FiPackage,
 } from 'react-icons/fi';
 import { Button, Modal, Input, TextArea, LoadingSpinner, Alert } from '../components/ui';
-import { productApi, resolveUploadedAssetUrl, compatibilityApi } from '../api/client';
+import { productApi, resolveUploadedAssetUrl, compatibilityApi, getApiErrorMessage } from '../api/client';
 import { importExcelStream } from '../api/importExcelStream';
 import { settingsApi } from '../api/settings';
 import { generateEAN13 } from '../utils/barcodeGen';
@@ -26,7 +26,7 @@ function formatImportError(err) {
   if (Array.isArray(d)) return d.map((e) => (typeof e === 'object' ? e.msg || JSON.stringify(e) : String(e))).join('; ');
   if (err.message === 'Network Error') return 'Нет связи с сервером.';
   if (status === 413) return 'Файл слишком большой.';
-  return err.message || (status ? `Ошибка сервера (${status})` : 'Неизвестная ошибка импорта');
+  return getApiErrorMessage(err, status ? `Ошибка сервера (${status})` : 'Неизвестная ошибка импорта');
 }
 function shouldFallbackImport(err) {
   const status = err?.response?.status;
@@ -35,7 +35,10 @@ function shouldFallbackImport(err) {
 
 /** Как в POS: убираем хвосты после сканера */
 function normalizeScanCode(s) {
-  return String(s ?? '').replace(/[\s\r\n\t\u0000]+/g, '').trim();
+  return String(s ?? '')
+    .replaceAll('\u0000', '')
+    .replace(/[\s\r\n\t]+/g, '')
+    .trim();
 }
 
 function productMatchesScan(p, code) {
@@ -51,11 +54,11 @@ function productMatchesScan(p, code) {
  * Длина до 50 (как в БД). Автогенерация через generateEAN13 — только цифры.
  */
 function sanitizeBarcodeFieldInput(raw) {
-  const s = String(raw ?? '').replace(/[\s\r\n\t\u0000]+/g, '');
+  const s = String(raw ?? '').replaceAll('\u0000', '').replace(/[\s\r\n\t]+/g, '');
   let out = '';
   for (let i = 0; i < s.length && out.length < 50; i += 1) {
     const c = s[i];
-    if (/[0-9A-Za-z\-]/.test(c)) out += c;
+    if (/[0-9A-Za-z-]/.test(c)) out += c;
   }
   return out;
 }
@@ -213,6 +216,8 @@ const Products = () => {
   const importFileRef = useRef(null);
   const barcodeCanvasRef = useRef(null);
   const formRef = useRef(formData);
+  /** Пользователь вручную правит поле «Совместимость» — не перезаписывать при выборе кода */
+  const compatibilityTextTouchedRef = useRef(false);
   const productsRef = useRef([]);
   const scanBufRef = useRef('');
   const scanLastRef = useRef(0);
@@ -260,6 +265,42 @@ const Products = () => {
     staleTime: 60000,
   });
 
+  const handleToggleEngineCode = useCallback((id) => {
+    let was = false;
+    let shouldFill = false;
+    setFormData((fd) => {
+      const s = new Set(fd.compatibility_engine_family_ids || []);
+      was = s.has(id);
+      if (was) s.delete(id);
+      else s.add(id);
+      shouldFill = !was && !compatibilityTextTouchedRef.current;
+      return { ...fd, compatibility_engine_family_ids: [...s] };
+    });
+    if (!shouldFill) return;
+    (async () => {
+      try {
+        const { data: fam } = await compatibilityApi.getEngineFamily(id);
+        const vms = fam?.vehicle_models || [];
+        if (vms.length) {
+          const m = vms[0];
+          const line = [m.brand?.name, m.name].filter(Boolean).join(' ').trim();
+          if (line) setFormData((x) => ({ ...x, model: line }));
+        }
+      } catch (err) {
+        if (import.meta.env.DEV) console.warn('getEngineFamily', err);
+      }
+    })();
+  }, []);
+
+  const handleToggleVehicleModel = useCallback((id) => {
+    setFormData((fd) => {
+      const s = new Set(fd.compatibility_vehicle_model_ids || []);
+      if (s.has(id)) s.delete(id);
+      else s.add(id);
+      return { ...fd, compatibility_vehicle_model_ids: [...s] };
+    });
+  }, []);
+
   // openVoiceAdd: открыть форму нового товара (как «Добавить»)
   // openAdd + barcode: со страницы продаж
   useEffect(() => {
@@ -290,7 +331,9 @@ const Products = () => {
     if (!v) return;
     try {
       JsBarcode(barcodeCanvasRef.current, v, { format: 'CODE128', displayValue: true, width: 2, height: 56, margin: 6 });
-    } catch (_) {}
+    } catch {
+      /* формат/набор символов не подходит для CODE128 */
+    }
   }, [showForm, formData.barcode]);
 
   const {
@@ -317,7 +360,11 @@ const Products = () => {
         if (Array.isArray(data?.items)) return data.items;
         return [];
       }
-      catch (err) { console.error('Error fetching products:', err); toast.error('✕ Не удалось загрузить товары'); return []; }
+      catch (err) {
+        console.error('Error fetching products:', err);
+        toast.error(`✕ ${getApiErrorMessage(err, 'Не удалось загрузить товары')}`);
+        return [];
+      }
     },
     getNextPageParam: (lastPage, allPages) => {
       if (!lastPage || lastPage.length < PRODUCTS_PAGE_SIZE) return undefined;
@@ -550,6 +597,7 @@ const Products = () => {
 
   /* form helpers */
   const resetForm = () => {
+    compatibilityTextTouchedRef.current = false;
     setImageBlobUrl((prev) => {
       if (prev) URL.revokeObjectURL(prev);
       return '';
@@ -577,7 +625,7 @@ const Products = () => {
      - В поле поиска по-прежнему можно искать по-русски; латиница/цифры уходят в буфер скана. */
   const SCAN_MAX_GAP_MS = 220;
   const MIN_SCAN_LEN = 3;
-  const SCAN_CHAR = /^[0-9A-Za-z\-]$/;
+  const SCAN_CHAR = /^[0-9A-Za-z-]$/;
 
   useEffect(() => {
     const handleKey = (e) => {
@@ -630,7 +678,7 @@ const Products = () => {
       if (gap > SCAN_MAX_GAP_MS) scanBufRef.current = '';
 
       /* В главном поиске: медленные буквы — обычный ввод (марка латиницей); цифры и быстрый поток — сканер */
-      if (isMainSearch && gap > SCAN_MAX_GAP_MS && !/^[0-9\-]$/.test(e.key)) {
+      if (isMainSearch && gap > SCAN_MAX_GAP_MS && !/^[0-9-]$/.test(e.key)) {
         scanLastRef.current = now;
         scanBufRef.current = '';
         return;
@@ -644,7 +692,7 @@ const Products = () => {
         if (!isMainSearch) {
           e.preventDefault();
           e.stopPropagation();
-        } else if (/^[0-9\-]$/.test(e.key) || rapidBurst) {
+        } else if (/^[0-9-]$/.test(e.key) || rapidBurst) {
           e.preventDefault();
           e.stopPropagation();
         }
@@ -656,6 +704,7 @@ const Products = () => {
   }, []);
 
   const handleEdit = async (product) => {
+    compatibilityTextTouchedRef.current = false;
     let p = { ...product };
     if (product?.id) {
       try {
@@ -700,6 +749,7 @@ const Products = () => {
   };
 
   const openNew = () => {
+    compatibilityTextTouchedRef.current = false;
     setImageBlobUrl((prev) => {
       if (prev) URL.revokeObjectURL(prev);
       return '';
@@ -770,7 +820,7 @@ const Products = () => {
       const sz = b != null ? `, ${(b / 1024).toFixed(1)} КБ` : '';
       toast.success(`Фото сохранено${dim}${sz}`);
     } catch (err) {
-      toast.error(err.response?.data?.detail || 'Не удалось загрузить фото');
+      toast.error(getApiErrorMessage(err, 'Не удалось загрузить фото'));
     } finally {
       setImageUploading(false);
       setImageUploadPct(null);
@@ -794,7 +844,7 @@ const Products = () => {
       await queryClient.invalidateQueries({ queryKey: ['products'] });
       toast.success('Фото удалено');
     } catch (err) {
-      toast.error(err.response?.data?.detail || 'Не удалось удалить фото');
+      toast.error(getApiErrorMessage(err, 'Не удалось удалить фото'));
     }
   };
 
@@ -815,11 +865,13 @@ const Products = () => {
       const blob = new Blob([r.data], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
       let name = `skladpro_${new Date().toISOString().slice(0, 16).replace(/[T:]/g, '-')}.xlsx`;
       const cd = r.headers['content-disposition'];
-      if (cd) { const utf = cd.match(/filename\*=UTF-8''([^;\s]+)/i); if (utf) { try { name = decodeURIComponent(utf[1]); } catch (_) {} } else { const m = cd.match(/filename="([^"]+)"/i); if (m) name = m[1]; } }
+      if (cd) { const utf = cd.match(/filename\*=UTF-8''([^;\s]+)/i); if (utf) { try { name = decodeURIComponent(utf[1]); } catch { /* невалидный percent-encoding */ } } else { const m = cd.match(/filename="([^"]+)"/i); if (m) name = m[1]; } }
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a'); a.href = url; a.download = name; a.click(); URL.revokeObjectURL(url);
       toast.success('Файл Excel скачан');
-    } catch { toast.error('Не удалось выгрузить каталог'); }
+    } catch (err) {
+      toast.error(getApiErrorMessage(err, 'Не удалось выгрузить каталог'));
+    }
   };
 
   /* computed */
@@ -1389,58 +1441,78 @@ const Products = () => {
 
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
             <Input label="Название *" placeholder="Например: Мотор" value={formData.name} onChange={(e) => setFormData({ ...formData, name: e.target.value })} style={formData.id ? { border: '1px solid var(--primary)' } : {}} />
-            <Input label="Марка" placeholder="Bosch, Changan…" value={formData.brand || ''} onChange={(e) => setFormData({ ...formData, brand: e.target.value })} style={formData.id ? { border: '1px solid var(--primary)' } : {}} />
+            <Input
+              label="Марка (запчасть, OEM…)"
+              placeholder="Bosch, NGK…"
+              value={formData.brand || ''}
+              onChange={(e) => setFormData({ ...formData, brand: e.target.value })}
+              style={formData.id ? { border: '1px solid var(--primary)' } : {}}
+            />
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-            <Input label="Модель (текст / кэш)" placeholder="Заполняется из кода/марок ниже" value={formData.model || ''} onChange={(e) => setFormData({ ...formData, model: e.target.value })} style={formData.id ? { border: '1px solid var(--primary)' } : {}} />
-            <div style={{ gridColumn: '1 / -1', display: 'grid', gap: 8 }}>
-              <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-muted)' }}>Совместимость (справочник)</div>
-              <div className="ios-input" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-                <div>
-                  <div style={{ fontSize: 11, marginBottom: 4 }}>Коды (474, 465Q…). Ctrl+клик — несколько</div>
-                  <select
-                    multiple
-                    className="ios-input"
-                    style={{ width: '100%', minHeight: 88, fontSize: 13, padding: 8 }}
-                    value={(formData.compatibility_engine_family_ids || []).map(String)}
-                    onChange={(e) => {
-                      const sel = Array.from(e.target.selectedOptions, (o) => parseInt(o.value, 10));
-                      setFormData({ ...formData, compatibility_engine_family_ids: sel });
-                    }}
-                  >
-                    {compatEngineFamilies.map((ef) => (
-                      <option key={ef.id} value={ef.id}>
-                        {ef.code}
-                        {ef.name ? ` — ${ef.name}` : ''}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <div style={{ fontSize: 11, marginBottom: 4 }}>Марки/модели авто. Ctrl+клик</div>
-                  <select
-                    multiple
-                    className="ios-input"
-                    style={{ width: '100%', minHeight: 88, fontSize: 13, padding: 8 }}
-                    value={(formData.compatibility_vehicle_model_ids || []).map(String)}
-                    onChange={(e) => {
-                      const sel = Array.from(e.target.selectedOptions, (o) => parseInt(o.value, 10));
-                      setFormData({ ...formData, compatibility_vehicle_model_ids: sel });
-                    }}
-                  >
-                    {compatVehicleModels.map((vm) => (
-                      <option key={vm.id} value={vm.id}>
-                        {(vm.brand && vm.brand.name) || '—'} — {vm.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
+          <div style={{ display: 'grid', gap: 8 }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-muted)' }}>
+              Коды совместимости — не обязательно (как категория: нажмите чип)
             </div>
-            <div style={{ fontSize: 12, color: 'var(--text-muted)', alignSelf: 'end', paddingBottom: 10, lineHeight: 1.45 }}>
-              Марка — производитель/бренд, модель — автомобиль или серия. Это поле уйдёт на витрину для фильтрации.
+            <div className="catalog-chips-scroll" style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+              {compatEngineFamilies.length === 0 && (
+                <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Справочник пуст: Настройки → Совместимость</span>
+              )}
+              {compatEngineFamilies.map((ef) => {
+                const on = (formData.compatibility_engine_family_ids || []).includes(ef.id);
+                return (
+                  <button
+                    key={ef.id}
+                    type="button"
+                    className={`catalog-chip ${on ? 'catalog-chip-active' : ''}`}
+                    onClick={() => handleToggleEngineCode(ef.id)}
+                    style={{ padding: '7px 14px', fontSize: 13 }}
+                  >
+                    {ef.code}
+                    {ef.name ? ` — ${ef.name}` : ''}
+                  </button>
+                );
+              })}
             </div>
+            <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+              При выборе кода внизу подставляется первая марка/модель из справочника к коду; можно отредактировать вручную.
+            </div>
+            <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-muted)' }}>
+              Какие авто подходят (доп.) — чипы, не обязательно
+            </div>
+            <div
+              className="catalog-chips-scroll"
+              style={{ display: 'flex', flexWrap: 'wrap', gap: 8, maxHeight: 140, overflowY: 'auto' }}
+            >
+              {compatVehicleModels.length === 0 && (
+                <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>—</span>
+              )}
+              {compatVehicleModels.map((vm) => {
+                const on = (formData.compatibility_vehicle_model_ids || []).includes(vm.id);
+                const b = (vm.brand && vm.brand.name) || '—';
+                return (
+                  <button
+                    key={vm.id}
+                    type="button"
+                    className={`catalog-chip ${on ? 'catalog-chip-active' : ''}`}
+                    onClick={() => handleToggleVehicleModel(vm.id)}
+                    style={{ padding: '6px 12px', fontSize: 12 }}
+                  >
+                    {b} · {vm.name}
+                  </button>
+                );
+              })}
+            </div>
+            <Input
+              label="Совместимость (авто, витрина)"
+              placeholder="Кратко для каталога; при выборе кода — подставится первая пара марка+модель"
+              value={formData.model || ''}
+              onChange={(e) => {
+                compatibilityTextTouchedRef.current = true;
+                setFormData({ ...formData, model: e.target.value });
+              }}
+              style={formData.id ? { border: '1px solid var(--primary)' } : {}}
+            />
           </div>
 
           <div>
@@ -1584,7 +1656,14 @@ const Products = () => {
       </Modal>
 
       {/* ── Label Print ── */}
-      <LabelPrint isOpen={showPrint} onClose={() => { setShowPrint(false); setPrintProduct(null); }} product={printProduct} settings={settingsRow} initialLabelType={printType} />
+      <LabelPrint
+        isOpen={showPrint}
+        onClose={() => { setShowPrint(false); setPrintProduct(null); }}
+        product={printProduct}
+        settings={settingsRow}
+        initialLabelType={printType}
+        labelSize={settingsRow?.label_size || 'small'}
+      />
     </div>
   );
 };

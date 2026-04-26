@@ -1,8 +1,8 @@
 import React, { createContext, useContext } from 'react';
 import { createPortal } from 'react-dom';
-import { 
+import {
   FiLoader, FiX, FiCheck, FiAlertCircle, FiInfo,
-  FiPlus, FiTrash2, FiEdit2, FiChevronDown, FiSearch
+  FiChevronDown,
 } from 'react-icons/fi';
 
 const TabsContext = createContext(null);

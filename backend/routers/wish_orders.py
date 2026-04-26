@@ -5,7 +5,7 @@ Wish Orders router — handles the "Нужно заказать" (WishItem) and
 from fastapi import APIRouter, Depends, HTTPException, Query, status as http_status
 from sqlalchemy.orm import Session
 from sqlalchemy import desc
-from datetime import datetime
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import List, Optional
 import time
@@ -170,7 +170,7 @@ def accept_to_stock(
     order.quantity_received += qty
     if not payload.keep_remainder or order.quantity_received >= order.quantity_ordered:
         order.status = 'completed'
-        order.completed_at = datetime.utcnow()
+        order.completed_at = datetime.now(UTC)
     else:
         order.status = 'partial'
 

@@ -17,6 +17,9 @@ class FakeQuery:
     def outerjoin(self, *args, **kwargs):
         return self
 
+    def join(self, *args, **kwargs):
+        return self
+
     def filter(self, *args, **kwargs):
         return self
 
@@ -59,6 +62,7 @@ class FakeDB:
                 sale_price=Decimal("1000"),
                 quantity=5,
                 category_id=2,
+                brand_id=None,
                 image_url="https://img/1.jpg",
                 is_active=True,
                 category_rel=None,
@@ -68,7 +72,10 @@ class FakeDB:
         self._reserves = []
         self._added = []
 
-    def query(self, model):
+    def query(self, *entities):
+        if len(entities) > 1:
+            return FakeQuery([])
+        model = entities[0] if entities else None
         if model is models.Product:
             return FakeQuery(self.products)
         if model is models.Reserve:
@@ -125,6 +132,7 @@ def test_public_products_returns_safe_fields():
             "model",
             "article",
             "oem",
+            "compatibility",
         ]
     )
 

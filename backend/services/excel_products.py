@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import random
 import re
+from datetime import UTC, datetime
 from decimal import Decimal
 from io import BytesIO
 from typing import Any, Callable, Dict, List, Optional, Tuple
@@ -299,8 +300,6 @@ def import_products_from_xlsx(
 
 
 def export_products_xlsx(products: List[models.Product]) -> Tuple[BytesIO, str]:
-    from datetime import datetime
-
     wb = Workbook()
     ws = wb.active
     ws.title = "Товары"
@@ -329,5 +328,5 @@ def export_products_xlsx(products: List[models.Product]) -> Tuple[BytesIO, str]:
     buf = BytesIO()
     wb.save(buf)
     buf.seek(0)
-    fname = f"skladpro_tovary_{datetime.utcnow().strftime('%Y-%m-%d_%H%M')}.xlsx"
+    fname = f"skladpro_tovary_{datetime.now(UTC).strftime('%Y-%m-%d_%H%M')}.xlsx"
     return buf, fname

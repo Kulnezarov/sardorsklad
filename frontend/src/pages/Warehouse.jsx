@@ -50,7 +50,7 @@ const fuzzyMatch = (needle, haystack) => {
 
 const Warehouse = () => {
   const [search, setSearch] = useState('');
-  const [selectedProduct, setSelectedProduct] = useState(null);
+  const [, setSelectedProduct] = useState(null);
   const [showEditor, setShowEditor] = useState(false);
   const [showPrint, setShowPrint] = useState(false);
   const [barcodeLocked, setBarcodeLocked] = useState(true);
@@ -557,6 +557,7 @@ const Warehouse = () => {
         product={formData.id ? formData : null}
         settings={settings}
         initialLabelType={printType}
+        labelSize={settings?.label_size || 'small'}
       />
     </div>
   );

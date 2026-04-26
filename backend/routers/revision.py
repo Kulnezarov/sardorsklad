@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 from sqlalchemy import desc, and_
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import List, Optional
 
 import models
@@ -65,7 +65,7 @@ def start_revision(
         raise HTTPException(status_code=400, detail="Уже есть активная ревизия")
 
     # Generate session code
-    session_code = f"REV-{int(datetime.utcnow().timestamp())}"
+    session_code = f"REV-{int(datetime.now(UTC).timestamp())}"
 
     # Create session
     db_session = models.RevisionSession(
@@ -232,7 +232,7 @@ def complete_revision(
 
     # Complete session
     session.status = "completed"
-    session.completed_at = datetime.utcnow()
+    session.completed_at = datetime.now(UTC)
 
     db.commit()
 

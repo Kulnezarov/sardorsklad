@@ -282,12 +282,16 @@ export function startListening({ onResult, onInterim, onError, continuous = fals
     stop: () => {
       try {
         rec.stop();
-      } catch (_) {}
+      } catch {
+        /* уже остановлен */
+      }
     },
     abort: () => {
       try {
         rec.abort();
-      } catch (_) {}
+      } catch {
+        /* нет сессии */
+      }
     },
   };
 }

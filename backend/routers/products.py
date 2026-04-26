@@ -6,7 +6,7 @@ import re
 import threading
 import uuid
 from io import BytesIO
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import List, Optional
@@ -293,7 +293,7 @@ def get_product_stats(db: Session = Depends(get_db)):
         models.Product.quantity <= low_threshold,
     ).scalar() or 0
 
-    cutoff_date = datetime.utcnow() - timedelta(days=30)
+    cutoff_date = datetime.now(UTC) - timedelta(days=30)
     stale = db.query(func.count(models.Product.id)).filter(
         models.Product.is_active == True,
         models.Product.quantity > 0,
@@ -396,7 +396,7 @@ def create_product(
     payload.pop("profit_percent", None)
     v_ids = payload.pop("compatibility_vehicle_model_ids", None)
     e_ids = payload.pop("compatibility_engine_family_ids", None)
-    payload["received_at"] = datetime.utcnow()
+        payload["received_at"] = datetime.now(UTC)
 
     db_product = models.Product(**payload)
     db.add(db_product)

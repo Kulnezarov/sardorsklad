@@ -1,4 +1,4 @@
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import List, Optional
 
@@ -37,7 +37,7 @@ def get_sale(sale_id: int, db: Session = Depends(get_db)):
 
 @router.post("/", response_model=schemas.SaleResponse, status_code=status.HTTP_201_CREATED)
 def create_sale(sale: schemas.SaleCreate, db: Session = Depends(get_db)):
-    receipt_number = f"RCPT-{int(datetime.utcnow().timestamp())}"
+    receipt_number = f"RCPT-{int(datetime.now(UTC).timestamp())}"
     total_amount = Decimal("0")
     items_to_create = []
 
@@ -64,7 +64,7 @@ def create_sale(sale: schemas.SaleCreate, db: Session = Depends(get_db)):
 
     for product, item, subtotal in items_to_create:
         product.quantity -= item.quantity
-        product.last_sale_date = datetime.utcnow()
+        product.last_sale_date = datetime.now(UTC)
         db.add(
             models.SaleItem(
                 sale_id=db_sale.id,

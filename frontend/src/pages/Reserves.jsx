@@ -3,7 +3,7 @@ import { useStore } from '../store/appStore'
 import '../styles/pages.css'
 
 export default function Reserves() {
-  const { reserves, loading, error, fetchReserves } = useStore()
+  const { reserves, loading: _loading, error, fetchReserves } = useStore()
   const [showForm, setShowForm] = useState(false)
 
   useEffect(() => {

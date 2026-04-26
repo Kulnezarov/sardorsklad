@@ -3,7 +3,7 @@ import { useStore } from '../store/appStore'
 import '../styles/pages.css'
 
 export default function Revisions() {
-  const { revisions, loading, error, fetchRevisions } = useStore()
+  const { revisions, loading: _loading, error, fetchRevisions } = useStore()
   const [showForm, setShowForm] = useState(false)
 
   useEffect(() => {

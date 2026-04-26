@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import UTC, datetime
 from decimal import Decimal
 import os
 import re
@@ -604,7 +604,7 @@ def create_public_order(
             raise HTTPException(status_code=409, detail=f"not enough stock for product_id={p.id}")
         total += Decimal(str(p.sale_price or 0)) * item.quantity
 
-    order_code = f"WEB-{int(datetime.utcnow().timestamp())}"
+    order_code = f"WEB-{int(datetime.now(UTC).timestamp())}"
     notes = _compose_order_notes(payload)
     reserve = models.Reserve(
         order_code=order_code,
