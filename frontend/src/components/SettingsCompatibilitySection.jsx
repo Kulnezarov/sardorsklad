@@ -4,7 +4,7 @@ import toast from 'react-hot-toast';
 import { FiBox, FiChevronDown, FiChevronRight, FiPlus, FiTrash2, FiLayers } from 'react-icons/fi';
 import { compatibilityApi, getApiErrorMessage } from '../api/client';
 
-const emptyBlock = () => ({ k: `b-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, brandId: '', text: '' });
+const emptyBlock = () => ({ k: `b-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, brandName: '', text: '' });
 
 function parseModelNames(raw) {
   const out = [];
@@ -83,13 +83,24 @@ function SettingsCompatibilitySection() {
   });
 
   const addBatchToCode = useMutation({
-    mutationFn: async ({ efId, blocks }) => {
+    mutationFn: async ({ efId, blocks, brandsSnapshot }) => {
+      const list = brandsSnapshot || (await compatibilityApi.vehicleBrands().then((r) => r.data));
       const groups = [];
       for (const b of blocks) {
-        const bid = parseInt(b.brandId, 10);
-        if (!bid) continue;
+        const bname = (b.brandName || '').trim();
+        if (!bname) continue;
         const names = parseModelNames(b.text);
-        if (names.length) groups.push({ brandId: bid, names });
+        if (!names.length) continue;
+        let brandId = list.find((x) => (x.name || '').toLowerCase() === bname.toLowerCase())?.id;
+        if (!brandId) {
+          const { data: createdBrand } = await compatibilityApi.createVehicleBrand({
+            name: bname,
+            is_active: true,
+          });
+          brandId = createdBrand.id;
+          list.push(createdBrand);
+        }
+        groups.push({ brandId, names });
       }
       if (!groups.length) {
         throw new Error('empty');
@@ -118,7 +129,7 @@ function SettingsCompatibilitySection() {
     },
     onError: (e) => {
       if (e?.message === 'empty') {
-        toast.error('Выберите марку и укажите хотя бы одну модель');
+        toast.error('В каждом блоке укажите марку (название) и хотя бы одну модель');
         return;
       }
       toast.error(getApiErrorMessage(e, 'Ошибка'));
@@ -230,7 +241,7 @@ function SettingsCompatibilitySection() {
                             </button>
                           </div>
 
-                          <div className="compat-subhead">Код {f.code}: марки и модели</div>
+                          <div className="compat-subhead">Код {f.code}: марка и модели (блок = одна марка)</div>
 
                           {brandBlocks.map((b, idx) => (
                             <div key={b.k} className="compat-brand-card">
@@ -246,22 +257,16 @@ function SettingsCompatibilitySection() {
                                   </button>
                                 )}
                               </div>
-                              <select
+                              <input
                                 className="compat-select"
-                                value={b.brandId}
+                                value={b.brandName}
                                 onChange={(e) => {
-                                  const v = e.target.value;
-                                  setBrandBlocks((prev) => prev.map((x) => (x.k === b.k ? { ...x, brandId: v } : x)));
+                                  const t = e.target.value;
+                                  setBrandBlocks((prev) => prev.map((x) => (x.k === b.k ? { ...x, brandName: t } : x)));
                                 }}
-                                aria-label={`Марка ${idx + 1}`}
-                              >
-                                <option value="">— марка —</option>
-                                {vehBrands.map((vb) => (
-                                  <option key={vb.id} value={vb.id}>
-                                    {vb.name}
-                                  </option>
-                                ))}
-                              </select>
+                                placeholder="Название марки, напр. Changan"
+                                aria-label={`Название марки ${idx + 1}`}
+                              />
                               <textarea
                                 className="compat-textarea"
                                 value={b.text}
@@ -270,7 +275,7 @@ function SettingsCompatibilitySection() {
                                   setBrandBlocks((prev) => prev.map((x) => (x.k === b.k ? { ...x, text: t } : x)));
                                 }}
                                 rows={4}
-                                placeholder="CS55&#10;UNI-K&#10;Eado Plus"
+                                placeholder="CS55&#10;UNI-K"
                                 spellCheck={false}
                               />
                             </div>
@@ -289,7 +294,7 @@ function SettingsCompatibilitySection() {
                               type="button"
                               className="compat-btn-primary"
                               disabled={addBatchToCode.isPending}
-                              onClick={() => addBatchToCode.mutate({ efId: f.id, blocks: brandBlocks })}
+                              onClick={() => addBatchToCode.mutate({ efId: f.id, blocks: brandBlocks, brandsSnapshot: [...vehBrands] })}
                             >
                               {addBatchToCode.isPending ? '…' : 'Добавить в код'}
                             </button>

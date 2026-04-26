@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
-import { keepPreviousData, useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { keepPreviousData, useInfiniteQuery, useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 import {
   FiPlus, FiEdit2, FiTrash2, FiSearch, FiAlertTriangle,
@@ -275,31 +275,85 @@ const Products = () => {
     });
   }, [compatVehicleModels, compatVmFilter]);
 
+  const engineCodeIds = formData.compatibility_engine_family_ids || [];
+  const hasEngineCodes = engineCodeIds.length > 0;
+  const codeFamilyQueries = useQueries({
+    queries: engineCodeIds.map((id) => ({
+      queryKey: ['compatibility', 'engine-family', id],
+      queryFn: () => compatibilityApi.getEngineFamily(id).then((r) => r.data),
+      enabled: showForm && hasEngineCodes,
+    })),
+  });
+
+  const codeDerivedSync = useMemo(() => {
+    if (!hasEngineCodes) {
+      return { ready: true, noCodes: true, vmIds: [], line: '', vms: [] };
+    }
+    if (!codeFamilyQueries.length || !codeFamilyQueries.every((q) => q.isSuccess && q.data)) {
+      return { ready: false, noCodes: false, vmIds: [], line: '', vms: [] };
+    }
+    const vmIdSet = new Set();
+    const vmsList = [];
+    const seen = new Set();
+    const lineParts = [];
+    for (const q of codeFamilyQueries) {
+      const vms = q.data?.vehicle_models || [];
+      for (const m of vms) {
+        vmIdSet.add(m.id);
+        if (!seen.has(m.id)) {
+          seen.add(m.id);
+          vmsList.push(m);
+        }
+        const one = [m.brand?.name, m.name].filter(Boolean).join(' ').trim();
+        if (one) lineParts.push(one);
+      }
+    }
+    const line = [...new Set(lineParts)].join('\n');
+    return {
+      ready: true,
+      noCodes: false,
+      vmIds: [...vmIdSet],
+      line,
+      vms: vmsList,
+    };
+  }, [hasEngineCodes, codeFamilyQueries]);
+
+  const hadEngineCodesRef = useRef(false);
+  useEffect(() => {
+    if (!showForm) {
+      hadEngineCodesRef.current = false;
+      return;
+    }
+    if (hadEngineCodesRef.current && !hasEngineCodes) {
+      setFormData((p) => ({ ...p, compatibility_vehicle_model_ids: [] }));
+    }
+    hadEngineCodesRef.current = hasEngineCodes;
+    if (!hasEngineCodes) return;
+    if (!codeDerivedSync.ready) return;
+    setFormData((p) => {
+      const nextVm = codeDerivedSync.vmIds;
+      const prevVm = p.compatibility_vehicle_model_ids || [];
+      const a = [...nextVm].sort((x, y) => x - y);
+      const b = [...prevVm].sort((x, y) => x - y);
+      const sameIds = a.length === b.length && a.every((id, i) => id === b[i]);
+      const line = codeDerivedSync.line;
+      const same = sameIds && p.model === line;
+      if (same) return p;
+      return {
+        ...p,
+        compatibility_vehicle_model_ids: nextVm,
+        model: line,
+      };
+    });
+  }, [showForm, hasEngineCodes, codeDerivedSync]);
+
   const handleToggleEngineCode = useCallback((id) => {
-    let was = false;
-    let shouldFill = false;
     setFormData((fd) => {
       const s = new Set(fd.compatibility_engine_family_ids || []);
-      was = s.has(id);
-      if (was) s.delete(id);
+      if (s.has(id)) s.delete(id);
       else s.add(id);
-      shouldFill = !was && !compatibilityTextTouchedRef.current;
       return { ...fd, compatibility_engine_family_ids: [...s] };
     });
-    if (!shouldFill) return;
-    (async () => {
-      try {
-        const { data: fam } = await compatibilityApi.getEngineFamily(id);
-        const vms = fam?.vehicle_models || [];
-        if (vms.length) {
-          const m = vms[0];
-          const line = [m.brand?.name, m.name].filter(Boolean).join(' ').trim();
-          if (line) setFormData((x) => ({ ...x, model: line }));
-        }
-      } catch (err) {
-        if (import.meta.env.DEV) console.warn('getEngineFamily', err);
-      }
-    })();
   }, []);
 
   const handleToggleVehicleModel = useCallback((id) => {
@@ -1461,16 +1515,116 @@ const Products = () => {
           </div>
 
           <div style={{ display: 'grid', gap: 10 }}>
-            <TextArea
-              label="Совместимость для витрины (свой текст)"
-              placeholder="Любой текст для сайта/витрины: марки, кроссы, уточнения. Не зависит от чипов ниже."
-              value={formData.model || ''}
-              onChange={(e) => {
-                compatibilityTextTouchedRef.current = true;
-                setFormData({ ...formData, model: e.target.value });
-              }}
-              style={{ minHeight: 88, ...formData.id ? { border: '1px solid var(--primary)' } : {} }}
-            />
+            {hasEngineCodes ? (
+              <div>
+                <span
+                  style={{
+                    display: 'block',
+                    marginBottom: 8,
+                    fontSize: 13,
+                    fontWeight: 600,
+                    color: 'var(--text)',
+                  }}
+                >
+                  Совместимость для витрины
+                </span>
+                <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '0 0 8px', lineHeight: 1.4 }}>
+                  Подставляется из выбранных ниже кодов. Редактирование отключено — измените привязки в «Настройки →
+                  Коды», либо снимите все коды и заполните вручную.
+                </p>
+                {codeFamilyQueries.some((q) => q.isLoading) && (
+                  <div style={{ fontSize: 12, color: 'var(--text-muted)', padding: '8px 0' }}>Загрузка данных кода…</div>
+                )}
+                {codeFamilyQueries.some((q) => q.isError) && (
+                  <div style={{ fontSize: 12, color: 'var(--danger)' }}>Не удалось загрузить справочник кода. Повторите позже.</div>
+                )}
+                {codeDerivedSync.ready && !codeFamilyQueries.some((q) => q.isLoading) && (
+                  <>
+                    <textarea
+                      className="ios-input"
+                      readOnly
+                      value={formData.model || ''}
+                      rows={Math.min(8, Math.max(3, String(formData.model || '').split('\n').length + 1))}
+                      style={{
+                        width: '100%',
+                        minHeight: 72,
+                        resize: 'none',
+                        opacity: 0.95,
+                        cursor: 'default',
+                        ...formData.id ? { border: '1px solid var(--primary)' } : {},
+                      }}
+                      aria-label="Совместимость для витрины (по коду)"
+                    />
+                    {codeDerivedSync.vms && codeDerivedSync.vms.length > 0 && (
+                      <div
+                        style={{
+                          marginTop: 8,
+                          border: '1px solid var(--border)',
+                          borderRadius: 'var(--radius-ios)',
+                          background: 'var(--ios-grouped-bg)',
+                          overflow: 'auto',
+                          maxHeight: 160,
+                        }}
+                      >
+                        <table
+                          className="compat-code-preview-table"
+                          style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}
+                        >
+                          <thead>
+                            <tr style={{ borderBottom: '1px solid var(--border)' }}>
+                              <th
+                                style={{
+                                  textAlign: 'left',
+                                  padding: '6px 10px',
+                                  fontWeight: 600,
+                                  color: 'var(--text-muted)',
+                                }}
+                              >
+                                Марка
+                              </th>
+                              <th
+                                style={{
+                                  textAlign: 'left',
+                                  padding: '6px 10px',
+                                  fontWeight: 600,
+                                  color: 'var(--text-muted)',
+                                }}
+                              >
+                                Модель
+                              </th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {codeDerivedSync.vms.map((m) => (
+                              <tr key={m.id} style={{ borderBottom: '1px solid var(--border)' }}>
+                                <td style={{ padding: '6px 10px' }}>{(m.brand && m.brand.name) || '—'}</td>
+                                <td style={{ padding: '6px 10px' }}>{m.name || '—'}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                    {codeDerivedSync.vms && codeDerivedSync.vms.length === 0 && (
+                      <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: '6px 0 0' }}>
+                        К выбранным кодам пока не привязаны марки и модели в настройках.
+                      </p>
+                    )}
+                  </>
+                )}
+              </div>
+            ) : (
+              <TextArea
+                label="Совместимость для витрины"
+                placeholder="Свой текст для витрины: марки, кроссы, уточнения. Без кода снизу вы можете вручную отметить авто (чипы)."
+                value={formData.model || ''}
+                onChange={(e) => {
+                  compatibilityTextTouchedRef.current = true;
+                  setFormData({ ...formData, model: e.target.value });
+                }}
+                style={{ minHeight: 88, ...formData.id ? { border: '1px solid var(--primary)' } : {} }}
+              />
+            )}
             <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-muted)' }}>Коды из справочника</div>
             <div className="catalog-chips-scroll" style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
               {compatEngineFamilies.length === 0 && (
@@ -1492,44 +1646,48 @@ const Products = () => {
                 );
               })}
             </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-              <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-muted)' }}>Авто из справочника (чипы)</span>
-              <input
-                className="ios-input"
-                type="search"
-                placeholder="Поиск: марка или модель"
-                value={compatVmFilter}
-                onChange={(e) => setCompatVmFilter(e.target.value)}
-                style={{ flex: 1, minWidth: 140, maxWidth: 280, fontSize: 13, padding: '6px 10px' }}
-                aria-label="Поиск авто в чипах"
-              />
-            </div>
-            <div
-              className="catalog-chips-scroll"
-              style={{ display: 'flex', flexWrap: 'wrap', gap: 8, maxHeight: 160, overflowY: 'auto' }}
-            >
-              {compatVehicleModels.length === 0 && (
-                <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>—</span>
-              )}
-              {compatVehicleModels.length > 0 && filteredCompatVehicles.length === 0 && (
-                <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Нет совпадений по поиску</span>
-              )}
-              {filteredCompatVehicles.map((vm) => {
-                const on = (formData.compatibility_vehicle_model_ids || []).includes(vm.id);
-                const b = (vm.brand && vm.brand.name) || '—';
-                return (
-                  <button
-                    key={vm.id}
-                    type="button"
-                    className={`catalog-chip ${on ? 'catalog-chip-active' : ''}`}
-                    onClick={() => handleToggleVehicleModel(vm.id)}
-                    style={{ padding: '6px 12px', fontSize: 12 }}
-                  >
-                    {b} · {vm.name}
-                  </button>
-                );
-              })}
-            </div>
+            {!hasEngineCodes && (
+              <>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-muted)' }}>Авто из справочника (чипы)</span>
+                  <input
+                    className="ios-input"
+                    type="search"
+                    placeholder="Поиск: марка или модель"
+                    value={compatVmFilter}
+                    onChange={(e) => setCompatVmFilter(e.target.value)}
+                    style={{ flex: 1, minWidth: 140, maxWidth: 280, fontSize: 13, padding: '6px 10px' }}
+                    aria-label="Поиск авто в чипах"
+                  />
+                </div>
+                <div
+                  className="catalog-chips-scroll"
+                  style={{ display: 'flex', flexWrap: 'wrap', gap: 8, maxHeight: 160, overflowY: 'auto' }}
+                >
+                  {compatVehicleModels.length === 0 && (
+                    <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>—</span>
+                  )}
+                  {compatVehicleModels.length > 0 && filteredCompatVehicles.length === 0 && (
+                    <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Нет совпадений по поиску</span>
+                  )}
+                  {filteredCompatVehicles.map((vm) => {
+                    const on = (formData.compatibility_vehicle_model_ids || []).includes(vm.id);
+                    const b = (vm.brand && vm.brand.name) || '—';
+                    return (
+                      <button
+                        key={vm.id}
+                        type="button"
+                        className={`catalog-chip ${on ? 'catalog-chip-active' : ''}`}
+                        onClick={() => handleToggleVehicleModel(vm.id)}
+                        style={{ padding: '6px 12px', fontSize: 12 }}
+                      >
+                        {b} · {vm.name}
+                      </button>
+                    );
+                  })}
+                </div>
+              </>
+            )}
           </div>
 
           <div>
