@@ -401,12 +401,25 @@ def ensure_compatibility_table_columns() -> None:
             BEGIN
               ALTER TABLE vehicle_brands ALTER COLUMN is_active SET DEFAULT true;
             EXCEPTION WHEN OTHERS THEN
-              NULL;
+              PERFORM 1;
             END;
             BEGIN
               ALTER TABLE vehicle_brands ALTER COLUMN is_active SET NOT NULL;
             EXCEPTION WHEN OTHERS THEN
-              NULL;
+              PERFORM 1;
+            END;
+            -- INSERT без явных дат: иначе NOT NULL + отсутствие DEFAULT в БД → 500 на POST
+            BEGIN
+              ALTER TABLE vehicle_brands
+                ALTER COLUMN created_at SET DEFAULT (timezone('utc', now()));
+            EXCEPTION WHEN OTHERS THEN
+              PERFORM 1;
+            END;
+            BEGIN
+              ALTER TABLE vehicle_brands
+                ALTER COLUMN updated_at SET DEFAULT (timezone('utc', now()));
+            EXCEPTION WHEN OTHERS THEN
+              PERFORM 1;
             END;
           END IF;
         END $$;
@@ -434,12 +447,24 @@ def ensure_compatibility_table_columns() -> None:
             BEGIN
               ALTER TABLE vehicle_models ALTER COLUMN is_active SET DEFAULT true;
             EXCEPTION WHEN OTHERS THEN
-              NULL;
+              PERFORM 1;
             END;
             BEGIN
               ALTER TABLE vehicle_models ALTER COLUMN is_active SET NOT NULL;
             EXCEPTION WHEN OTHERS THEN
-              NULL;
+              PERFORM 1;
+            END;
+            BEGIN
+              ALTER TABLE vehicle_models
+                ALTER COLUMN created_at SET DEFAULT (timezone('utc', now()));
+            EXCEPTION WHEN OTHERS THEN
+              PERFORM 1;
+            END;
+            BEGIN
+              ALTER TABLE vehicle_models
+                ALTER COLUMN updated_at SET DEFAULT (timezone('utc', now()));
+            EXCEPTION WHEN OTHERS THEN
+              PERFORM 1;
             END;
           END IF;
         END $$;
