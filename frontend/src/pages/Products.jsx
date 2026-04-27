@@ -63,6 +63,24 @@ function sanitizeBarcodeFieldInput(raw) {
   return out;
 }
 
+function normalizeVehicleField(raw) {
+  const cleaned = String(raw || '')
+    .replace(/[,+/;]+/g, ' ')
+    .replace(/[^0-9A-Za-zА-Яа-яЁё\- ]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!cleaned) return '';
+  return cleaned
+    .split(' ')
+    .filter(Boolean)
+    .map((part) => {
+      if (/^[A-Z0-9-]{2,}$/.test(part)) return part;
+      if (/^[А-ЯЁ0-9-]{2,}$/.test(part)) return part;
+      return part.charAt(0).toUpperCase() + part.slice(1).toLowerCase();
+    })
+    .join(' ');
+}
+
 const CAT_COLORS = [
   { bg: '#e8e8fc', color: '#4338ca' },
   { bg: '#d1fae5', color: '#047857' },
@@ -128,8 +146,8 @@ function buildPayload(formData, cnyRate = 65) {
     name: formData.name.trim(),
     sku: skuTrim || undefined,
     barcode: formData.barcode?.trim() || null,
-    brand: formData.brand?.trim() || null,
-    model: formData.model?.trim() || null,
+    brand: normalizeVehicleField(formData.brand) || null,
+    model: normalizeVehicleField(formData.model) || null,
     category: formData.category?.trim() || null,
     description: formData.description?.trim() || null,
     image_url: (formData.image_url || '').split('?')[0].trim() || null,
@@ -324,8 +342,8 @@ const Products = () => {
       ...fd,
       engine_code_id: Number.isFinite(codeId) ? codeId : null,
       compatibility_engine_family_ids: Number.isFinite(codeId) ? [codeId] : [],
-      brand: first ? (first.brand || '') : fd.brand,
-      model: first ? (first.model || '') : fd.model,
+      brand: first ? normalizeVehicleField(first.brand || '') : fd.brand,
+      model: first ? normalizeVehicleField(first.model || '') : fd.model,
     }));
   }, [compatEngineFamilies]);
 
@@ -1569,8 +1587,8 @@ const Products = () => {
                   <tbody>
                     {codeDerivedSync.list.map((m) => (
                       <tr key={m.id} style={{ borderBottom: '1px solid var(--border)' }}>
-                        <td style={{ padding: '6px 10px' }}>{m.brand || '—'}</td>
-                        <td style={{ padding: '6px 10px' }}>{m.model || '—'}</td>
+                        <td style={{ padding: '6px 10px' }}>{normalizeVehicleField(m.brand) || '—'}</td>
+                        <td style={{ padding: '6px 10px' }}>{normalizeVehicleField(m.model) || '—'}</td>
                       </tr>
                     ))}
                   </tbody>

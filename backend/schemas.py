@@ -1,6 +1,7 @@
 from datetime import datetime
 from decimal import Decimal
 from enum import Enum
+import re
 from typing import Any, List, Literal, Optional
 
 from pydantic import BaseModel, EmailStr, Field, condecimal, field_validator
@@ -28,6 +29,24 @@ class ReserveStatus(str, Enum):
 
 Money10_2 = condecimal(max_digits=10, decimal_places=2)
 Percent5_2 = condecimal(max_digits=5, decimal_places=2)
+
+
+def _normalize_vehicle_text(value: Optional[str]) -> Optional[str]:
+    if value is None:
+        return None
+    s = str(value)
+    s = re.sub(r"[,+/;]+", " ", s)
+    s = re.sub(r"[^0-9A-Za-zА-Яа-яЁё\- ]+", " ", s)
+    s = re.sub(r"\s+", " ", s).strip()
+    if not s:
+        return None
+    parts = []
+    for part in s.split(" "):
+        if re.fullmatch(r"[A-Z0-9-]{2,}", part) or re.fullmatch(r"[А-ЯЁ0-9-]{2,}", part):
+            parts.append(part)
+        else:
+            parts.append(part[:1].upper() + part[1:].lower())
+    return " ".join(parts)
 
 
 class ProductBase(BaseModel):
@@ -71,6 +90,11 @@ class ProductBase(BaseModel):
         if value is None or value == "":
             return None
         return Decimal(str(value))
+
+    @field_validator("brand", "model", mode="before")
+    @classmethod
+    def normalize_vehicle_fields(cls, value):
+        return _normalize_vehicle_text(value)
 
 
 class ProductCreate(ProductBase):
@@ -125,6 +149,11 @@ class ProductUpdate(BaseModel):
         if value is None or value == "":
             return None
         return Decimal(str(value))
+
+    @field_validator("brand", "model", mode="before")
+    @classmethod
+    def normalize_vehicle_fields_update(cls, value):
+        return _normalize_vehicle_text(value)
 
 
 # ── Справочник авто-совместимости (CRUD) ──────────────────────────────────
@@ -270,10 +299,20 @@ class CompatibilityCreate(BaseModel):
     brand: str = Field(..., min_length=1, max_length=120)
     model: str = Field(..., min_length=1, max_length=180)
 
+    @field_validator("brand", "model", mode="before")
+    @classmethod
+    def normalize_compatibility_fields(cls, value):
+        return _normalize_vehicle_text(value) or ""
+
 
 class CompatibilityUpdate(BaseModel):
     brand: Optional[str] = Field(None, min_length=1, max_length=120)
     model: Optional[str] = Field(None, min_length=1, max_length=180)
+
+    @field_validator("brand", "model", mode="before")
+    @classmethod
+    def normalize_compatibility_fields_update(cls, value):
+        return _normalize_vehicle_text(value)
 
 
 class EngineCodeResponse(BaseModel):

@@ -47,6 +47,23 @@ MAX_IMAGE_DIMENSION = 1600
 WEBP_QUALITY = 78
 
 
+def _normalize_vehicle_text(value: str | None) -> str | None:
+    if value is None:
+        return None
+    s = re.sub(r"[,+/;]+", " ", str(value))
+    s = re.sub(r"[^0-9A-Za-zА-Яа-яЁё\- ]+", " ", s)
+    s = re.sub(r"\s+", " ", s).strip()
+    if not s:
+        return None
+    parts: list[str] = []
+    for part in s.split(" "):
+        if re.fullmatch(r"[A-Z0-9-]{2,}", part) or re.fullmatch(r"[А-ЯЁ0-9-]{2,}", part):
+            parts.append(part)
+        else:
+            parts.append(part[:1].upper() + part[1:].lower())
+    return " ".join(parts)
+
+
 def _delete_old_product_image_file(old_url: str | None) -> None:
     """Удаляет WebP с диска по image_url: /uploads/products/... или /api/v1/media/product-images/..."""
     if not old_url or not isinstance(old_url, str):
@@ -100,8 +117,8 @@ def _apply_engine_code_defaults(db: Session, payload: dict) -> None:
         .first()
     )
     if first_match:
-        payload["brand"] = first_match.brand
-        payload["model"] = first_match.model
+        payload["brand"] = _normalize_vehicle_text(first_match.brand)
+        payload["model"] = _normalize_vehicle_text(first_match.model)
 
 
 def _prepare_for_webp(img: Image.Image) -> Image.Image:
