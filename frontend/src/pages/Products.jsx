@@ -289,21 +289,33 @@ const Products = () => {
     queryFn: () => compatibilityApi.engineCodes().then((r) => r.data),
     staleTime: 60000,
   });
-  const { data: compatVehicleModels = [] } = useQuery({
-    queryKey: ['compatibility', 'vehicle-models'],
-    queryFn: () => compatibilityApi.vehicleModels().then((r) => r.data),
-    staleTime: 60000,
-  });
+  const manualCompatOptions = useMemo(() => {
+    const map = new Map();
+    (compatEngineFamilies || []).forEach((code) => {
+      (code.compatibility || []).forEach((row) => {
+        const brand = normalizeVehicleField(row.brand || '');
+        const models = splitVehicleModels(row.model || '');
+        if (!brand || !models.length) return;
+        models.forEach((m) => {
+          const key = `${brand}::${m}`;
+          if (!map.has(key)) {
+            map.set(key, { id: key, brand: { name: brand }, name: m });
+          }
+        });
+      });
+    });
+    return Array.from(map.values()).sort((a, b) => `${a.brand.name} ${a.name}`.localeCompare(`${b.brand.name} ${b.name}`, 'ru'));
+  }, [compatEngineFamilies]);
 
   const [compatVmFilter, setCompatVmFilter] = useState('');
   const filteredCompatVehicles = useMemo(() => {
     const q = compatVmFilter.trim().toLowerCase();
-    if (!q) return compatVehicleModels;
-    return compatVehicleModels.filter((vm) => {
+    if (!q) return manualCompatOptions;
+    return manualCompatOptions.filter((vm) => {
       const b = (vm.brand && vm.brand.name) || '';
       return `${b} ${vm.name}`.toLowerCase().includes(q);
     });
-  }, [compatVehicleModels, compatVmFilter]);
+  }, [manualCompatOptions, compatVmFilter]);
 
   const hasEngineCodes = Boolean(formData.engine_code_id);
   const { data: selectedEngineCode, isLoading: isEngineCodeLoading, isError: isEngineCodeError } = useQuery({
@@ -1649,10 +1661,10 @@ const Products = () => {
                   className="catalog-chips-scroll"
                   style={{ display: 'flex', flexWrap: 'wrap', gap: 8, maxHeight: 160, overflowY: 'auto' }}
                 >
-                  {compatVehicleModels.length === 0 && (
+                  {manualCompatOptions.length === 0 && (
                     <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>—</span>
                   )}
-                  {compatVehicleModels.length > 0 && filteredCompatVehicles.length === 0 && (
+                  {manualCompatOptions.length > 0 && filteredCompatVehicles.length === 0 && (
                     <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Нет совпадений по поиску</span>
                   )}
                   {filteredCompatVehicles.map((vm) => {
