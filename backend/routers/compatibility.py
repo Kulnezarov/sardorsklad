@@ -77,6 +77,149 @@ def _ef_set_models(db: Session, family: models.EngineFamily, model_ids: Optional
         )
 
 
+def _engine_code_to_schema(db: Session, row: models.EngineCode) -> schemas.EngineCodeResponse:
+    links = (
+        db.query(models.Compatibility)
+        .filter(models.Compatibility.engine_code_id == row.id)
+        .order_by(models.Compatibility.brand.asc(), models.Compatibility.model.asc())
+        .all()
+    )
+    return schemas.EngineCodeResponse(
+        id=row.id,
+        description=row.description,
+        compatibility=[schemas.EngineCompatibilityItem.model_validate(x, from_attributes=True) for x in links],
+    )
+
+
+# ── Engine codes + compatibility (master-codes) ──────────────────────────────
+@router.get("/engine-codes", response_model=List[schemas.EngineCodeResponse])
+async def list_engine_codes(db: Session = Depends(get_db)):
+    rows = db.query(models.EngineCode).order_by(models.EngineCode.id.asc()).all()
+    return [_engine_code_to_schema(db, row) for row in rows]
+
+
+@router.get("/engine-codes/{engine_code_id}", response_model=schemas.EngineCodeResponse)
+async def get_engine_code(engine_code_id: int, db: Session = Depends(get_db)):
+    row = db.query(models.EngineCode).filter(models.EngineCode.id == engine_code_id).first()
+    if not row:
+        raise HTTPException(404, detail="Код не найден")
+    return _engine_code_to_schema(db, row)
+
+
+@router.post("/engine-codes", response_model=schemas.EngineCodeResponse, status_code=status.HTTP_201_CREATED)
+async def create_engine_code(payload: schemas.EngineCodeCreate, db: Session = Depends(get_db)):
+    if db.query(models.EngineCode).filter(models.EngineCode.id == payload.id).first():
+        raise HTTPException(400, detail="Код уже существует")
+    row = models.EngineCode(id=payload.id, description=(payload.description or "").strip() or None)
+    db.add(row)
+    db.commit()
+    return _engine_code_to_schema(db, row)
+
+
+@router.put("/engine-codes/{engine_code_id}", response_model=schemas.EngineCodeResponse)
+async def update_engine_code(engine_code_id: int, payload: schemas.EngineCodeUpdate, db: Session = Depends(get_db)):
+    row = db.query(models.EngineCode).filter(models.EngineCode.id == engine_code_id).first()
+    if not row:
+        raise HTTPException(404, detail="Код не найден")
+    if payload.description is not None:
+        row.description = (payload.description or "").strip() or None
+    db.commit()
+    db.refresh(row)
+    return _engine_code_to_schema(db, row)
+
+
+@router.delete("/engine-codes/{engine_code_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_engine_code(engine_code_id: int, db: Session = Depends(get_db)):
+    row = db.query(models.EngineCode).filter(models.EngineCode.id == engine_code_id).first()
+    if not row:
+        raise HTTPException(404, detail="Код не найден")
+    in_use = db.query(models.Product).filter(models.Product.engine_code_id == engine_code_id).first()
+    if in_use:
+        raise HTTPException(400, detail="Код используется в товарах")
+    db.delete(row)
+    db.commit()
+    return None
+
+
+@router.post(
+    "/engine-codes/{engine_code_id}/compatibility",
+    response_model=schemas.EngineCompatibilityItem,
+    status_code=status.HTTP_201_CREATED,
+)
+async def add_engine_code_compatibility(
+    engine_code_id: int,
+    payload: schemas.CompatibilityCreate,
+    db: Session = Depends(get_db),
+):
+    row = db.query(models.EngineCode).filter(models.EngineCode.id == engine_code_id).first()
+    if not row:
+        raise HTTPException(404, detail="Код не найден")
+    link = models.Compatibility(
+        engine_code_id=engine_code_id,
+        brand=payload.brand.strip(),
+        model=payload.model.strip(),
+    )
+    db.add(link)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(400, detail="Такая связка уже существует")
+    db.refresh(link)
+    return schemas.EngineCompatibilityItem.model_validate(link, from_attributes=True)
+
+
+@router.put("/engine-codes/{engine_code_id}/compatibility/{compatibility_id}", response_model=schemas.EngineCompatibilityItem)
+async def update_engine_code_compatibility(
+    engine_code_id: int,
+    compatibility_id: int,
+    payload: schemas.CompatibilityUpdate,
+    db: Session = Depends(get_db),
+):
+    link = (
+        db.query(models.Compatibility)
+        .filter(
+            models.Compatibility.id == compatibility_id,
+            models.Compatibility.engine_code_id == engine_code_id,
+        )
+        .first()
+    )
+    if not link:
+        raise HTTPException(404, detail="Связь не найдена")
+    if payload.brand is not None:
+        link.brand = payload.brand.strip()
+    if payload.model is not None:
+        link.model = payload.model.strip()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(400, detail="Такая связка уже существует")
+    db.refresh(link)
+    return schemas.EngineCompatibilityItem.model_validate(link, from_attributes=True)
+
+
+@router.delete("/engine-codes/{engine_code_id}/compatibility/{compatibility_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_engine_code_compatibility(
+    engine_code_id: int,
+    compatibility_id: int,
+    db: Session = Depends(get_db),
+):
+    link = (
+        db.query(models.Compatibility)
+        .filter(
+            models.Compatibility.id == compatibility_id,
+            models.Compatibility.engine_code_id == engine_code_id,
+        )
+        .first()
+    )
+    if not link:
+        raise HTTPException(404, detail="Связь не найдена")
+    db.delete(link)
+    db.commit()
+    return None
+
+
 # ── Vehicle brands ──────────────────────────────────────────────────────────
 
 

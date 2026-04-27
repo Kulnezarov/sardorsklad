@@ -1,304 +1,183 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
-import { FiBox, FiChevronDown, FiChevronRight, FiPlus, FiTrash2, FiLayers } from 'react-icons/fi';
+import { FiBox, FiPlus, FiTrash2 } from 'react-icons/fi';
 import { compatibilityApi, getApiErrorMessage } from '../api/client';
 
-const emptyBlock = () => ({ k: `b-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, brandName: '', text: '' });
-
-function parseModelNames(raw) {
-  const out = [];
-  for (const line of String(raw || '').split(/\r?\n/)) {
-    for (const part of line.split(/[,;]+/)) {
-      const t = part.trim();
-      if (t) out.push(t);
-    }
-  }
-  return out;
-}
-
-/**
- * Код (465) → блоки «марка + модели (строки)»; при «Добавить в код» несуществующие марки создаются в справочнике.
- */
 function SettingsCompatibilitySection() {
   const qc = useQueryClient();
-  const [newCode, setNewCode] = useState('');
-  const [newCodeName, setNewCodeName] = useState('');
-  const [expandedId, setExpandedId] = useState(null);
-  const [brandBlocks, setBrandBlocks] = useState([emptyBlock()]);
+  const [engineCodeId, setEngineCodeId] = useState('');
+  const [engineCodeDescription, setEngineCodeDescription] = useState('');
+  const [selectedCodeId, setSelectedCodeId] = useState(null);
+  const [compatBrand, setCompatBrand] = useState('');
+  const [compatModel, setCompatModel] = useState('');
 
-  const { data: vehBrands = [] } = useQuery({
-    queryKey: ['compatibility', 'vehicle-brands'],
-    queryFn: () => compatibilityApi.vehicleBrands().then((r) => r.data),
-  });
-  const { data: engFamilies = [], refetch: refetchEng } = useQuery({
-    queryKey: ['compatibility', 'engine-families'],
-    queryFn: () => compatibilityApi.engineFamilies().then((r) => r.data),
-  });
-  const { data: detail, isFetching: detailLoading } = useQuery({
-    queryKey: ['compatibility', 'engine-family', expandedId],
-    queryFn: () => compatibilityApi.getEngineFamily(expandedId).then((r) => r.data),
-    enabled: expandedId != null,
+  const { data: codes = [] } = useQuery({
+    queryKey: ['compatibility', 'engine-codes'],
+    queryFn: () => compatibilityApi.engineCodes().then((r) => r.data),
   });
 
-  useEffect(() => {
-    setBrandBlocks([emptyBlock()]);
-  }, [expandedId]);
+  const { data: selectedCode, isFetching: codeLoading } = useQuery({
+    queryKey: ['compatibility', 'engine-code', selectedCodeId],
+    queryFn: () => compatibilityApi.getEngineCode(selectedCodeId).then((r) => r.data),
+    enabled: selectedCodeId != null,
+  });
 
-  const byBrand = React.useMemo(() => {
-    const vms = detail?.vehicle_models || [];
-    const map = new Map();
-    for (const vm of vms) {
-      const bid = vm.vehicle_brand_id;
-      if (!map.has(bid)) map.set(bid, { brand: vm.brand, models: [] });
-      map.get(bid).models.push(vm);
-    }
-    for (const [, g] of map) {
-      g.models.sort((a, b) => a.name.localeCompare(b.name, 'ru'));
-    }
-    return map;
-  }, [detail]);
+  const invalidate = () => {
+    qc.invalidateQueries({ queryKey: ['compatibility', 'engine-codes'] });
+    if (selectedCodeId != null) qc.invalidateQueries({ queryKey: ['compatibility', 'engine-code', selectedCodeId] });
+  };
 
-  const addEf = useMutation({
-    mutationFn: (body) => compatibilityApi.createEngineFamily(body),
+  const createCodeMutation = useMutation({
+    mutationFn: (payload) => compatibilityApi.createEngineCode(payload),
     onSuccess: () => {
       toast.success('Код добавлен');
-      setNewCode('');
-      setNewCodeName('');
-      refetchEng();
-      qc.invalidateQueries({ queryKey: ['compatibility'] });
+      setEngineCodeId('');
+      setEngineCodeDescription('');
+      invalidate();
     },
-    onError: (e) => toast.error(getApiErrorMessage(e, 'Не удалось')),
-  });
-  const addBatchToCode = useMutation({
-    mutationFn: async ({ efId, blocks, brandsSnapshot }) => {
-      const list = brandsSnapshot || (await compatibilityApi.vehicleBrands().then((r) => r.data));
-      const groups = [];
-      for (const b of blocks) {
-        const bname = (b.brandName || '').trim();
-        if (!bname) continue;
-        const names = parseModelNames(b.text);
-        if (!names.length) continue;
-        let brandId = list.find((x) => (x.name || '').toLowerCase() === bname.toLowerCase())?.id;
-        if (!brandId) {
-          const { data: createdBrand } = await compatibilityApi.createVehicleBrand({
-            name: bname,
-            is_active: true,
-          });
-          brandId = createdBrand.id;
-          list.push(createdBrand);
-        }
-        groups.push({ brandId, names });
-      }
-      if (!groups.length) {
-        throw new Error('empty');
-      }
-      let cur = await compatibilityApi.getEngineFamily(efId).then((r) => r.data);
-      let ids = [...(cur.vehicle_models || []).map((m) => m.id)];
-      for (const g of groups) {
-        for (const name of g.names) {
-          const { data: created } = await compatibilityApi.createVehicleModel({
-            vehicle_brand_id: g.brandId,
-            name,
-            is_active: true,
-          });
-          ids.push(created.id);
-        }
-      }
-      const uniq = [...new Set(ids)];
-      await compatibilityApi.updateEngineFamily(efId, { vehicle_model_ids: uniq });
-    },
-    onSuccess: (_, { efId }) => {
-      toast.success('Модели добавлены в код');
-      setBrandBlocks([emptyBlock()]);
-      qc.invalidateQueries({ queryKey: ['compatibility', 'engine-family', efId] });
-      qc.invalidateQueries({ queryKey: ['compatibility', 'vehicle-models'] });
-      qc.invalidateQueries({ queryKey: ['compatibility'] });
-    },
-    onError: (e) => {
-      if (e?.message === 'empty') {
-        toast.error('В каждом блоке укажите марку (название) и хотя бы одну модель');
-        return;
-      }
-      toast.error(getApiErrorMessage(e, 'Ошибка'));
-    },
+    onError: (e) => toast.error(getApiErrorMessage(e, 'Не удалось добавить код')),
   });
 
-  const removeModelFromCode = useMutation({
-    mutationFn: async ({ efId, modelId, allIds }) => {
-      const next = allIds.filter((id) => id !== modelId);
-      await compatibilityApi.updateEngineFamily(efId, { vehicle_model_ids: next });
+  const addCompatibilityMutation = useMutation({
+    mutationFn: ({ codeId, payload }) => compatibilityApi.addEngineCodeCompatibility(codeId, payload),
+    onSuccess: () => {
+      toast.success('Совместимость добавлена');
+      setCompatBrand('');
+      setCompatModel('');
+      invalidate();
     },
-    onSuccess: (_, v) => {
-      toast.success('Снято');
-      qc.invalidateQueries({ queryKey: ['compatibility', 'engine-family', v.efId] });
-      qc.invalidateQueries({ queryKey: ['compatibility'] });
-    },
-    onError: (e) => toast.error(getApiErrorMessage(e, 'Не удалось')),
+    onError: (e) => toast.error(getApiErrorMessage(e, 'Не удалось добавить совместимость')),
   });
 
-  const allIds = (detail?.vehicle_models || []).map((m) => m.id);
+  const deleteCompatibilityMutation = useMutation({
+    mutationFn: ({ codeId, compatibilityId }) => compatibilityApi.deleteEngineCodeCompatibility(codeId, compatibilityId),
+    onSuccess: () => {
+      toast.success('Запись удалена');
+      invalidate();
+    },
+    onError: (e) => toast.error(getApiErrorMessage(e, 'Не удалось удалить запись')),
+  });
+
+  const deleteCodeMutation = useMutation({
+    mutationFn: (id) => compatibilityApi.deleteEngineCode(id),
+    onSuccess: (_, id) => {
+      toast.success('Код удален');
+      if (selectedCodeId === id) setSelectedCodeId(null);
+      invalidate();
+    },
+    onError: (e) => toast.error(getApiErrorMessage(e, 'Не удалось удалить код')),
+  });
 
   return (
     <div className="settings-section compatibility-settings">
       <div className="settings-section-title">
-        <FiBox size={16} /> Совместимость
+        <FiBox size={16} /> Мастер-коды двигателей
       </div>
       <div className="settings-section-body">
         <div className="compat-add-code">
           <input
             className="compat-input"
-            value={newCode}
-            onChange={(e) => setNewCode(e.target.value.replace(/\s+/g, ''))}
+            value={engineCodeId}
+            onChange={(e) => setEngineCodeId(e.target.value.replace(/\D+/g, ''))}
             placeholder="Код, напр. 465"
-            aria-label="Код"
           />
           <input
             className="compat-input compat-input-grow"
-            value={newCodeName}
-            onChange={(e) => setNewCodeName(e.target.value)}
-            placeholder="Название (опционально)"
-            aria-label="Название кода"
+            value={engineCodeDescription}
+            onChange={(e) => setEngineCodeDescription(e.target.value)}
+            placeholder="Описание (опционально)"
           />
           <button
             type="button"
             className="compat-btn-primary"
             onClick={() => {
-              const c = (newCode || '').trim();
-              if (!c) {
-                toast.error('Введите код');
-                return;
-              }
-              addEf.mutate({ code: c, name: newCodeName.trim() || null, is_active: true, vehicle_model_ids: null });
+              if (!engineCodeId) return toast.error('Введите код');
+              createCodeMutation.mutate({
+                id: Number(engineCodeId),
+                description: engineCodeDescription.trim() || null,
+              });
             }}
-            disabled={addEf.isPending}
+            disabled={createCodeMutation.isPending}
           >
-            <FiPlus size={15} style={{ marginRight: 4, verticalAlign: 'middle' }} />
-            Код
+            <FiPlus size={15} style={{ marginRight: 4, verticalAlign: 'middle' }} /> Код
           </button>
         </div>
 
         <div className="compat-code-list">
-          {engFamilies.length === 0 && <div className="compat-muted">Нет кодов</div>}
-          {engFamilies
-            .slice()
-            .sort((a, b) => String(a.code).localeCompare(String(b.code), 'ru', { numeric: true }))
-            .map((f) => {
-              const open = expandedId === f.id;
-              return (
-                <div key={f.id} className="compat-accordion">
-                  <button
-                    type="button"
-                    className="compat-accordion-head"
-                    onClick={() => setExpandedId((id) => (id === f.id ? null : f.id))}
-                  >
-                    {open ? <FiChevronDown size={16} /> : <FiChevronRight size={16} />}
-                    <span className="compat-code-label">{f.code}</span>
-                    {f.name && <span className="compat-code-sub">{f.name}</span>}
-                  </button>
-                  {open && (
-                    <div className="compat-accordion-body">
-                      {detailLoading && <div className="compat-muted">Загрузка…</div>}
-                      {!detailLoading && (
-                        <>
-                          <div className="compat-subhead">
-                            <FiLayers size={14} style={{ marginRight: 6, opacity: 0.7 }} />
-                            Код {f.code}: марка и модели (блок = одна марка)
-                          </div>
-
-                          {brandBlocks.map((b, idx) => (
-                            <div key={b.k} className="compat-brand-card">
-                              <div className="compat-brand-card-head">
-                                <span>Марка {idx + 1}</span>
-                                {brandBlocks.length > 1 && (
-                                  <button
-                                    type="button"
-                                    className="compat-link danger"
-                                    onClick={() => setBrandBlocks((prev) => prev.filter((x) => x.k !== b.k))}
-                                  >
-                                    Убрать блок
-                                  </button>
-                                )}
-                              </div>
-                              <input
-                                className="compat-select"
-                                value={b.brandName}
-                                onChange={(e) => {
-                                  const t = e.target.value;
-                                  setBrandBlocks((prev) => prev.map((x) => (x.k === b.k ? { ...x, brandName: t } : x)));
-                                }}
-                                placeholder="Название марки, напр. Changan"
-                                aria-label={`Название марки ${idx + 1}`}
-                              />
-                              <textarea
-                                className="compat-textarea"
-                                value={b.text}
-                                onChange={(e) => {
-                                  const t = e.target.value;
-                                  setBrandBlocks((prev) => prev.map((x) => (x.k === b.k ? { ...x, text: t } : x)));
-                                }}
-                                rows={4}
-                                placeholder="CS55&#10;UNI-K"
-                                spellCheck={false}
-                              />
-                            </div>
-                          ))}
-
-                          <div className="compat-actions">
-                            <button
-                              type="button"
-                              className="compat-btn-ghost"
-                              onClick={() => setBrandBlocks((p) => [...p, emptyBlock()])}
-                            >
-                              <FiPlus size={15} style={{ marginRight: 4, verticalAlign: 'middle' }} />
-                              Ещё марка
-                            </button>
-                            <button
-                              type="button"
-                              className="compat-btn-primary"
-                              disabled={addBatchToCode.isPending}
-                              onClick={() => addBatchToCode.mutate({ efId: f.id, blocks: brandBlocks, brandsSnapshot: [...vehBrands] })}
-                            >
-                              {addBatchToCode.isPending ? '…' : 'Добавить в код'}
-                            </button>
-                          </div>
-
-                          <div className="compat-subhead" style={{ marginTop: 18 }}>
-                            В коде {f.code}
-                          </div>
-                          {[...byBrand.entries()].length === 0 && (
-                            <div className="compat-muted">Пока пусто</div>
-                          )}
-                          {[...byBrand.entries()].map(([bid, g]) => (
-                            <div key={bid} className="compat-linked-block">
-                              <div className="compat-linked-title">{g.brand?.name || `Марка #${bid}`}</div>
-                              <ul className="compat-model-list">
-                                {g.models.map((m) => (
-                                  <li key={m.id} className="compat-model-line">
-                                    <span>{m.name}</span>
-                                    <button
-                                      type="button"
-                                      className="compat-icon-del"
-                                      title="Убрать из кода"
-                                      onClick={() =>
-                                        removeModelFromCode.mutate({ efId: f.id, modelId: m.id, allIds })
-                                      }
-                                    >
-                                      <FiTrash2 size={14} />
-                                    </button>
-                                  </li>
-                                ))}
-                              </ul>
-                            </div>
-                          ))}
-                        </>
-                      )}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
+          {codes.length === 0 && <div className="compat-muted">Нет кодов</div>}
+          {codes.map((code) => (
+            <div key={code.id} className="compat-accordion">
+              <button type="button" className="compat-accordion-head" onClick={() => setSelectedCodeId(code.id)}>
+                <span className="compat-code-label">{code.id}</span>
+                {code.description && <span className="compat-code-sub">{code.description}</span>}
+              </button>
+              <button
+                type="button"
+                className="compat-icon-del"
+                title="Удалить код"
+                onClick={() => deleteCodeMutation.mutate(code.id)}
+                disabled={deleteCodeMutation.isPending}
+              >
+                <FiTrash2 size={14} />
+              </button>
+            </div>
+          ))}
         </div>
+
+        {selectedCodeId != null && (
+          <div style={{ marginTop: 16 }}>
+            <div className="compat-subhead">Код {selectedCodeId}: добавить марку и модель</div>
+            <div className="compat-add-code">
+              <input className="compat-input" value={compatBrand} onChange={(e) => setCompatBrand(e.target.value)} placeholder="Марка" />
+              <input
+                className="compat-input compat-input-grow"
+                value={compatModel}
+                onChange={(e) => setCompatModel(e.target.value)}
+                placeholder="Модель"
+              />
+              <button
+                type="button"
+                className="compat-btn-primary"
+                disabled={addCompatibilityMutation.isPending}
+                onClick={() => {
+                  const brand = compatBrand.trim();
+                  const model = compatModel.trim();
+                  if (!brand || !model) return toast.error('Укажите марку и модель');
+                  addCompatibilityMutation.mutate({ codeId: selectedCodeId, payload: { brand, model } });
+                }}
+              >
+                <FiPlus size={15} style={{ marginRight: 4, verticalAlign: 'middle' }} /> Добавить
+              </button>
+            </div>
+
+            {codeLoading && <div className="compat-muted">Загрузка…</div>}
+            {!codeLoading && (
+              <div className="compat-linked-block">
+                <div className="compat-linked-title">Список совместимости</div>
+                <ul className="compat-model-list">
+                  {(selectedCode?.compatibility || []).map((item) => (
+                    <li key={item.id} className="compat-model-line">
+                      <span>{item.brand} · {item.model}</span>
+                      <button
+                        type="button"
+                        className="compat-icon-del"
+                        onClick={() =>
+                          deleteCompatibilityMutation.mutate({
+                            codeId: selectedCodeId,
+                            compatibilityId: item.id,
+                          })
+                        }
+                      >
+                        <FiTrash2 size={14} />
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

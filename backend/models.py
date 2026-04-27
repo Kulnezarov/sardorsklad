@@ -165,6 +165,31 @@ class ProductEngineFamilyLink(Base):
     engine_family = relationship("EngineFamily", back_populates="product_links")
 
 
+class EngineCode(Base):
+    __tablename__ = "engine_codes"
+
+    id = Column(Integer, primary_key=True, index=True)  # мастер-код, например 465
+    description = Column(Text, nullable=True)
+
+    compatibilities = relationship("Compatibility", back_populates="engine_code", cascade="all, delete-orphan")
+    products = relationship("Product", back_populates="engine_code_rel")
+
+
+class Compatibility(Base):
+    __tablename__ = "compatibility"
+
+    id = Column(Integer, primary_key=True, index=True)
+    engine_code_id = Column(Integer, ForeignKey("engine_codes.id", ondelete="CASCADE"), nullable=False, index=True)
+    brand = Column(String(120), nullable=False, index=True)
+    model = Column(String(180), nullable=False, index=True)
+
+    engine_code = relationship("EngineCode", back_populates="compatibilities")
+
+    __table_args__ = (
+        UniqueConstraint("engine_code_id", "brand", "model", name="uq_compatibility_engine_brand_model"),
+    )
+
+
 # ============================================================================
 # TABLE 2: PRODUCTS
 # ============================================================================
@@ -178,6 +203,7 @@ class Product(Base):
     category = Column(String(100), nullable=True, index=True)
     brand = Column(String(100), nullable=True, index=True)
     model = Column(String(120), nullable=True, index=True)
+    engine_code_id = Column(Integer, ForeignKey("engine_codes.id", ondelete="SET NULL"), nullable=True, index=True)
     category_id = Column(Integer, ForeignKey("categories.id", ondelete="SET NULL"), nullable=True, index=True)
     brand_id = Column(Integer, ForeignKey("brands.id", ondelete="SET NULL"), nullable=True, index=True)
     description = Column(Text, nullable=True)
@@ -216,6 +242,7 @@ class Product(Base):
     # Relationships
     category_rel = relationship("Category", back_populates="products")
     brand_rel = relationship("Brand", back_populates="products")
+    engine_code_rel = relationship("EngineCode", back_populates="products")
     sales_items = relationship("SaleItem", back_populates="product", cascade="all, delete-orphan")
     reserve_items = relationship("ReserveItem", back_populates="product", cascade="all, delete-orphan")
     history = relationship("History", back_populates="product", cascade="all, delete-orphan")

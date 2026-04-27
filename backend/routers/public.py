@@ -144,7 +144,12 @@ def _storefront_compatibility(comp: schemas.ProductCompatibilityOut) -> schemas.
     Клиенту отдаём привязки к маркам/моделям авто.
     """
     vms = list(comp.vehicle_models) if comp else []
-    return schemas.ProductCompatibilityOut(engine_families=[], vehicle_models=vms)
+    ecs = list(comp.engine_code_compatibility) if comp else []
+    return schemas.ProductCompatibilityOut(
+        engine_families=[],
+        vehicle_models=vms,
+        engine_code_compatibility=ecs,
+    )
 
 
 def _storefront_model_text(p: models.Product, comp: schemas.ProductCompatibilityOut) -> str | None:
@@ -157,6 +162,11 @@ def _storefront_model_text(p: models.Product, comp: schemas.ProductCompatibility
             s = f"{b} {n}".strip() if b else n
             if s:
                 labels.append(s)
+        if labels:
+            return ", ".join(dict.fromkeys(labels))
+    if comp and comp.engine_code_compatibility:
+        labels = [f"{x.brand} {x.model}".strip() for x in comp.engine_code_compatibility]
+        labels = [x for x in labels if x]
         if labels:
             return ", ".join(dict.fromkeys(labels))
     raw = _strip_or_none(getattr(p, "model", None))

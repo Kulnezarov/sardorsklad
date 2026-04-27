@@ -81,7 +81,27 @@ def _product_to_response_lite(p: models.Product) -> schemas.ProductResponse:
 def _product_to_response(db: Session, p: models.Product) -> schemas.ProductResponse:
     comp = build_compatibility_out(db, p.id)
     r = schemas.ProductResponse.model_validate(p, from_attributes=True)
-    return r.model_copy(update={"compatibility": comp})
+    engine_code = None
+    if p.engine_code_id:
+        ec = db.query(models.EngineCode).filter(models.EngineCode.id == p.engine_code_id).first()
+        if ec:
+            engine_code = schemas.EngineCodeBrief.model_validate(ec, from_attributes=True)
+    return r.model_copy(update={"compatibility": comp, "engine_code": engine_code})
+
+
+def _apply_engine_code_defaults(db: Session, payload: dict) -> None:
+    engine_code_id = payload.get("engine_code_id")
+    if not engine_code_id:
+        return
+    first_match = (
+        db.query(models.Compatibility)
+        .filter(models.Compatibility.engine_code_id == engine_code_id)
+        .order_by(models.Compatibility.id.asc())
+        .first()
+    )
+    if first_match:
+        payload["brand"] = first_match.brand
+        payload["model"] = first_match.model
 
 
 def _prepare_for_webp(img: Image.Image) -> Image.Image:
@@ -397,6 +417,7 @@ def create_product(
     v_ids = payload.pop("compatibility_vehicle_model_ids", None)
     e_ids = payload.pop("compatibility_engine_family_ids", None)
     payload["received_at"] = datetime.now(UTC)
+    _apply_engine_code_defaults(db, payload)
 
     db_product = models.Product(**payload)
     db.add(db_product)
@@ -481,6 +502,12 @@ def update_product(
 
     for field, value in update_data.items():
         setattr(db_product, field, value)
+    if "engine_code_id" in update_data:
+        _apply_engine_code_defaults(db, update_data)
+        if "brand" in update_data:
+            db_product.brand = update_data["brand"]
+        if "model" in update_data:
+            db_product.model = update_data["model"]
 
     if vkey or ekey:
         cur_vm = [

@@ -39,6 +39,7 @@ class ProductBase(BaseModel):
     category: Optional[str] = Field(None, max_length=100)
     category_id: Optional[int] = Field(None, ge=1)
     brand_id: Optional[int] = Field(None, ge=1)
+    engine_code_id: Optional[int] = Field(None, ge=1)
     description: Optional[str] = None
     image_url: Optional[str] = None
     purchase_price: Money10_2
@@ -238,6 +239,49 @@ class CompatibilityVehicleModelBrief(BaseModel):
 class ProductCompatibilityOut(BaseModel):
     engine_families: List[CompatibilityEngineFamilyBrief] = []
     vehicle_models: List[CompatibilityVehicleModelBrief] = []
+    engine_code_compatibility: List["EngineCompatibilityItem"] = []
+
+
+class EngineCompatibilityItem(BaseModel):
+    id: int
+    brand: str
+    model: str
+
+    model_config = {"from_attributes": True}
+
+
+class EngineCodeBrief(BaseModel):
+    id: int
+    description: Optional[str] = None
+
+    model_config = {"from_attributes": True}
+
+
+class EngineCodeCreate(BaseModel):
+    id: int = Field(..., ge=1)
+    description: Optional[str] = None
+
+
+class EngineCodeUpdate(BaseModel):
+    description: Optional[str] = None
+
+
+class CompatibilityCreate(BaseModel):
+    brand: str = Field(..., min_length=1, max_length=120)
+    model: str = Field(..., min_length=1, max_length=180)
+
+
+class CompatibilityUpdate(BaseModel):
+    brand: Optional[str] = Field(None, min_length=1, max_length=120)
+    model: Optional[str] = Field(None, min_length=1, max_length=180)
+
+
+class EngineCodeResponse(BaseModel):
+    id: int
+    description: Optional[str] = None
+    compatibility: List[EngineCompatibilityItem] = []
+
+    model_config = {"from_attributes": True}
 
 
 class ProductResponse(ProductBase):
@@ -248,6 +292,7 @@ class ProductResponse(ProductBase):
     last_sale_date: Optional[datetime]
     received_at: Optional[datetime] = None
     compatibility: ProductCompatibilityOut = Field(default_factory=ProductCompatibilityOut)
+    engine_code: Optional[EngineCodeBrief] = None
 
     model_config = {"from_attributes": True}
 

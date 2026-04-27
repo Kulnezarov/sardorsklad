@@ -262,6 +262,17 @@ export const orderApi = {
 // VEHICLE / ENGINE COMPATIBILITY (Справочник + связи в товаре)
 // ============================================================================
 export const compatibilityApi = {
+  engineCodes: (params) => apiClient.get('/api/v1/compatibility/engine-codes', { params }),
+  getEngineCode: (id) => apiClient.get(`/api/v1/compatibility/engine-codes/${id}`),
+  createEngineCode: (data) => apiClient.post('/api/v1/compatibility/engine-codes', data),
+  updateEngineCode: (id, data) => apiClient.put(`/api/v1/compatibility/engine-codes/${id}`, data),
+  deleteEngineCode: (id) => apiClient.delete(`/api/v1/compatibility/engine-codes/${id}`),
+  addEngineCodeCompatibility: (engineCodeId, data) =>
+    apiClient.post(`/api/v1/compatibility/engine-codes/${engineCodeId}/compatibility`, data),
+  updateEngineCodeCompatibility: (engineCodeId, compatibilityId, data) =>
+    apiClient.put(`/api/v1/compatibility/engine-codes/${engineCodeId}/compatibility/${compatibilityId}`, data),
+  deleteEngineCodeCompatibility: (engineCodeId, compatibilityId) =>
+    apiClient.delete(`/api/v1/compatibility/engine-codes/${engineCodeId}/compatibility/${compatibilityId}`),
   vehicleBrands: (params) => apiClient.get('/api/v1/compatibility/vehicle-brands', { params }),
   createVehicleBrand: (data) => apiClient.post('/api/v1/compatibility/vehicle-brands', data),
   updateVehicleBrand: (id, data) => apiClient.put(`/api/v1/compatibility/vehicle-brands/${id}`, data),

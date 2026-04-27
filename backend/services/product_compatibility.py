@@ -187,9 +187,11 @@ def build_compatibility_map(db: Session, product_ids: List[int]) -> dict[int, sc
         return {}
     ef_by_p: dict[int, dict[int, schemas.CompatibilityEngineFamilyBrief]] = {}
     vm_by_p: dict[int, dict[int, schemas.CompatibilityVehicleModelBrief]] = {}
+    ec_by_p: dict[int, list[schemas.EngineCompatibilityItem]] = {}
     for pid in product_ids:
         ef_by_p[pid] = {}
         vm_by_p[pid] = {}
+        ec_by_p[pid] = []
     ef_rows = (
         db.query(
             models.ProductEngineFamilyLink.product_id,
@@ -219,6 +221,18 @@ def build_compatibility_map(db: Session, product_ids: List[int]) -> dict[int, sc
         .filter(models.ProductVehicleModelLink.product_id.in_(product_ids))
         .all()
     )
+    ec_rows = (
+        db.query(
+            models.Product.id,
+            models.Compatibility.id,
+            models.Compatibility.brand,
+            models.Compatibility.model,
+        )
+        .join(models.EngineCode, models.EngineCode.id == models.Product.engine_code_id)
+        .join(models.Compatibility, models.Compatibility.engine_code_id == models.EngineCode.id)
+        .filter(models.Product.id.in_(product_ids))
+        .all()
+    )
     for pid, ef in ef_rows:
         ef_by_p[pid][ef.id] = schemas.CompatibilityEngineFamilyBrief(
             id=ef.id, code=ef.code, name=ef.name
@@ -230,6 +244,8 @@ def build_compatibility_map(db: Session, product_ids: List[int]) -> dict[int, sc
             vehicle_brand_id=vm.vehicle_brand_id,
             brand_name=vb.name if vb else "",
         )
+    for pid, cid, brand, model in ec_rows:
+        ec_by_p[pid].append(schemas.EngineCompatibilityItem(id=cid, brand=brand, model=model))
     out: dict[int, schemas.ProductCompatibilityOut] = {}
     for pid in product_ids:
         efs = sorted(ef_by_p[pid].values(), key=lambda x: (x.code.casefold(), x.id))
@@ -237,7 +253,12 @@ def build_compatibility_map(db: Session, product_ids: List[int]) -> dict[int, sc
             vm_by_p[pid].values(),
             key=lambda x: (x.brand_name.casefold(), x.name.casefold(), x.id),
         )
-        out[pid] = schemas.ProductCompatibilityOut(engine_families=efs, vehicle_models=vms)
+        ecs = sorted(ec_by_p[pid], key=lambda x: (x.brand.casefold(), x.model.casefold(), x.id))
+        out[pid] = schemas.ProductCompatibilityOut(
+            engine_families=efs,
+            vehicle_models=vms,
+            engine_code_compatibility=ecs,
+        )
     return out
 
 
@@ -285,4 +306,17 @@ def build_compatibility_out(db: Session, product_id: int) -> schemas.ProductComp
             )
         )
     vms.sort(key=lambda x: (x.brand_name.casefold(), x.name.casefold(), x.id))
-    return schemas.ProductCompatibilityOut(engine_families=efs, vehicle_models=vms)
+    ecs: List[schemas.EngineCompatibilityItem] = []
+    if p.engine_code_id:
+        rows = (
+            db.query(models.Compatibility)
+            .filter(models.Compatibility.engine_code_id == p.engine_code_id)
+            .order_by(models.Compatibility.brand.asc(), models.Compatibility.model.asc())
+            .all()
+        )
+        ecs = [schemas.EngineCompatibilityItem.model_validate(r, from_attributes=True) for r in rows]
+    return schemas.ProductCompatibilityOut(
+        engine_families=efs,
+        vehicle_models=vms,
+        engine_code_compatibility=ecs,
+    )

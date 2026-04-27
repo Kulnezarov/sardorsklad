@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
-import { keepPreviousData, useInfiniteQuery, useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
+import { keepPreviousData, useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 import {
   FiPlus, FiEdit2, FiTrash2, FiSearch, FiAlertTriangle,
@@ -85,6 +85,7 @@ const emptyForm = () => ({
   purchase_price: 0, sale_price: 0, cny_price: '', delivery_cost_kzt: '', delivery_weight_kg: '',
   quantity: 0, min_quantity: 0, description: '', supplier: '', storage_location: '',
   image_url: '',
+  engine_code_id: null,
   compatibility_vehicle_model_ids: [],
   compatibility_engine_family_ids: [],
 });
@@ -133,6 +134,7 @@ function buildPayload(formData, cnyRate = 65) {
     description: formData.description?.trim() || null,
     image_url: (formData.image_url || '').split('?')[0].trim() || null,
     supplier: formData.supplier?.trim() || null,
+    engine_code_id: formData.engine_code_id || null,
     location_zone: formData.storage_location?.trim() || null,
     purchase_price: purchase,
     sale_price: num(formData.sale_price),
@@ -253,8 +255,8 @@ const Products = () => {
   const deliveryKztPerKg = Number(settingsRow?.delivery_kzt_per_kg) || 800;
 
   const { data: compatEngineFamilies = [] } = useQuery({
-    queryKey: ['compatibility', 'engine-families'],
-    queryFn: () => compatibilityApi.engineFamilies().then((r) => r.data),
+    queryKey: ['compatibility', 'engine-codes'],
+    queryFn: () => compatibilityApi.engineCodes().then((r) => r.data),
     staleTime: 60000,
   });
   const { data: compatVehicleModels = [] } = useQuery({
@@ -273,95 +275,59 @@ const Products = () => {
     });
   }, [compatVehicleModels, compatVmFilter]);
 
-  const engineCodeIds = formData.compatibility_engine_family_ids || [];
-  const hasEngineCodes = engineCodeIds.length > 0;
-  const codeFamilyQueries = useQueries({
-    queries: engineCodeIds.map((id) => ({
-      queryKey: ['compatibility', 'engine-family', id],
-      queryFn: () => compatibilityApi.getEngineFamily(id).then((r) => r.data),
-      enabled: showForm && hasEngineCodes,
-    })),
+  const hasEngineCodes = Boolean(formData.engine_code_id);
+  const { data: selectedEngineCode, isLoading: isEngineCodeLoading, isError: isEngineCodeError } = useQuery({
+    queryKey: ['compatibility', 'engine-code', formData.engine_code_id],
+    queryFn: () => compatibilityApi.getEngineCode(formData.engine_code_id).then((r) => r.data),
+    enabled: showForm && hasEngineCodes,
   });
 
   const codeDerivedSync = useMemo(() => {
-    if (!hasEngineCodes) {
-      return { ready: true, noCodes: true, vmIds: [], vms: [], carBrand: '', carModel: '' };
-    }
-    if (!codeFamilyQueries.length || !codeFamilyQueries.every((q) => q.isSuccess && q.data)) {
-      return { ready: false, noCodes: false, vmIds: [], vms: [], carBrand: '', carModel: '' };
-    }
-    const vmIdSet = new Set();
-    const vmsList = [];
-    const seen = new Set();
-    const brandOrder = [];
-    const brandSeen = new Set();
-    const modelParts = [];
-    for (const q of codeFamilyQueries) {
-      const vms = q.data?.vehicle_models || [];
-      for (const m of vms) {
-        vmIdSet.add(m.id);
-        if (!seen.has(m.id)) {
-          seen.add(m.id);
-          vmsList.push(m);
-        }
-        const bn = (m.brand && m.brand.name) || '';
-        if (bn && !brandSeen.has(bn)) {
-          brandSeen.add(bn);
-          brandOrder.push(bn);
-        }
-        if (m.name) modelParts.push(m.name);
-      }
-    }
-    const carBrand = brandOrder.join(', ');
-    const carModel = [...new Set(modelParts)].join(', ');
-    return {
-      ready: true,
-      noCodes: false,
-      vmIds: [...vmIdSet],
-      vms: vmsList,
-      carBrand,
-      carModel,
-    };
-  }, [hasEngineCodes, codeFamilyQueries]);
+    if (!hasEngineCodes) return { ready: true, noCodes: true, list: [], first: null };
+    if (!selectedEngineCode) return { ready: false, noCodes: false, list: [], first: null };
+    const list = selectedEngineCode.compatibility || [];
+    return { ready: true, noCodes: false, list, first: list[0] || null };
+  }, [hasEngineCodes, selectedEngineCode]);
 
-  const hadEngineCodesRef = useRef(false);
+  const hadEngineCodeRef = useRef(false);
   useEffect(() => {
     if (!showForm) {
-      hadEngineCodesRef.current = false;
+      hadEngineCodeRef.current = false;
       return;
     }
-    if (hadEngineCodesRef.current && !hasEngineCodes) {
+    if (hadEngineCodeRef.current && !hasEngineCodes) {
       setFormData((p) => ({ ...p, compatibility_vehicle_model_ids: [] }));
     }
-    hadEngineCodesRef.current = hasEngineCodes;
+    hadEngineCodeRef.current = hasEngineCodes;
     if (!hasEngineCodes) return;
     if (!codeDerivedSync.ready) return;
     setFormData((p) => {
-      const nextVm = codeDerivedSync.vmIds;
-      const prevVm = p.compatibility_vehicle_model_ids || [];
-      const a = [...nextVm].sort((x, y) => x - y);
-      const b = [...prevVm].sort((x, y) => x - y);
-      const sameIds = a.length === b.length && a.every((id, i) => id === b[i]);
-      const { carBrand, carModel } = codeDerivedSync;
-      const same = sameIds && p.brand === carBrand && p.model === carModel;
+      const first = codeDerivedSync.first;
+      if (!first) return p;
+      const same = p.brand === first.brand && p.model === first.model;
       if (same) return p;
       return {
         ...p,
-        compatibility_vehicle_model_ids: nextVm,
-        brand: carBrand,
-        model: carModel,
+        brand: first.brand,
+        model: first.model,
       };
     });
   }, [showForm, hasEngineCodes, codeDerivedSync]);
 
-  const handleToggleEngineCode = useCallback((id) => {
-    setFormData((fd) => {
-      const s = new Set(fd.compatibility_engine_family_ids || []);
-      if (s.has(id)) s.delete(id);
-      else s.add(id);
-      return { ...fd, compatibility_engine_family_ids: [...s] };
-    });
-  }, []);
+  const handleSelectEngineCode = useCallback((value) => {
+    const codeId = value ? Number(value) : null;
+    const selected = Number.isFinite(codeId)
+      ? compatEngineFamilies.find((x) => Number(x.id) === codeId)
+      : null;
+    const first = selected?.compatibility?.[0] || null;
+    setFormData((fd) => ({
+      ...fd,
+      engine_code_id: Number.isFinite(codeId) ? codeId : null,
+      compatibility_engine_family_ids: Number.isFinite(codeId) ? [codeId] : [],
+      brand: first ? (first.brand || '') : fd.brand,
+      model: first ? (first.model || '') : fd.model,
+    }));
+  }, [compatEngineFamilies]);
 
   const handleToggleVehicleModel = useCallback((id) => {
     setFormData((fd) => {
@@ -801,6 +767,7 @@ const Products = () => {
       image_url: p.image_url || '',
       compatibility_engine_family_ids: (p.compatibility?.engine_families || []).map((x) => x.id),
       compatibility_vehicle_model_ids: (p.compatibility?.vehicle_models || []).map((x) => x.id),
+      engine_code_id: p.engine_code?.id || null,
     });
     setImageBlobUrl((prev) => {
       if (prev) URL.revokeObjectURL(prev);
@@ -1542,34 +1509,26 @@ const Products = () => {
                 Марка и модель подставляются из выбранных кодов. Редактирование: «Настройки → Коды» или снимите коды.
               </p>
             )}
-            <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-muted)' }}>Коды из справочника</div>
-            <div className="catalog-chips-scroll" style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-              {compatEngineFamilies.length === 0 && (
-                <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Справочник пуст — задайте в Настройки</span>
-              )}
-              {compatEngineFamilies.map((ef) => {
-                const on = (formData.compatibility_engine_family_ids || []).includes(ef.id);
-                return (
-                  <button
-                    key={ef.id}
-                    type="button"
-                    className={`catalog-chip ${on ? 'catalog-chip-active' : ''}`}
-                    onClick={() => handleToggleEngineCode(ef.id)}
-                    style={{ padding: '7px 14px', fontSize: 13 }}
-                  >
-                    {ef.code}
-                    {ef.name ? ` — ${ef.name}` : ''}
-                  </button>
-                );
-              })}
-            </div>
-            {hasEngineCodes && codeFamilyQueries.some((q) => q.isLoading) && (
+            <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-muted)' }}>Мастер-код двигателя</div>
+            <select
+              className="ios-input"
+              value={formData.engine_code_id || ''}
+              onChange={(e) => handleSelectEngineCode(e.target.value)}
+            >
+              <option value="">Не выбран (универсальный товар)</option>
+              {compatEngineFamilies.map((ef) => (
+                <option key={ef.id} value={ef.id}>
+                  {ef.id}{ef.description ? ` — ${ef.description}` : ''}
+                </option>
+              ))}
+            </select>
+            {hasEngineCodes && isEngineCodeLoading && (
               <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Загрузка данных кода…</div>
             )}
-            {hasEngineCodes && codeFamilyQueries.some((q) => q.isError) && (
+            {hasEngineCodes && isEngineCodeError && (
               <div style={{ fontSize: 12, color: 'var(--danger)' }}>Не удалось загрузить справочник кода. Повторите позже.</div>
             )}
-            {hasEngineCodes && codeDerivedSync.ready && !codeFamilyQueries.some((q) => q.isLoading) && codeDerivedSync.vms && codeDerivedSync.vms.length > 0 && (
+            {hasEngineCodes && codeDerivedSync.ready && codeDerivedSync.list && codeDerivedSync.list.length > 0 && (
               <div
                 style={{
                   border: '1px solid var(--border)',
@@ -1608,17 +1567,17 @@ const Products = () => {
                     </tr>
                   </thead>
                   <tbody>
-                    {codeDerivedSync.vms.map((m) => (
+                    {codeDerivedSync.list.map((m) => (
                       <tr key={m.id} style={{ borderBottom: '1px solid var(--border)' }}>
-                        <td style={{ padding: '6px 10px' }}>{(m.brand && m.brand.name) || '—'}</td>
-                        <td style={{ padding: '6px 10px' }}>{m.name || '—'}</td>
+                        <td style={{ padding: '6px 10px' }}>{m.brand || '—'}</td>
+                        <td style={{ padding: '6px 10px' }}>{m.model || '—'}</td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
             )}
-            {hasEngineCodes && codeDerivedSync.ready && !codeFamilyQueries.some((q) => q.isLoading) && (!codeDerivedSync.vms || codeDerivedSync.vms.length === 0) && (
+            {hasEngineCodes && codeDerivedSync.ready && (!codeDerivedSync.list || codeDerivedSync.list.length === 0) && (
               <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: 0 }}>
                 К выбранным кодам пока не привязаны марки и модели в настройках.
               </p>

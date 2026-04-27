@@ -142,12 +142,14 @@ def ensure_schema_updates():
         ("products.last_sale_date", "ALTER TABLE products ADD COLUMN IF NOT EXISTS last_sale_date TIMESTAMPTZ"),
         ("products.received_at", "ALTER TABLE products ADD COLUMN IF NOT EXISTS received_at TIMESTAMPTZ"),
         ("products.is_active", "ALTER TABLE products ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE NOT NULL"),
+        ("products.engine_code_id", "ALTER TABLE products ADD COLUMN IF NOT EXISTS engine_code_id INTEGER"),
     ]
     for label, sql in product_alters:
         _exec_schema_sql(sql, label)
 
     _exec_schema_sql("CREATE INDEX IF NOT EXISTS idx_products_category_id ON products(category_id)", "products.idx_category_id")
     _exec_schema_sql("CREATE INDEX IF NOT EXISTS idx_products_brand_id ON products(brand_id)", "products.idx_brand_id")
+    _exec_schema_sql("CREATE INDEX IF NOT EXISTS idx_products_engine_code_id ON products(engine_code_id)", "products.idx_engine_code_id")
 
     _exec_schema_sql(
         """
@@ -182,6 +184,23 @@ def ensure_schema_updates():
         END $$;
         """,
         "products.fk_brand_id",
+    )
+    _exec_schema_sql(
+        """
+        DO $$
+        BEGIN
+          IF NOT EXISTS (
+            SELECT 1 FROM pg_constraint WHERE conname = 'fk_products_engine_code_id'
+          ) THEN
+            ALTER TABLE products
+            ADD CONSTRAINT fk_products_engine_code_id
+            FOREIGN KEY (engine_code_id) REFERENCES engine_codes(id) ON DELETE SET NULL;
+          END IF;
+        EXCEPTION WHEN undefined_table THEN
+          NULL;
+        END $$;
+        """,
+        "products.fk_engine_code_id",
     )
 
     # Старая схема: одна колонка price → purchase_price и sale_price
@@ -358,6 +377,8 @@ def ensure_compatibility_tables() -> None:
         return
     try:
         from models import (
+            Compatibility,
+            EngineCode,
             EngineFamily,
             EngineFamilyModel,
             ProductEngineFamilyLink,
@@ -367,6 +388,8 @@ def ensure_compatibility_tables() -> None:
         )
 
         VehicleBrand.__table__.create(engine, checkfirst=True)
+        EngineCode.__table__.create(engine, checkfirst=True)
+        Compatibility.__table__.create(engine, checkfirst=True)
         EngineFamily.__table__.create(engine, checkfirst=True)
         VehicleModel.__table__.create(engine, checkfirst=True)
         EngineFamilyModel.__table__.create(engine, checkfirst=True)
