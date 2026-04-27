@@ -81,6 +81,18 @@ function normalizeVehicleField(raw) {
     .join(' ');
 }
 
+function pickPrimaryVehicleToken(raw) {
+  const normalized = normalizeVehicleField(raw);
+  if (!normalized) return '';
+  return normalized.split(/[ ,]+/).filter(Boolean)[0] || '';
+}
+
+function splitVehicleModels(raw) {
+  const normalized = normalizeVehicleField(raw);
+  if (!normalized) return [];
+  return normalized.split(/[ ,]+/).map((x) => x.trim()).filter(Boolean);
+}
+
 const CAT_COLORS = [
   { bg: '#e8e8fc', color: '#4338ca' },
   { bg: '#d1fae5', color: '#047857' },
@@ -303,8 +315,25 @@ const Products = () => {
   const codeDerivedSync = useMemo(() => {
     if (!hasEngineCodes) return { ready: true, noCodes: true, list: [], first: null };
     if (!selectedEngineCode) return { ready: false, noCodes: false, list: [], first: null };
-    const list = selectedEngineCode.compatibility || [];
-    return { ready: true, noCodes: false, list, first: list[0] || null };
+    const rawList = selectedEngineCode.compatibility || [];
+    const expanded = [];
+    rawList.forEach((item) => {
+      const brand = normalizeVehicleField(item.brand || '');
+      const modelParts = splitVehicleModels(item.model || '');
+      if (!modelParts.length) {
+        expanded.push({ ...item, brand, model: normalizeVehicleField(item.model || '') });
+        return;
+      }
+      modelParts.forEach((part, idx) => {
+        expanded.push({
+          ...item,
+          id: `${item.id}-${idx}`,
+          brand,
+          model: part,
+        });
+      });
+    });
+    return { ready: true, noCodes: false, list: expanded, first: expanded[0] || null };
   }, [hasEngineCodes, selectedEngineCode]);
 
   const hadEngineCodeRef = useRef(false);
@@ -322,12 +351,14 @@ const Products = () => {
     setFormData((p) => {
       const first = codeDerivedSync.first;
       if (!first) return p;
-      const same = p.brand === first.brand && p.model === first.model;
+      const nextBrand = pickPrimaryVehicleToken(first.brand);
+      const nextModel = pickPrimaryVehicleToken(first.model);
+      const same = p.brand === nextBrand && p.model === nextModel;
       if (same) return p;
       return {
         ...p,
-        brand: first.brand,
-        model: first.model,
+        brand: nextBrand,
+        model: nextModel,
       };
     });
   }, [showForm, hasEngineCodes, codeDerivedSync]);
@@ -342,8 +373,8 @@ const Products = () => {
       ...fd,
       engine_code_id: Number.isFinite(codeId) ? codeId : null,
       compatibility_engine_family_ids: Number.isFinite(codeId) ? [codeId] : [],
-      brand: first ? normalizeVehicleField(first.brand || '') : fd.brand,
-      model: first ? normalizeVehicleField(first.model || '') : fd.model,
+      brand: first ? pickPrimaryVehicleToken(first.brand || '') : fd.brand,
+      model: first ? pickPrimaryVehicleToken(first.model || '') : fd.model,
     }));
   }, [compatEngineFamilies]);
 
@@ -1587,8 +1618,8 @@ const Products = () => {
                   <tbody>
                     {codeDerivedSync.list.map((m) => (
                       <tr key={m.id} style={{ borderBottom: '1px solid var(--border)' }}>
-                        <td style={{ padding: '6px 10px' }}>{normalizeVehicleField(m.brand) || '—'}</td>
-                        <td style={{ padding: '6px 10px' }}>{normalizeVehicleField(m.model) || '—'}</td>
+                        <td style={{ padding: '6px 10px' }}>{m.brand || '—'}</td>
+                        <td style={{ padding: '6px 10px' }}>{m.model || '—'}</td>
                       </tr>
                     ))}
                   </tbody>
