@@ -68,9 +68,15 @@ const LabelPrint = ({ isOpen, onClose, product, settings: _settings, initialLabe
   const [custom, setCustom] = useState('');
   const [printing, setPrinting] = useState(false);
   const [sharing, setSharing] = useState(false);
-  /** name_barcode | barcode_only */
-  const [contentLayout, setContentLayout] = useState('barcode_only');
   const [sizeKey, setSizeKey] = useState(labelSizeProp);
+  const getLayoutBySize = (key, codeType) => {
+    if (key === 'small') return { showName: false, showBrand: false };
+    if (key === 'medium') return { showName: true, showBrand: false };
+    if (key === 'large') return { showName: true, showBrand: true };
+    if (codeType === 'barcode') return { showName: false, showBrand: false };
+    return { showName: true, showBrand: false };
+  };
+
 
   const barcodeCanvasRef = useRef(null);
   const [qrPreviewUrl, setQrPreviewUrl] = useState('');
@@ -86,7 +92,6 @@ const LabelPrint = ({ isOpen, onClose, product, settings: _settings, initialLabe
       setCustom('');
       setQrPreviewUrl('');
       setSizeKey(['small', 'medium', 'large'].includes(String(labelSizeProp)) ? labelSizeProp : 'small');
-      setContentLayout(String(labelSizeProp) === 'small' ? 'barcode_only' : 'name_barcode');
     }
   }, [isOpen, initialLabelType, labelSizeProp]);
 
@@ -120,7 +125,7 @@ const LabelPrint = ({ isOpen, onClose, product, settings: _settings, initialLabe
         /* нечитаемый штрих для CODE128/auto */
       }
     }
-  }, [isOpen, type, barcodeVal, contentLayout]);
+  }, [isOpen, type, barcodeVal, sizeKey]);
 
   useEffect(() => {
     if (!isOpen || type !== 'qrcode' || !qrVal) return;
@@ -159,9 +164,14 @@ const LabelPrint = ({ isOpen, onClose, product, settings: _settings, initialLabe
     }
 
     const isQr = type === 'qrcode';
-    const showName = contentLayout === 'name_barcode' && (product.name || '').trim();
+    const layout = getLayoutBySize(sizeKey, type);
+    const showName = layout.showName && (product.name || '').trim();
+    const showBrand = layout.showBrand && (product.brand || '').trim();
     const nameBlock = showName
       ? `<div class="label-name">${escHtml(product.name)}</div>`
+      : '';
+    const brandBlock = showBrand
+      ? `<div class="label-brand">${escHtml(product.brand)}</div>`
       : '';
 
     const codeBlock = codeImgUrl
@@ -173,6 +183,7 @@ const LabelPrint = ({ isOpen, onClose, product, settings: _settings, initialLabe
 
     const labelHtml = `<div class="label ${isQr ? 'label--qr' : 'label--barcode'}">
             ${nameBlock}
+            ${brandBlock}
             ${codeBlock}
           </div>`;
 
@@ -242,6 +253,18 @@ const LabelPrint = ({ isOpen, onClose, product, settings: _settings, initialLabe
       -webkit-line-clamp: 2;
       -webkit-box-orient: vertical;
     }
+    .label-brand {
+      flex-shrink: 0;
+      width: 100%;
+      max-height: 7mm;
+      font-size: ${wmm >= 60 ? 7 : 6}pt;
+      font-weight: 600;
+      line-height: 1.1;
+      padding: 0 1mm 0.5mm;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
     .code-wrap {
       display: flex;
       align-items: center;
@@ -254,7 +277,7 @@ const LabelPrint = ({ isOpen, onClose, product, settings: _settings, initialLabe
       display: block;
       margin: 0 auto;
       max-width: ${maxIn}mm;
-      max-height: ${showName ? (isQr ? '22mm' : '18mm') : isQr ? '26mm' : '22mm'};
+      max-height: ${showName || showBrand ? (isQr ? '20mm' : '16mm') : isQr ? '26mm' : '22mm'};
       width: auto;
       height: auto;
       object-fit: contain;
@@ -468,7 +491,7 @@ const LabelPrint = ({ isOpen, onClose, product, settings: _settings, initialLabe
         {product && (
           <div style={{ padding: '20px 22px' }}>
             <div style={{ marginBottom: 12, fontSize: 12, color: 'var(--text-muted)', textAlign: 'center' }}>
-              Размер: <strong style={{ color: 'var(--text)' }}>{spec.label}</strong> — по умолчанию в настройках «малый», часто печать только штрихкода
+              Размер: <strong style={{ color: 'var(--text)' }}>{spec.label}</strong>
             </div>
 
             <div style={{ marginBottom: 16 }}>
@@ -495,7 +518,6 @@ const LabelPrint = ({ isOpen, onClose, product, settings: _settings, initialLabe
                     type="button"
                     onClick={() => {
                       setSizeKey(x.v);
-                      if (x.v === 'small') setContentLayout('barcode_only');
                     }}
                     style={{
                       flex: 1,
@@ -514,48 +536,6 @@ const LabelPrint = ({ isOpen, onClose, product, settings: _settings, initialLabe
                 ))}
               </div>
             </div>
-
-            {(type === 'barcode' || type === 'qrcode') && (
-              <div style={{ marginBottom: 16 }}>
-                <div
-                  style={{
-                    fontSize: 11,
-                    fontWeight: 700,
-                    color: 'var(--text-muted)',
-                    textTransform: 'uppercase',
-                    letterSpacing: '0.07em',
-                    marginBottom: 10,
-                  }}
-                >
-                  {type === 'qrcode' ? 'Содержимое (QR)' : 'Содержимое (штрих-код)'}
-                </div>
-                <div style={{ display: 'flex', gap: 8 }}>
-                  {[
-                    { v: 'name_barcode', t: type === 'qrcode' ? 'Название + QR' : 'Название + штрих' },
-                    { v: 'barcode_only', t: type === 'qrcode' ? 'Только QR' : 'Только штрих' },
-                  ].map((x) => (
-                    <button
-                      key={x.v}
-                      type="button"
-                      onClick={() => setContentLayout(x.v)}
-                      style={{
-                        flex: 1,
-                        padding: '9px 8px',
-                        borderRadius: 12,
-                        border: `2px solid ${contentLayout === x.v ? 'var(--primary)' : 'var(--border)'}`,
-                        background: contentLayout === x.v ? 'var(--primary-light)' : 'var(--surface)',
-                        color: contentLayout === x.v ? 'var(--primary)' : 'var(--text-secondary)',
-                        fontWeight: 700,
-                        fontSize: 12,
-                        cursor: 'pointer',
-                      }}
-                    >
-                      {x.t}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
 
             <div style={{ marginBottom: 18 }}>
               <div
@@ -638,27 +618,54 @@ const LabelPrint = ({ isOpen, onClose, product, settings: _settings, initialLabe
                     boxSizing: 'border-box',
                   }}
                 >
+                  {(() => {
+                    const layout = getLayoutBySize(sizeKey, type);
+                    const showName = layout.showName && Boolean(product?.name);
+                    const showBrand = layout.showBrand && Boolean(product?.brand);
+                    return (
+                      <>
+                        {showName && (
+                          <div
+                            style={{
+                              fontSize: 12,
+                              fontWeight: 800,
+                              textAlign: 'center',
+                              lineHeight: 1.2,
+                              marginBottom: 6,
+                              color: '#111',
+                              maxHeight: 38,
+                              overflow: 'hidden',
+                              display: '-webkit-box',
+                              WebkitLineClamp: 2,
+                              WebkitBoxOrient: 'vertical',
+                            }}
+                          >
+                            {product.name}
+                          </div>
+                        )}
+                        {showBrand && (
+                          <div
+                            style={{
+                              fontSize: 11,
+                              fontWeight: 600,
+                              textAlign: 'center',
+                              lineHeight: 1.1,
+                              marginBottom: 6,
+                              color: '#333',
+                              maxWidth: '100%',
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                              whiteSpace: 'nowrap',
+                            }}
+                          >
+                            {product.brand}
+                          </div>
+                        )}
+                      </>
+                    );
+                  })()}
                   {type === 'barcode' ? (
                     <>
-                      {contentLayout === 'name_barcode' && product?.name && (
-                        <div
-                          style={{
-                            fontSize: 12,
-                            fontWeight: 800,
-                            textAlign: 'center',
-                            lineHeight: 1.2,
-                            marginBottom: 6,
-                            color: '#111',
-                            maxHeight: 38,
-                            overflow: 'hidden',
-                            display: '-webkit-box',
-                            WebkitLineClamp: 2,
-                            WebkitBoxOrient: 'vertical',
-                          }}
-                        >
-                          {product.name}
-                        </div>
-                      )}
                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 1, minHeight: 0, width: '100%' }}>
                         <canvas ref={barcodeCanvasRef} style={{ maxWidth: '100%', height: 'auto', display: 'block' }} />
                       </div>
@@ -680,25 +687,6 @@ const LabelPrint = ({ isOpen, onClose, product, settings: _settings, initialLabe
                     </>
                   ) : qrPreviewUrl ? (
                     <>
-                      {contentLayout === 'name_barcode' && product?.name && (
-                        <div
-                          style={{
-                            fontSize: 12,
-                            fontWeight: 800,
-                            textAlign: 'center',
-                            lineHeight: 1.2,
-                            marginBottom: 6,
-                            color: '#111',
-                            maxHeight: 38,
-                            overflow: 'hidden',
-                            display: '-webkit-box',
-                            WebkitLineClamp: 2,
-                            WebkitBoxOrient: 'vertical',
-                          }}
-                        >
-                          {product.name}
-                        </div>
-                      )}
                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 1, width: '100%', minHeight: 0 }}>
                         <img
                           src={qrPreviewUrl}
