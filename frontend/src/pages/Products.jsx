@@ -226,6 +226,8 @@ const Products = () => {
   const [showPrint, setShowPrint] = useState(false);
   const [printProduct, setPrintProduct] = useState(null);
   const [printType, setPrintType] = useState('barcode');
+  const [deliveryMode, setDeliveryMode] = useState('normal');
+  const [customDeliveryRate, setCustomDeliveryRate] = useState('800');
   const [showPrintSuggest, setShowPrintSuggest] = useState(false);
   const [savedProduct, setSavedProduct] = useState(null);
 
@@ -282,7 +284,12 @@ const Products = () => {
     staleTime: 120000,
   });
   const cnyRate = Number(settingsRow?.cny_rate) || 65;
-  const deliveryKztPerKg = Number(settingsRow?.delivery_kzt_per_kg) || 800;
+  const settingsDeliveryRate = Number(settingsRow?.delivery_kzt_per_kg) || 800;
+  const deliveryKztPerKg = useMemo(() => {
+    if (deliveryMode === 'express') return 2000;
+    if (deliveryMode === 'custom') return Math.max(0.01, Number(customDeliveryRate) || 0.01);
+    return settingsDeliveryRate;
+  }, [deliveryMode, customDeliveryRate, settingsDeliveryRate]);
 
   const { data: compatEngineFamilies = [] } = useQuery({
     queryKey: ['compatibility', 'engine-codes'],
@@ -835,6 +842,8 @@ const Products = () => {
       return '';
     });
     setShowForm(true); setBarcodeLocked(true); setShowQrPanel(false); setFormError('');
+    setDeliveryMode('normal');
+    setCustomDeliveryRate(String(settingsDeliveryRate || 800));
     setSideProduct(null);
   };
 
@@ -854,6 +863,8 @@ const Products = () => {
     setFormError('');
     setBarcodeLocked(false);
     setShowQrPanel(false);
+    setDeliveryMode('normal');
+    setCustomDeliveryRate(String(settingsDeliveryRate || 800));
     setShowForm(true);
   };
 
@@ -1719,10 +1730,39 @@ const Products = () => {
               style={formData.id ? { border: '1px solid var(--primary)' } : {}}
             />
             <div style={{ fontSize: 12, color: 'var(--text-muted)', alignSelf: 'end', paddingBottom: 10, lineHeight: 1.45 }}>
-              Доставка: 1 кг = <strong style={{ color: 'var(--text)' }}>{deliveryKztPerKg.toLocaleString('ru-RU')} ₸</strong>
-              <br />
-              <span style={{ fontSize: 11 }}>Меняется в «Настройки»</span>
+              Тариф доставки:
+              <strong style={{ color: 'var(--text)', marginLeft: 4 }}>
+                {deliveryKztPerKg.toLocaleString('ru-RU')} ₸/кг
+              </strong>
             </div>
+          </div>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            {[
+              { id: 'custom', label: 'Своя цена' },
+              { id: 'normal', label: `Обычная (${settingsDeliveryRate} ₸/кг)` },
+              { id: 'express', label: 'Экспресс (2000 ₸/кг)' },
+            ].map((mode) => (
+              <button
+                key={mode.id}
+                type="button"
+                className={`catalog-chip ${deliveryMode === mode.id ? 'catalog-chip-active' : ''}`}
+                onClick={() => setDeliveryMode(mode.id)}
+              >
+                {mode.label}
+              </button>
+            ))}
+            {deliveryMode === 'custom' && (
+              <input
+                className="ios-input"
+                type="number"
+                min="0.01"
+                step="0.01"
+                value={customDeliveryRate}
+                onChange={(e) => setCustomDeliveryRate(e.target.value)}
+                placeholder="Свой тариф за кг"
+                style={{ maxWidth: 180 }}
+              />
+            )}
           </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>

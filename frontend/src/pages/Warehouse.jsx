@@ -6,6 +6,8 @@ import { productsApi } from '../api/products';
 import { resolveUploadedAssetUrl } from '../api/client';
 import { settingsApi } from '../api/settings';
 import { Button, Modal, Input, Badge } from '../components/ui';
+import { FiCamera } from 'react-icons/fi';
+import CameraBarcodeScanner from '../components/CameraBarcodeScanner';
 
 const emptyForm = {
   id: null,
@@ -48,6 +50,8 @@ const fuzzyMatch = (needle, haystack) => {
   return false;
 };
 
+const normalizeScanCode = (s) => String(s ?? '').replaceAll('\u0000', '').replace(/[\s\r\n\t]+/g, '').trim();
+
 const Warehouse = () => {
   const [search, setSearch] = useState('');
   const [, setSelectedProduct] = useState(null);
@@ -60,6 +64,7 @@ const Warehouse = () => {
   const [imageUploadPct, setImageUploadPct] = useState(null);
   const [imagePreviewBust, setImagePreviewBust] = useState(0);
   const [imageBlobUrl, setImageBlobUrl] = useState('');
+  const [showCameraScanner, setShowCameraScanner] = useState(false);
   const queryClient = useQueryClient();
 
   const { data: products = [], isLoading } = useQuery({
@@ -285,6 +290,14 @@ const Warehouse = () => {
               value={search}
               onChange={(event) => setSearch(event.target.value)}
             />
+            <button
+              type="button"
+              className="button button-secondary"
+              onClick={() => setShowCameraScanner(true)}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+            >
+              <FiCamera size={16} /> Камера
+            </button>
           </div>
         </div>
 
@@ -558,6 +571,25 @@ const Warehouse = () => {
         settings={settings}
         initialLabelType={printType}
         labelSize={settings?.label_size || 'small'}
+      />
+      <CameraBarcodeScanner
+        isOpen={showCameraScanner}
+        onClose={() => setShowCameraScanner(false)}
+        onDetected={(code) => {
+          const normalized = normalizeScanCode(code);
+          if (!normalized) return;
+          const found = products.find((p) => {
+            const pb = normalizeScanCode(p.barcode);
+            const ps = normalizeScanCode(p.sku);
+            return (pb && pb === normalized) || (ps && ps === normalized);
+          });
+          if (found) {
+            openProduct(found);
+            return;
+          }
+          setSearch(normalized);
+          toast.error('Товар с таким кодом не найден');
+        }}
       />
     </div>
   );

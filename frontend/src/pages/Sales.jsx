@@ -4,9 +4,10 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 import {
   FiSearch, FiGrid, FiShoppingCart, FiX, FiPlus, FiMinus,
-  FiZap,
+  FiZap, FiCamera,
 } from 'react-icons/fi';
 import { saleApi, fetchAllProducts, productApi, getApiErrorMessage } from '../api/client';
+import CameraBarcodeScanner from '../components/CameraBarcodeScanner';
 
 /* ── helpers ── */
 const num = (v) => { const n = parseFloat(String(v || 0).replace(',', '.')); return Number.isFinite(n) ? n : 0; };
@@ -46,6 +47,7 @@ const Sales = () => {
   const [barcodeInput, setBarcodeInput] = useState('');
   const [scanFlash, setScanFlash] = useState(null); // 'ok' | 'err' | null
   const [scannedResult, setScannedResult] = useState(null); // { product, barcode, found }
+  const [showCameraScanner, setShowCameraScanner] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
   const [successAmount, setSuccessAmount] = useState(0);
   /** Индекс позиции чека для карточки «подробнее» (марка, описание…) */
@@ -453,6 +455,13 @@ const Sales = () => {
               {scanFlash === 'ok' ? 'Штрих-код распознан' : scanFlash === 'err' ? 'Товар не найден' : 'Наведите сканер или найдите товар выше'}
             </div>
             {!scanFlash && <div style={{ fontSize: 12, color: 'var(--text-muted)', textAlign: 'center' }}>Сканер ведёт ввод здесь — отправьте Enter</div>}
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); setShowCameraScanner(true); }}
+              style={{ border: '1px solid var(--border)', background: 'var(--surface)', borderRadius: 12, padding: '8px 10px', fontWeight: 600, fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 6 }}
+            >
+              <FiCamera size={14} /> Камера (телефон)
+            </button>
             <input
               ref={barcodeRef}
               type="text"
@@ -562,6 +571,11 @@ const Sales = () => {
         </div>
         <div style={{ width: 100 }} />
       </nav>
+      <CameraBarcodeScanner
+        isOpen={showCameraScanner}
+        onClose={() => setShowCameraScanner(false)}
+        onDetected={(code) => handleBarcodeScan(code)}
+      />
     </div>
   );
 };
