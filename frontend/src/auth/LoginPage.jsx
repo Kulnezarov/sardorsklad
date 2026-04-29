@@ -85,13 +85,13 @@ const LoginPage = () => {
           </button>
 
           <div className="login-footer">
-            <p className="login-footer-text">Доступ выдаёт администратор</p>
+            <p className="login-footer-text">Доступ выдаёт Сардор</p>
           </div>
         </form>
       </div>
       
       <p className="login-copyright">
-        © 2026 SkladPro. Все права защищены.
+        © 2026 SkladPro. У вас нету прав.
       </p>
     </div>
   );
