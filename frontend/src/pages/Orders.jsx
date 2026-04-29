@@ -88,8 +88,6 @@ function buildWhatsappText(order) {
     `Вы оформили заказ ${code} на сайте (источник: ${src}).`,
     `Дата: ${when}.`,
     `Сумма заказа: ${sum} ₸.`,
-    `Контактное имя: ${name}.`,
-    `Телефон: ${phone}.`,
     lines.length ? `Позиции:\n${lines.join('\n')}` : null,
     order.notes && String(order.notes).trim() ? `Комментарий и доставка:\n${String(order.notes).trim()}` : null,
   ]
