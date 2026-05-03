@@ -19,4 +19,6 @@ export const productsApi = {
     });
   },
   deleteProductImage: (id) => apiClient.delete(`/api/v1/products/${id}/image`),
+  deleteProductGalleryImage: (id, fileName) =>
+    apiClient.delete(`/api/v1/products/${id}/images/${encodeURIComponent(fileName)}`),
 };

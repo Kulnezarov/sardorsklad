@@ -45,6 +45,8 @@ MAX_IMAGE_SIZE_BYTES = 5 * 1024 * 1024
 ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp"}
 MAX_IMAGE_DIMENSION = 1600
 WEBP_QUALITY = 78
+MAX_PRODUCT_IMAGES = 12
+_SAFE_WEBP_BASENAME = re.compile(r"^\d+_[0-9a-f]{32}\.webp$", re.IGNORECASE)
 
 
 def _normalize_vehicle_text(value: str | None) -> str | None:
@@ -75,7 +77,7 @@ def _delete_old_product_image_file(old_url: str | None) -> None:
         name = p.rsplit("/", 1)[-1]
     else:
         return
-    if not re.match(r"^\d+_[0-9a-f]{32}\.webp$", name, re.IGNORECASE):
+    if not _SAFE_WEBP_BASENAME.match(name):
         return
     path = (PRODUCT_IMAGE_DIR / name).resolve()
     try:
@@ -92,12 +94,14 @@ def _delete_old_product_image_file(old_url: str | None) -> None:
 def _product_to_response_lite(p: models.Product) -> schemas.ProductResponse:
     """Список товаров: без N+1 по совместимости — смотрите product.model (кэш)."""
     r = schemas.ProductResponse.model_validate(p, from_attributes=True)
+    r = _inject_product_gallery(r, p)
     return r.model_copy(update={"compatibility": schemas.ProductCompatibilityOut()})
 
 
 def _product_to_response(db: Session, p: models.Product) -> schemas.ProductResponse:
     comp = build_compatibility_out(db, p.id)
     r = schemas.ProductResponse.model_validate(p, from_attributes=True)
+    r = _inject_product_gallery(r, p)
     engine_code = None
     if p.engine_code_id:
         ec = db.query(models.EngineCode).filter(models.EngineCode.id == p.engine_code_id).first()
@@ -142,6 +146,62 @@ def _prepare_for_webp(img: Image.Image) -> Image.Image:
     has_a = "A" in (img.getbands() or ())
     tr = bool(getattr(img, "has_transparency_data", False) or has_a)
     return img.convert("RGBA" if tr else "RGB")
+
+
+def _product_gallery_urls(p: models.Product) -> list[str]:
+    raw = getattr(p, "image_urls", None)
+    urls: list[str] = []
+    if isinstance(raw, list):
+        for u in raw:
+            s = (str(u) if u is not None else "").strip().split("?")[0].strip()
+            if s:
+                urls.append(s)
+    seen: set[str] = set()
+    out: list[str] = []
+    for u in urls:
+        if u not in seen:
+            seen.add(u)
+            out.append(u)
+    legacy = (getattr(p, "image_url", None) or "").strip().split("?")[0].strip()
+    if not out and legacy:
+        out = [legacy]
+    return out
+
+
+def _persist_product_gallery(db_product: models.Product, urls: list[str]) -> None:
+    clean: list[str] = []
+    seen: set[str] = set()
+    for u in urls:
+        s = (u or "").strip().split("?")[0].strip()
+        if not s or s in seen:
+            continue
+        seen.add(s)
+        clean.append(s)
+    db_product.image_urls = clean if clean else None
+    db_product.image_url = clean[0] if clean else None
+
+
+def _bytes_to_webp(data: bytes) -> tuple[bytes, int, int]:
+    with Image.open(BytesIO(data)) as img:
+        img = ImageOps.exif_transpose(img)
+        img = _prepare_for_webp(img)
+        img.thumbnail((MAX_IMAGE_DIMENSION, MAX_IMAGE_DIMENSION), Image.Resampling.LANCZOS)
+        w, h = int(img.size[0] or 0), int(img.size[1] or 0)
+        out = BytesIO()
+        img.save(
+            out,
+            format="WEBP",
+            quality=WEBP_QUALITY,
+            method=6,
+            lossless=False,
+            optimize=True,
+        )
+        return out.getvalue(), w, h
+
+
+def _inject_product_gallery(r: schemas.ProductResponse, p: models.Product) -> schemas.ProductResponse:
+    urls = _product_gallery_urls(p)
+    return r.model_copy(update={"image_urls": urls, "image_url": urls[0] if urls else None})
 
 
 @router.get("/", response_model=List[schemas.ProductResponse])
@@ -365,8 +425,10 @@ def product_images_health(
         db.query(models.Product)
         .filter(
             models.Product.is_active.is_(True),
-            models.Product.image_url.isnot(None),
-            models.Product.image_url != "",
+            or_(
+                models.Product.image_url.isnot(None),
+                models.Product.image_urls.isnot(None),
+            ),
         )
         .order_by(models.Product.id)
         .limit(limit)
@@ -375,28 +437,30 @@ def product_images_health(
     broken: list[dict] = []
     ok_count = 0
     for p in rows:
-        u = (p.image_url or "").strip()
-        if not u or not (u.startswith("/api/v1/media/product-images/") or u.startswith("/uploads/products/")):
+        gallery = _product_gallery_urls(p)
+        if not gallery:
             ok_count += 1
             continue
-        if u.startswith("/api/v1/media/product-images/"):
+        for u in gallery:
+            u = u.strip()
+            if not u or not (u.startswith("/api/v1/media/product-images/") or u.startswith("/uploads/products/")):
+                ok_count += 1
+                continue
             name = u.rsplit("/", 1)[-1]
-        else:
-            name = u.rsplit("/", 1)[-1]
-        if not re.match(r"^\d+_[0-9a-f]{32}\.webp$", name, re.IGNORECASE):
-            ok_count += 1
-            continue
-        path = (PRODUCT_IMAGE_DIR / name).resolve()
-        if path.is_file():
-            ok_count += 1
-        else:
-            broken.append(
-                {
-                    "product_id": p.id,
-                    "image_url": u,
-                    "reason": "file_not_found",
-                }
-            )
+            if not _SAFE_WEBP_BASENAME.match(name):
+                ok_count += 1
+                continue
+            path = (PRODUCT_IMAGE_DIR / name).resolve()
+            if path.is_file():
+                ok_count += 1
+            else:
+                broken.append(
+                    {
+                        "product_id": p.id,
+                        "image_url": u,
+                        "reason": "file_not_found",
+                    }
+                )
     return {
         "total_checked": len(rows),
         "ok_count": ok_count,
@@ -419,6 +483,8 @@ def create_product(
     current_user: models.User = Depends(require_manager_or_admin),
 ):
     payload = product.model_dump()
+    payload.pop("image_url", None)
+    payload.pop("image_urls", None)
     payload["sku"] = payload.get("sku") or build_generated_sku(db)
 
     if payload.get("barcode"):
@@ -489,6 +555,8 @@ def update_product(
         raise HTTPException(status_code=404, detail="Product not found")
 
     update_data = product_update.model_dump(exclude_unset=True)
+    update_data.pop("image_url", None)
+    update_data.pop("image_urls", None)
 
     if "sku" in update_data and update_data["sku"] and update_data["sku"] != db_product.sku:
         existing = db.query(models.Product).filter(
@@ -605,23 +673,15 @@ async def upload_product_image(
         logging.error("Unsupported upload content type: %s", content_type)
         raise HTTPException(status_code=400, detail="Ожидается изображение JPG, PNG или WEBP")
 
+    cur = _product_gallery_urls(db_product)
+    if len(cur) >= MAX_PRODUCT_IMAGES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Не больше {MAX_PRODUCT_IMAGES} фото на товар",
+        )
+
     try:
-        with Image.open(BytesIO(data)) as img:
-            img = ImageOps.exif_transpose(img)
-            img = _prepare_for_webp(img)
-            img.thumbnail((MAX_IMAGE_DIMENSION, MAX_IMAGE_DIMENSION), Image.Resampling.LANCZOS)
-            w, h = int(img.size[0] or 0), int(img.size[1] or 0)
-            out = BytesIO()
-            # Универсальный конвертер: любой распознанный Pillow формат -> WebP.
-            img.save(
-                out,
-                format="WEBP",
-                quality=78,
-                method=6,
-                lossless=False,
-                optimize=True,
-            )
-            encoded = out.getvalue()
+        encoded, w, h = _bytes_to_webp(data)
     except UnidentifiedImageError as e:
         logging.error("Unsupported image format for product %s: %s", product_id, e, exc_info=True)
         raise HTTPException(status_code=400, detail="Неподдерживаемый формат изображения")
@@ -634,16 +694,16 @@ async def upload_product_image(
     file_path = PRODUCT_IMAGE_DIR / file_name
     file_path.write_bytes(encoded)
 
-    # Удаляем старый локальный WebP (старые записи: /uploads/products/; новые: /api/v1/media/...).
-    _delete_old_product_image_file((db_product.image_url or "").strip())
-
     # Публичный URL под тем же /api/v1, что и REST — Caddy: handle /api* → backend (браузер в <img> без JWT).
-    db_product.image_url = f"/api/v1/media/product-images/{file_name}"
+    new_url = f"/api/v1/media/product-images/{file_name}"
+    _persist_product_gallery(db_product, cur + [new_url])
     db.commit()
     db.refresh(db_product)
+    gallery = _product_gallery_urls(db_product)
     return {
         "ok": True,
-        "image_url": db_product.image_url,
+        "image_url": gallery[0] if gallery else None,
+        "image_urls": gallery,
         "size_bytes": len(encoded),
         "width": w,
         "height": h,
@@ -659,11 +719,41 @@ def delete_product_image(
     if not db_product:
         raise HTTPException(status_code=404, detail="Product not found")
 
-    _delete_old_product_image_file((db_product.image_url or "").strip())
-    db_product.image_url = None
+    for u in _product_gallery_urls(db_product):
+        _delete_old_product_image_file(u)
+    _persist_product_gallery(db_product, [])
     db.commit()
     db.refresh(db_product)
-    return {"ok": True, "image_url": db_product.image_url}
+    return {"ok": True, "image_url": None, "image_urls": []}
+
+
+@router.delete("/{product_id}/images/{file_name}")
+def delete_product_gallery_image(
+    product_id: int,
+    file_name: str,
+    db: Session = Depends(get_db),
+):
+    """Удалить одно фото галереи по имени файла (напр. 12_a1b2....webp)."""
+    base = (file_name or "").strip().rsplit("/", 1)[-1]
+    if not _SAFE_WEBP_BASENAME.match(base) or not base.lower().startswith(f"{product_id}_".lower()):
+        raise HTTPException(status_code=400, detail="Некорректное имя файла")
+    db_product = db.query(models.Product).filter(models.Product.id == product_id).first()
+    if not db_product:
+        raise HTTPException(status_code=404, detail="Product not found")
+    gallery = _product_gallery_urls(db_product)
+    to_remove: str | None = None
+    for u in gallery:
+        if u.rsplit("/", 1)[-1].lower() == base.lower():
+            to_remove = u
+            break
+    if not to_remove:
+        raise HTTPException(status_code=404, detail="Фото не найдено у этого товара")
+    _delete_old_product_image_file(to_remove)
+    _persist_product_gallery(db_product, [u for u in gallery if u != to_remove])
+    db.commit()
+    db.refresh(db_product)
+    urls = _product_gallery_urls(db_product)
+    return {"ok": True, "image_url": urls[0] if urls else None, "image_urls": urls}
 
 
 @router.delete("/{product_id}")
@@ -680,8 +770,10 @@ def delete_product(
     if not db_product.is_active:
         return JSONResponse({"ok": True, "already_inactive": True})
 
-    # При архивировании удаляем связанный файл изображения (если это наш uploads/products WebP).
-    _delete_old_product_image_file((db_product.image_url or "").strip())
+    # При архивировании удаляем локальные WebP галереи.
+    for u in _product_gallery_urls(db_product):
+        _delete_old_product_image_file(u)
+    _persist_product_gallery(db_product, [])
 
     db_product.is_active = False
     write_audit_log(

@@ -330,6 +330,7 @@ class ProductResponse(ProductBase):
     updated_at: Optional[datetime]
     last_sale_date: Optional[datetime]
     received_at: Optional[datetime] = None
+    image_urls: List[str] = Field(default_factory=list)
     compatibility: ProductCompatibilityOut = Field(default_factory=ProductCompatibilityOut)
     engine_code: Optional[EngineCodeBrief] = None
 
@@ -782,6 +783,7 @@ class PublicProductResponse(BaseModel):
     quantity: int
     category_id: Optional[int] = None
     image_url: Optional[str] = None
+    image_urls: List[str] = Field(default_factory=list)
     category_name: Optional[str] = None
     brand_id: Optional[int] = None
     brand_name: Optional[str] = None

@@ -209,6 +209,8 @@ export const productApi = {
     })
   },
   deleteProductImage: (id) => apiClient.delete(`/api/v1/products/${id}/image`),
+  deleteProductGalleryImage: (id, fileName) =>
+    apiClient.delete(`/api/v1/products/${id}/images/${encodeURIComponent(fileName)}`),
   exportExcel: (filters = {}) =>
     apiClient.get('/api/v1/products/export/excel', {
       params: filters,

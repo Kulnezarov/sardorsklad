@@ -127,6 +127,7 @@ def ensure_schema_updates():
         ("products.category_id", "ALTER TABLE products ADD COLUMN IF NOT EXISTS category_id INTEGER"),
         ("products.brand_id", "ALTER TABLE products ADD COLUMN IF NOT EXISTS brand_id INTEGER"),
         ("products.image_url", "ALTER TABLE products ADD COLUMN IF NOT EXISTS image_url TEXT"),
+        ("products.image_urls", "ALTER TABLE products ADD COLUMN IF NOT EXISTS image_urls JSONB"),
         ("products.purchase_price", "ALTER TABLE products ADD COLUMN IF NOT EXISTS purchase_price NUMERIC(10, 2) DEFAULT 0 NOT NULL"),
         ("products.sale_price", "ALTER TABLE products ADD COLUMN IF NOT EXISTS sale_price NUMERIC(10, 2) DEFAULT 0 NOT NULL"),
         ("products.cny_price", "ALTER TABLE products ADD COLUMN IF NOT EXISTS cny_price NUMERIC(10, 2)"),
@@ -231,6 +232,28 @@ def ensure_schema_updates():
         WHERE image_url LIKE '/uploads/products/%';
         """,
         "products.migrate_image_url_to_api_media",
+    )
+
+    _exec_schema_sql(
+        """
+        UPDATE products
+        SET image_urls = jsonb_build_array(trim(image_url))
+        WHERE image_urls IS NULL
+          AND image_url IS NOT NULL
+          AND trim(image_url) <> '';
+        """,
+        "products.backfill_image_urls_from_image_url",
+    )
+
+    _exec_schema_sql(
+        """
+        UPDATE products
+        SET image_url = trim(image_urls->>0)
+        WHERE image_urls IS NOT NULL
+          AND jsonb_array_length(image_urls) > 0
+          AND (image_url IS NULL OR trim(image_url) = '');
+        """,
+        "products.sync_image_url_from_image_urls",
     )
 
     # GENERATED profit_percent (как в модели SQLAlchemy)

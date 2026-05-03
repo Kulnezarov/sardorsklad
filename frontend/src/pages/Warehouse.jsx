@@ -3,11 +3,26 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 import LabelPrint from '../components/LabelPrint';
 import { productsApi } from '../api/products';
-import { resolveUploadedAssetUrl } from '../api/client';
+import { resolveUploadedAssetUrl, getApiErrorMessage } from '../api/client';
 import { settingsApi } from '../api/settings';
 import { Button, Modal, Input, Badge } from '../components/ui';
-import { FiCamera } from 'react-icons/fi';
+import { FiCamera, FiPlus, FiTrash2, FiX } from 'react-icons/fi';
 import CameraBarcodeScanner from '../components/CameraBarcodeScanner';
+
+const MAX_PRODUCT_PHOTOS = 12;
+
+function normalizeProductGallery(p) {
+  const raw = Array.isArray(p?.image_urls) ? p.image_urls : [];
+  const urls = [...new Set(raw.map((u) => String(u || '').split('?')[0].trim()).filter(Boolean))];
+  const legacy = String(p?.image_url || '').split('?')[0].trim();
+  if (!urls.length && legacy) return [legacy];
+  return urls;
+}
+
+function basenameFromProductImageUrl(url) {
+  const base = String(url || '').split('?')[0].trim();
+  return base.split('/').pop() || '';
+}
 
 const emptyForm = {
   id: null,
@@ -28,6 +43,7 @@ const emptyForm = {
   location_zone: '',
   description: '',
   image_url: '',
+  image_urls: [],
 };
 
 const normalize = (value) =>
@@ -64,6 +80,7 @@ const Warehouse = () => {
   const [imageUploadPct, setImageUploadPct] = useState(null);
   const [imagePreviewBust, setImagePreviewBust] = useState(0);
   const [imageBlobUrl, setImageBlobUrl] = useState('');
+  const [galleryFocusIdx, setGalleryFocusIdx] = useState(0);
   const [showCameraScanner, setShowCameraScanner] = useState(false);
   const queryClient = useQueryClient();
 
@@ -90,10 +107,11 @@ const Warehouse = () => {
         : productsApi.createProduct(payload),
     onSuccess: (response) => {
       const saved = response.data;
+      const urls = normalizeProductGallery(saved);
       toast.success(formData.id ? 'Товар обновлён' : 'Товар создан');
       queryClient.invalidateQueries({ queryKey: ['products'] });
       setSelectedProduct(saved);
-      setFormData(saved);
+      setFormData({ ...saved, image_urls: urls, image_url: urls[0] || '' });
     },
     onError: (error) => {
       toast.error(error.response?.data?.detail || 'Не удалось сохранить товар');
@@ -117,6 +135,7 @@ const Warehouse = () => {
   }, [products, search]);
 
   const closeEditor = () => {
+    setGalleryFocusIdx(0);
     setImageBlobUrl((p) => {
       if (p) URL.revokeObjectURL(p);
       return '';
@@ -125,6 +144,7 @@ const Warehouse = () => {
   };
 
   const openNewProduct = () => {
+    setGalleryFocusIdx(0);
     setImageBlobUrl((p) => {
       if (p) URL.revokeObjectURL(p);
       return '';
@@ -137,16 +157,20 @@ const Warehouse = () => {
   };
 
   const openProduct = (product) => {
+    setGalleryFocusIdx(0);
     setImageBlobUrl((p) => {
       if (p) URL.revokeObjectURL(p);
       return '';
     });
+    const urls = normalizeProductGallery(product);
     setSelectedProduct(product);
     setFormData({
       ...emptyForm,
       ...product,
       cny_price: product.cny_price || 0,
       min_quantity: product.min_quantity || 0,
+      image_urls: urls,
+      image_url: urls[0] || '',
     });
     setBarcodeLocked(true);
     setPrintType('barcode');
@@ -181,75 +205,103 @@ const Warehouse = () => {
 
   const productImageThumbSrc = () => {
     if (imageBlobUrl) return imageBlobUrl;
-    if (formData.image_url) return productImageDisplaySrc(formData.image_url);
+    const urls = formData.image_urls || [];
+    const u = urls[galleryFocusIdx] ?? urls[0];
+    if (u) return productImageDisplaySrc(u);
     return '';
   };
 
   const handleUploadImage = async (event) => {
-    const file = event.target.files?.[0];
+    const files = [...(event.target.files || [])];
     event.target.value = '';
-    if (!file) return;
+    if (!files.length) return;
     if (!formData.id) {
       toast.error('Сначала сохраните товар, потом загрузите фото');
       return;
     }
-    if (!file.type.startsWith('image/')) {
-      toast.error('Выберите файл изображения');
+    const bad = files.find((f) => !f.type.startsWith('image/'));
+    if (bad) {
+      toast.error('Выберите файлы изображений');
       return;
+    }
+    let slots = MAX_PRODUCT_PHOTOS - (formData.image_urls || []).length;
+    if (slots <= 0) {
+      toast.error(`Не больше ${MAX_PRODUCT_PHOTOS} фото`);
+      return;
+    }
+    const queue = files.slice(0, slots);
+    if (files.length > queue.length) {
+      toast.error(`Максимум ${MAX_PRODUCT_PHOTOS} фото на товар`);
     }
     setImageBlobUrl((prev) => {
       if (prev) URL.revokeObjectURL(prev);
-      return URL.createObjectURL(file);
+      return queue[0] ? URL.createObjectURL(queue[0]) : '';
     });
     setImageUploading(true);
     setImageUploadPct(0);
     try {
-      const response = await productsApi.uploadProductImage(formData.id, file, {
-        onUploadProgress: (ev) => {
-          if (ev.total) {
-            setImageUploadPct(Math.min(100, Math.round((ev.loaded * 100) / ev.total)));
-          } else {
-            setImageUploadPct((p) => (p == null ? 5 : Math.min(95, (p || 0) + 8)));
-          }
-        },
-      });
-      const imageUrl = (response?.data?.image_url || '').split('?')[0].trim();
-      if (!imageUrl) {
-        toast.error('Сервер не вернул путь к фото');
-        return;
+      let lastResponse = null;
+      for (let i = 0; i < queue.length; i += 1) {
+        const file = queue[i];
+        const response = await productsApi.uploadProductImage(formData.id, file, {
+          onUploadProgress: (ev) => {
+            const slice = 100 / queue.length;
+            const base = (i / queue.length) * 100;
+            if (ev.total) {
+              const local = Math.min(100, Math.round((ev.loaded * 100) / ev.total));
+              setImageUploadPct(Math.min(100, Math.round(base + (local / 100) * slice)));
+            } else {
+              setImageUploadPct((p) => (p == null ? Math.round(base + slice * 0.1) : Math.min(99, (p || 0) + 2)));
+            }
+          },
+        });
+        lastResponse = response;
+        const urls = response?.data?.image_urls;
+        if (!Array.isArray(urls) || !urls.length) {
+          toast.error('Сервер не вернул список фото');
+          return;
+        }
+        setFormData((prev) => ({ ...prev, image_urls: urls, image_url: urls[0] || '' }));
+        setSelectedProduct((prev) => (prev ? { ...prev, image_urls: urls, image_url: urls[0] || '' } : prev));
+        setGalleryFocusIdx(urls.length - 1);
       }
-      setFormData((prev) => ({ ...prev, image_url: imageUrl }));
       setImagePreviewBust(Date.now());
       setImageBlobUrl((prev) => {
         if (prev) URL.revokeObjectURL(prev);
         return '';
       });
-      setSelectedProduct((prev) => (prev ? { ...prev, image_url: imageUrl } : prev));
       queryClient.invalidateQueries({ queryKey: ['products'] });
-      const w = response?.data?.width;
-      const h = response?.data?.height;
-      const b = response?.data?.size_bytes;
+      const w = lastResponse?.data?.width;
+      const h = lastResponse?.data?.height;
+      const b = lastResponse?.data?.size_bytes;
       const dim = w && h ? ` ${w}×${h} px` : '';
       const sz = b != null ? `, ${(b / 1024).toFixed(1)} КБ` : '';
-      toast.success(`Фото сохранено${dim}${sz}`);
+      const n = queue.length;
+      toast.success(n > 1 ? `Загружено фото: ${n}${dim}${sz}` : `Фото сохранено${dim}${sz}`);
     } catch (error) {
-      toast.error(error.response?.data?.detail || 'Не удалось загрузить фото');
+      toast.error(getApiErrorMessage(error, 'Не удалось загрузить фото'));
     } finally {
       setImageUploading(false);
       setImageUploadPct(null);
     }
   };
 
-  const handleDeleteImage = async () => {
+  const handleDeleteGalleryOne = async (url) => {
     if (!formData.id) {
       toast.error('Сначала сохраните товар');
       return;
     }
-    if (!formData.image_url) return;
+    const base = basenameFromProductImageUrl(url);
+    if (!base) return;
     try {
-      await productsApi.deleteProductImage(formData.id);
-      setFormData((prev) => ({ ...prev, image_url: '' }));
-      setSelectedProduct((prev) => (prev ? { ...prev, image_url: '' } : prev));
+      const { data } = await productsApi.deleteProductGalleryImage(formData.id, base);
+      const urls = Array.isArray(data?.image_urls) ? data.image_urls : [];
+      setFormData((prev) => ({ ...prev, image_urls: urls, image_url: urls[0] || '' }));
+      setSelectedProduct((prev) => (prev ? { ...prev, image_urls: urls, image_url: urls[0] || '' } : prev));
+      setGalleryFocusIdx((idx) => {
+        if (!urls.length) return 0;
+        return Math.min(idx, urls.length - 1);
+      });
       setImagePreviewBust(Date.now());
       setImageBlobUrl((prev) => {
         if (prev) URL.revokeObjectURL(prev);
@@ -258,7 +310,30 @@ const Warehouse = () => {
       queryClient.invalidateQueries({ queryKey: ['products'] });
       toast.success('Фото удалено');
     } catch (error) {
-      toast.error(error.response?.data?.detail || 'Не удалось удалить фото');
+      toast.error(getApiErrorMessage(error, 'Не удалось удалить фото'));
+    }
+  };
+
+  const handleDeleteImage = async () => {
+    if (!formData.id) {
+      toast.error('Сначала сохраните товар');
+      return;
+    }
+    if (!(formData.image_urls || []).length) return;
+    try {
+      await productsApi.deleteProductImage(formData.id);
+      setFormData((prev) => ({ ...prev, image_url: '', image_urls: [] }));
+      setSelectedProduct((prev) => (prev ? { ...prev, image_url: '', image_urls: [] } : prev));
+      setGalleryFocusIdx(0);
+      setImagePreviewBust(Date.now());
+      setImageBlobUrl((prev) => {
+        if (prev) URL.revokeObjectURL(prev);
+        return '';
+      });
+      queryClient.invalidateQueries({ queryKey: ['products'] });
+      toast.success('Все фото удалены');
+    } catch (error) {
+      toast.error(getApiErrorMessage(error, 'Не удалось удалить фото'));
     }
   };
 
@@ -481,15 +556,18 @@ const Warehouse = () => {
           </label>
 
           <div className="surface-card" style={{ padding: 12 }}>
-            <div className="section-note" style={{ marginBottom: 8 }}>
+            <div className="section-note" style={{ marginBottom: 4 }}>
               Фото товара
             </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxWidth: 360 }}>
+            <div className="muted-text" style={{ fontSize: 12, marginBottom: 10 }}>
+              До {MAX_PRODUCT_PHOTOS} снимков · на сервере WebP · сначала сохраните карточку
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10, maxWidth: 440 }}>
               <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start', flexWrap: 'wrap' }}>
                 <div
                   style={{
-                    width: 96,
-                    height: 96,
+                    width: 112,
+                    height: 112,
                     borderRadius: 12,
                     border: '1px solid var(--border)',
                     overflow: 'hidden',
@@ -497,6 +575,7 @@ const Warehouse = () => {
                     alignItems: 'center',
                     justifyContent: 'center',
                     background: 'var(--surface)',
+                    flexShrink: 0,
                   }}
                 >
                   {productImageThumbSrc() ? (
@@ -509,30 +588,45 @@ const Warehouse = () => {
                     <span className="muted-text" style={{ fontSize: 12 }}>Нет фото</span>
                   )}
                 </div>
-                <div style={{ flex: 1, minWidth: 180 }}>
-                  <label className="button button-secondary" style={{ cursor: formData.id && !imageUploading ? 'pointer' : 'not-allowed', opacity: formData.id && !imageUploading ? 1 : 0.6, display: 'inline-block' }}>
-                    {imageUploading ? `Загрузка${imageUploadPct != null ? ` ${imageUploadPct}%` : '...'}` : formData.image_url ? 'Заменить фото' : 'Загрузить фото'}
-                    <input
-                      type="file"
-                      accept="image/png,image/jpeg,image/webp"
-                      onChange={handleUploadImage}
-                      disabled={!formData.id || imageUploading}
-                      style={{ display: 'none' }}
-                    />
-                  </label>
-                  {formData.image_url && (
-                    <button
-                      type="button"
+                <div style={{ flex: 1, minWidth: 180, display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                    <label
                       className="button button-secondary"
-                      onClick={handleDeleteImage}
-                      disabled={imageUploading}
-                      style={{ marginLeft: 8, opacity: imageUploading ? 0.6 : 1 }}
+                      style={{
+                        cursor: formData.id && !imageUploading ? 'pointer' : 'not-allowed',
+                        opacity: formData.id && !imageUploading ? 1 : 0.6,
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 6,
+                      }}
                     >
-                      Удалить фото
-                    </button>
-                  )}
+                      <FiPlus size={16} />
+                      {imageUploading ? `Загрузка${imageUploadPct != null ? ` ${imageUploadPct}%` : '…'}` : 'Добавить фото'}
+                      <input
+                        type="file"
+                        accept="image/*"
+                        multiple
+                        onChange={handleUploadImage}
+                        disabled={!formData.id || imageUploading || (formData.image_urls || []).length >= MAX_PRODUCT_PHOTOS}
+                        style={{ display: 'none' }}
+                      />
+                    </label>
+                    {(formData.image_urls || []).length > 0 && (
+                      <button
+                        type="button"
+                        className="button button-secondary"
+                        onClick={handleDeleteImage}
+                        disabled={imageUploading}
+                        style={{ display: 'inline-flex', alignItems: 'center', gap: 6, opacity: imageUploading ? 0.6 : 1 }}
+                        title="Удалить все фотографии"
+                      >
+                        <FiTrash2 size={16} />
+                        Удалить все
+                      </button>
+                    )}
+                  </div>
                   {imageUploading && imageUploadPct != null && (
-                    <div style={{ marginTop: 8, height: 6, borderRadius: 4, background: 'var(--border)', overflow: 'hidden' }}>
+                    <div style={{ height: 6, borderRadius: 4, background: 'var(--border)', overflow: 'hidden' }}>
                       <div
                         style={{
                           height: '100%',
@@ -543,8 +637,63 @@ const Warehouse = () => {
                       />
                     </div>
                   )}
+                  <div className="muted-text" style={{ fontSize: 11 }}>
+                    {(formData.image_urls || []).length}/{MAX_PRODUCT_PHOTOS} · миниатюра — крупный просмотр
+                  </div>
                 </div>
               </div>
+              {(formData.image_urls || []).length > 0 && (
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                  {(formData.image_urls || []).map((url, idx) => (
+                    <div
+                      key={`${url}-${idx}`}
+                      style={{
+                        position: 'relative',
+                        width: 64,
+                        height: 64,
+                        borderRadius: 10,
+                        border: galleryFocusIdx === idx ? '2px solid var(--primary)' : '1px solid var(--border)',
+                        overflow: 'hidden',
+                        background: 'var(--surface)',
+                      }}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => setGalleryFocusIdx(idx)}
+                        style={{ width: '100%', height: '100%', padding: 0, border: 'none', cursor: 'pointer', display: 'block' }}
+                        title="Крупный просмотр"
+                      >
+                        <img src={productImageDisplaySrc(url)} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); handleDeleteGalleryOne(url); }}
+                        disabled={imageUploading || !formData.id}
+                        title="Удалить"
+                        style={{
+                          position: 'absolute',
+                          top: 2,
+                          right: 2,
+                          width: 24,
+                          height: 24,
+                          borderRadius: 8,
+                          padding: 0,
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          background: 'rgba(0,0,0,0.55)',
+                          color: '#fff',
+                          border: 'none',
+                          cursor: imageUploading ? 'not-allowed' : 'pointer',
+                          opacity: imageUploading ? 0.5 : 1,
+                        }}
+                      >
+                        <FiX size={14} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
 

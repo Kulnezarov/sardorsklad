@@ -207,7 +207,8 @@ class Product(Base):
     category_id = Column(Integer, ForeignKey("categories.id", ondelete="SET NULL"), nullable=True, index=True)
     brand_id = Column(Integer, ForeignKey("brands.id", ondelete="SET NULL"), nullable=True, index=True)
     description = Column(Text, nullable=True)
-    image_url = Column(Text, nullable=True)
+    image_url = Column(Text, nullable=True)  # первое фото (совместимость с API / витриной)
+    image_urls = Column(JSONB, nullable=True)  # порядок: спереди, сзади, сбоку и т.д.
     purchase_price = Column(Numeric(10, 2), nullable=False, default=0)
     sale_price = Column(Numeric(10, 2), nullable=False, default=0)
     cny_price = Column(Numeric(10, 2), nullable=True)

@@ -30,6 +30,26 @@ LEGACY_ID_SLOT_MAX = 9_999
 _PUBLIC_ORDER_NOT_FOUND = "Заказ не найден. Проверьте номер заказа и телефон."
 
 
+def _public_product_gallery(p: models.Product) -> list[str]:
+    raw = getattr(p, "image_urls", None)
+    urls: list[str] = []
+    if isinstance(raw, list):
+        for u in raw:
+            s = (str(u) if u is not None else "").strip().split("?")[0].strip()
+            if s:
+                urls.append(s)
+    seen: set[str] = set()
+    out: list[str] = []
+    for u in urls:
+        if u not in seen:
+            seen.add(u)
+            out.append(u)
+    legacy = (getattr(p, "image_url", None) or "").strip().split("?")[0].strip()
+    if not out and legacy:
+        out = [legacy]
+    return out
+
+
 def _normalize_phone_digits(s: str) -> str:
     return re.sub(r"\D+", "", s or "")
 
@@ -199,13 +219,15 @@ def product_to_public(
         comp = schemas.ProductCompatibilityOut()
     comp = _storefront_compatibility(comp)
     model_public = _storefront_model_text(p, comp)
+    gallery = _public_product_gallery(p)
     return schemas.PublicProductResponse(
         id=p.id,
         name=p.name,
         sale_price=p.sale_price,
         quantity=int(p.quantity or 0),
         category_id=p.category_id,
-        image_url=p.image_url,
+        image_url=gallery[0] if gallery else None,
+        image_urls=gallery,
         category_name=category_name,
         brand_id=p.brand_id,
         brand_name=brand_name,
