@@ -336,6 +336,23 @@ class ProductResponse(ProductBase):
 
     model_config = {"from_attributes": True}
 
+    @field_validator("image_urls", mode="before")
+    @classmethod
+    def _coerce_product_image_urls(cls, v):
+        """JSONB из БД может быть null, «битым» типом или не строками — не даём API отвечать 500."""
+        if v is None:
+            return []
+        if isinstance(v, list):
+            out: List[str] = []
+            for x in v:
+                if x is None:
+                    continue
+                s = str(x).strip().split("?")[0].strip()
+                if s:
+                    out.append(s)
+            return out
+        return []
+
 
 class ImportExcelSkipItem(BaseModel):
     row: int
@@ -793,6 +810,22 @@ class PublicProductResponse(BaseModel):
     compatibility: ProductCompatibilityOut = Field(default_factory=ProductCompatibilityOut)
 
     model_config = {"from_attributes": True}
+
+    @field_validator("image_urls", mode="before")
+    @classmethod
+    def _coerce_public_image_urls(cls, v):
+        if v is None:
+            return []
+        if isinstance(v, list):
+            out: List[str] = []
+            for x in v:
+                if x is None:
+                    continue
+                s = str(x).strip().split("?")[0].strip()
+                if s:
+                    out.append(s)
+            return out
+        return []
 
 
 class PublicProductListResponse(BaseModel):

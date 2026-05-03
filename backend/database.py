@@ -10,6 +10,14 @@ logger = logging.getLogger(__name__)
 load_dotenv()
 
 
+def database_url_is_postgres(url: str | None) -> bool:
+    """True для postgresql:// и распространённого postgres:// (иначе ensure_schema_updates молча не создаёт колонки)."""
+    if not url:
+        return False
+    u = url.strip().lower()
+    return "postgresql" in u or u.startswith("postgres://")
+
+
 # Database configuration
 DATABASE_URL = os.getenv("DATABASE_URL")
 if not DATABASE_URL:
@@ -92,7 +100,7 @@ def _exec_schema_sql(sql: str, label: str = "") -> None:
 
 def ensure_schema_updates():
     """Idempotent ALTERs for databases created before new columns (PostgreSQL)."""
-    if not DATABASE_URL or "postgresql" not in DATABASE_URL.lower():
+    if not database_url_is_postgres(DATABASE_URL):
         return
 
     # Старая схема БД: sales(id, product_id, quantity, total_price, ...) — не совместима с моделью Sale (receipt_number, sale_items).
@@ -250,6 +258,7 @@ def ensure_schema_updates():
         UPDATE products
         SET image_url = trim(image_urls->>0)
         WHERE image_urls IS NOT NULL
+          AND jsonb_typeof(image_urls) = 'array'
           AND jsonb_array_length(image_urls) > 0
           AND (image_url IS NULL OR trim(image_url) = '');
         """,
@@ -396,7 +405,7 @@ def ensure_schema_updates():
 
 def ensure_compatibility_tables() -> None:
     """Создать таблицы справочника авто/кодов, если БД ещё без них (старые деплои)."""
-    if not DATABASE_URL or "postgresql" not in DATABASE_URL.lower():
+    if not database_url_is_postgres(DATABASE_URL):
         return
     try:
         from models import (
@@ -424,7 +433,7 @@ def ensure_compatibility_tables() -> None:
 
 def ensure_compatibility_table_columns() -> None:
     """Починить старые таблицы без created_at/updated_at (иначе 500 на POST и ответе API)."""
-    if not DATABASE_URL or "postgresql" not in DATABASE_URL.lower():
+    if not database_url_is_postgres(DATABASE_URL):
         return
     _exec_schema_sql(
         """
