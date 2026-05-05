@@ -1509,10 +1509,12 @@ textarea {
 /* ========== Dashboard (iOS-like) ========== */
 .dashboard-page {
   font-family: "Outfit", system-ui, -apple-system, sans-serif;
-  padding: 8px 8px 40px;
+  padding: 12px 10px 44px;
   max-width: 1120px;
   margin: 0 auto;
   letter-spacing: -0.02em;
+  background: linear-gradient(180deg, var(--bg-primary) 0%, var(--bg-secondary) 100%);
+  border-radius: 20px;
 }
 
 .dash-max {
@@ -1525,7 +1527,11 @@ textarea {
   justify-content: space-between;
   gap: 20px;
   flex-wrap: wrap;
-  margin-bottom: 28px;
+  margin-bottom: 22px;
+  padding: 14px 14px 10px;
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  background: var(--surface);
 }
 
 .dash-welcome {
@@ -1541,6 +1547,23 @@ textarea {
   font-size: 15px;
   font-weight: 500;
   color: var(--text-muted);
+}
+
+.dash-sound-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-light);
+  border-radius: 999px;
+  padding: 7px 11px;
+}
+
+.dash-sound-toggle input {
+  accent-color: var(--primary);
 }
 
 .dash-refresh-wrap {
@@ -1714,6 +1737,12 @@ textarea {
   border-radius: 22px;
   box-shadow: none;
   overflow: hidden;
+  transition: transform 0.18s ease, border-color 0.18s ease;
+}
+
+.dash-panel:hover {
+  transform: translateY(-1px);
+  border-color: var(--primary-light);
 }
 
 [data-theme="dark"] .dash-panel {
@@ -1893,6 +1922,23 @@ textarea {
   gap: 8px;
 }
 
+.dash-load-more {
+  margin-top: 10px;
+  width: 100%;
+  border: 1px dashed var(--primary);
+  border-radius: 12px;
+  background: transparent;
+  color: var(--primary);
+  font-size: 13px;
+  font-weight: 700;
+  padding: 10px 12px;
+  cursor: pointer;
+}
+
+.dash-load-more:hover {
+  background: var(--primary-light);
+}
+
 .dash-alert-row {
   display: flex;
   align-items: center;
@@ -2040,6 +2086,7 @@ textarea {
 @media (max-width: 768px) {
   .dashboard-page {
     padding: 4px 2px max(20px, var(--safe-bottom));
+    border-radius: 12px;
   }
 
   .dash-row--head {
@@ -2056,6 +2103,10 @@ textarea {
     justify-content: space-between;
     gap: 10px;
     width: 100%;
+  }
+
+  .dash-sound-toggle {
+    order: 2;
   }
 
   .dash-refresh-meta {

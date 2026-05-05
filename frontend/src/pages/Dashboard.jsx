@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import {
@@ -16,6 +16,8 @@ import { getResolvedApiBaseUrl } from '../api/client';
 import { LoadingSpinner, Alert } from '../components/ui';
 
 const formatNumber = (value) => Number(value || 0).toLocaleString('ru-RU');
+const ALERT_PAGE_SIZE = 60;
+const WELCOME_FULL_TEXT = 'С возвращением, Сардор';
 
 const weekdayLabel = () => {
   const d = new Date();
@@ -61,6 +63,11 @@ const KpiCard = ({
 
 const Dashboard = () => {
   const navigate = useNavigate();
+  const [welcomeText, setWelcomeText] = useState('');
+  const [soundEnabled, setSoundEnabled] = useState(true);
+  const [outOfStockLimit, setOutOfStockLimit] = useState(ALERT_PAGE_SIZE);
+  const [lowStockLimit, setLowStockLimit] = useState(ALERT_PAGE_SIZE);
+  const spokenRef = useRef(false);
 
   const {
     data: dash,
@@ -101,6 +108,69 @@ const Dashboard = () => {
       dash.alert_low_stock?.length > 0 ||
       dash.alert_stale?.length > 0);
 
+  const outOfStockItems = useMemo(() => {
+    const src = Array.isArray(dash?.alert_out_of_stock) ? dash.alert_out_of_stock : [];
+    return src.filter((x) => Number(x?.quantity) <= 0);
+  }, [dash?.alert_out_of_stock]);
+
+  const lowStockItems = useMemo(() => {
+    const src = Array.isArray(dash?.alert_low_stock) ? dash.alert_low_stock : [];
+    return src.filter((x) => {
+      const q = Number(x?.quantity);
+      return q > 0 && q < 5;
+    });
+  }, [dash?.alert_low_stock]);
+
+  const visibleOutOfStock = useMemo(
+    () => outOfStockItems.slice(0, outOfStockLimit),
+    [outOfStockItems, outOfStockLimit],
+  );
+  const visibleLowStock = useMemo(
+    () => lowStockItems.slice(0, lowStockLimit),
+    [lowStockItems, lowStockLimit],
+  );
+
+  useEffect(() => {
+    setOutOfStockLimit(ALERT_PAGE_SIZE);
+    setLowStockLimit(ALERT_PAGE_SIZE);
+  }, [dash?.alert_out_of_stock, dash?.alert_low_stock]);
+
+  useEffect(() => {
+    let i = 0;
+    const timer = setInterval(() => {
+      i += 1;
+      setWelcomeText(WELCOME_FULL_TEXT.slice(0, i));
+      if (i >= WELCOME_FULL_TEXT.length) clearInterval(timer);
+    }, 60);
+    return () => clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    if (!soundEnabled || spokenRef.current) return;
+    if (typeof window === 'undefined' || !window.speechSynthesis) return;
+    const sayWelcome = () => {
+      const u = new SpeechSynthesisUtterance(WELCOME_FULL_TEXT);
+      const voices = window.speechSynthesis.getVoices();
+      const female =
+        voices.find((v) => /female|woman|zira|alina|milena|anna|karen/i.test(v.name)) ||
+        voices.find((v) => /ru|russian/i.test(v.lang || '')) ||
+        voices[0];
+      if (female) u.voice = female;
+      u.lang = female?.lang || 'ru-RU';
+      u.rate = 0.96;
+      u.pitch = 1.08;
+      u.volume = 0.95;
+      window.speechSynthesis.cancel();
+      window.speechSynthesis.speak(u);
+      spokenRef.current = true;
+    };
+    sayWelcome();
+    window.speechSynthesis.onvoiceschanged = sayWelcome;
+    return () => {
+      window.speechSynthesis.onvoiceschanged = null;
+    };
+  }, [soundEnabled]);
+
   const goProduct = (kind, productId) => {
     const q = new URLSearchParams();
     q.set('stock', kind);
@@ -127,12 +197,27 @@ const Dashboard = () => {
       <div className="dash-max">
         <header className="dash-row dash-row--head">
           <div>
-            <h1 className="dash-welcome">С возвращением</h1>
+            <h1 className="dash-welcome">{welcomeText || 'С возвращением'}</h1>
             <p className="dash-sub">
               {weekdayLabel()}, {dateLabel()}
             </p>
           </div>
           <div className="dash-refresh-wrap">
+            <label className="dash-sound-toggle" title="Включить/выключить голос приветствия">
+              <input
+                type="checkbox"
+                checked={soundEnabled}
+                onChange={(e) => {
+                  const next = e.target.checked;
+                  if (!next && typeof window !== 'undefined' && window.speechSynthesis) {
+                    window.speechSynthesis.cancel();
+                  }
+                  if (next) spokenRef.current = false;
+                  setSoundEnabled(next);
+                }}
+              />
+              <span>{soundEnabled ? 'Звук: вкл' : 'Звук: выкл'}</span>
+            </label>
             <button
               type="button"
               className="dash-refresh-btn"
@@ -224,11 +309,13 @@ const Dashboard = () => {
                     </div>
                   ) : (
                   <div className="dash-alerts-stack">
-                  {Array.isArray(dash.alert_out_of_stock) && dash.alert_out_of_stock.length > 0 && (
+                  {outOfStockItems.length > 0 && (
                         <div className="dash-alert-group dash-alert-group--danger">
-                          <div className="dash-alert-group-title">Товар закончился (0 шт)</div>
+                          <div className="dash-alert-group-title">
+                            Товар закончился (0 шт) · всего {outOfStockItems.length}
+                          </div>
                           <ul className="dash-alert-list">
-                            {dash.alert_out_of_stock?.map((a) => (
+                            {visibleOutOfStock.map((a) => (
                               <li key={`o-${a.id}`} className="dash-alert-row">
                                 <span className="dash-alert-name">{a.name}</span>
                                 <span className="dash-alert-qty">{a.quantity} шт</span>
@@ -242,13 +329,24 @@ const Dashboard = () => {
                               </li>
                             ))}
                           </ul>
+                          {outOfStockItems.length > visibleOutOfStock.length && (
+                            <button
+                              type="button"
+                              className="dash-load-more"
+                              onClick={() => setOutOfStockLimit((p) => p + ALERT_PAGE_SIZE)}
+                            >
+                              Загрузить еще 60
+                            </button>
+                          )}
                         </div>
                       )}
-                      {Array.isArray(dash.alert_low_stock) && dash.alert_low_stock.length > 0 && (
+                      {lowStockItems.length > 0 && (
                         <div className="dash-alert-group dash-alert-group--warn">
-                          <div className="dash-alert-group-title">Товар заканчивается (1–5 шт)</div>
+                          <div className="dash-alert-group-title">
+                            Товар заканчивается (меньше 5 шт) · всего {lowStockItems.length}
+                          </div>
                           <ul className="dash-alert-list">
-                            {dash.alert_low_stock?.map((a) => (
+                            {visibleLowStock.map((a) => (
                               <li key={`l-${a.id}`} className="dash-alert-row">
                                 <span className="dash-alert-name">{a.name}</span>
                                 <span className="dash-alert-qty">{a.quantity} шт</span>
@@ -262,6 +360,15 @@ const Dashboard = () => {
                               </li>
                             ))}
                           </ul>
+                          {lowStockItems.length > visibleLowStock.length && (
+                            <button
+                              type="button"
+                              className="dash-load-more"
+                              onClick={() => setLowStockLimit((p) => p + ALERT_PAGE_SIZE)}
+                            >
+                              Загрузить еще 60
+                            </button>
+                          )}
                         </div>
                       )}
                       {Array.isArray(dash.alert_stale) && dash.alert_stale.length > 0 && (
