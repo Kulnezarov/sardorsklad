@@ -12,7 +12,7 @@ import {
   FiLayers,
 } from 'react-icons/fi';
 import { settingsApi } from '../api/settings';
-import { getResolvedApiBaseUrl } from '../api/client';
+import { fetchAllProducts, getResolvedApiBaseUrl } from '../api/client';
 import { LoadingSpinner, Alert } from '../components/ui';
 
 const formatNumber = (value) => Number(value || 0).toLocaleString('ru-RU');
@@ -105,6 +105,19 @@ const Dashboard = () => {
     refetchIntervalInBackground: true,
   });
 
+  const needsFullStockLists = useMemo(() => {
+    const lowTotal = Number(dash?.low_stock_positions_lte5 ?? 0);
+    const lowPreview = Array.isArray(dash?.alert_low_stock) ? dash.alert_low_stock.length : 0;
+    return lowTotal > lowPreview;
+  }, [dash?.low_stock_positions_lte5, dash?.alert_low_stock]);
+
+  const { data: fullProducts = [] } = useQuery({
+    queryKey: ['dashboard', 'full-products-for-stock'],
+    queryFn: () => fetchAllProducts(),
+    enabled: needsFullStockLists,
+    staleTime: 60_000,
+  });
+
   const lastRefresh = useMemo(() => {
     if (!dataUpdatedAt) return '—';
     return new Date(dataUpdatedAt).toLocaleTimeString('ru-RU', {
@@ -122,16 +135,23 @@ const Dashboard = () => {
 
   const outOfStockItems = useMemo(() => {
     const src = Array.isArray(dash?.alert_out_of_stock) ? dash.alert_out_of_stock : [];
-    return src.filter((x) => Number(x?.quantity) <= 0);
-  }, [dash?.alert_out_of_stock]);
+    const quick = src.filter((x) => Number(x?.quantity) <= 0);
+    if (!needsFullStockLists || !fullProducts.length) return quick;
+    return fullProducts.filter((x) => Number(x?.quantity) <= 0);
+  }, [dash?.alert_out_of_stock, fullProducts, needsFullStockLists]);
 
   const lowStockItems = useMemo(() => {
     const src = Array.isArray(dash?.alert_low_stock) ? dash.alert_low_stock : [];
-    return src.filter((x) => {
+    const quick = src.filter((x) => {
       const q = Number(x?.quantity);
       return q > 0 && q < 5;
     });
-  }, [dash?.alert_low_stock]);
+    if (!needsFullStockLists || !fullProducts.length) return quick;
+    return fullProducts.filter((x) => {
+      const q = Number(x?.quantity);
+      return q > 0 && q < 5;
+    });
+  }, [dash?.alert_low_stock, fullProducts, needsFullStockLists]);
 
   const visibleOutOfStock = useMemo(
     () => outOfStockItems.slice(0, outOfStockLimit),
@@ -333,7 +353,9 @@ const Dashboard = () => {
                             <div className="dash-alert-empty">Нет позиций</div>
                           ) : (
                             <div className="dash-alert-group dash-alert-group--warn">
-                              <div className="dash-alert-group-title">Всего: {lowStockItems.length}</div>
+                              <div className="dash-alert-group-title">
+                                Всего: {Number(dash?.low_stock_positions_lte5 ?? lowStockItems.length)}
+                              </div>
                               <ul className="dash-alert-list">
                                 {visibleLowStock.map((a) => (
                                   <li key={`l-${a.id}`} className="dash-alert-row">

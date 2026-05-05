@@ -1750,10 +1750,6 @@ textarea {
   .dash-panels-row {
     grid-template-columns: 1fr;
   }
-
-  .dash-alert-windows {
-    grid-template-columns: 1fr;
-  }
 }
 
 .dash-panel {
@@ -1890,12 +1886,15 @@ textarea {
   display: flex;
   flex-direction: column;
   gap: 12px;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 .dash-alert-windows {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
+  min-width: 760px;
 }
 
 .dash-alert-window {

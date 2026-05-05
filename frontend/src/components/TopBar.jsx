@@ -59,9 +59,6 @@ const TopBar = ({ onMenuClick }) => {
           <div className="topbar-title" style={{ fontSize: '20px', fontWeight: 700 }}>
             {titles[location.pathname] || 'Склад'}
           </div>
-          <div className="topbar-subtitle topbar-subtitle-hideable" style={{ fontSize: '13px' }}>
-            Синхронизация с API
-          </div>
         </div>
       </div>
 
