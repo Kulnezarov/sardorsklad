@@ -1536,10 +1536,15 @@ textarea {
 
 .dash-welcome {
   font-size: clamp(26px, 4vw, 32px);
-  font-weight: 700;
+  font-weight: 800;
   color: var(--text);
   letter-spacing: -0.04em;
   line-height: 1.1;
+  margin: 0;
+  background: linear-gradient(135deg, #4f46e5, #7c3aed 45%, #0ea5e9);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
 }
 
 .dash-sub {
@@ -1547,6 +1552,25 @@ textarea {
   font-size: 15px;
   font-weight: 500;
   color: var(--text-muted);
+}
+
+.dash-admin-badge {
+  margin: 8px 0 0;
+  display: inline-flex;
+  align-items: center;
+  padding: 5px 10px;
+  border-radius: 999px;
+  background: var(--primary-light);
+  color: var(--primary);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.dash-shift-note {
+  margin: 8px 0 0;
+  font-size: 13px;
+  color: var(--text-muted);
+  font-weight: 500;
 }
 
 .dash-sound-toggle {
@@ -1726,6 +1750,10 @@ textarea {
   .dash-panels-row {
     grid-template-columns: 1fr;
   }
+
+  .dash-alert-windows {
+    grid-template-columns: 1fr;
+  }
 }
 
 .dash-panel {
@@ -1862,6 +1890,35 @@ textarea {
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+
+.dash-alert-windows {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.dash-alert-window {
+  border: 1px solid var(--border-light);
+  border-radius: 16px;
+  background: var(--bg-secondary);
+  padding: 10px;
+}
+
+.dash-alert-window-title {
+  margin: 0 0 8px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.dash-alert-empty {
+  padding: 12px;
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--text-muted);
+  font-size: 13px;
+  text-align: center;
 }
 
 .dash-panel-body .dash-alert-group {

@@ -5,7 +5,7 @@ import toast from 'react-hot-toast';
 import {
   FiLogOut, FiBox, FiPrinter, FiX,
   FiAlertTriangle, FiRefreshCw, FiLoader, FiTrash2,
-  FiSun, FiMoon, FiShoppingBag, FiClock, FiSettings, FiSave,
+  FiShoppingBag, FiClock, FiSettings, FiSave,
 } from 'react-icons/fi';
 import { getApiErrorMessage } from '../api/client';
 import { settingsApi } from '../api/settings';
@@ -448,19 +448,7 @@ const Settings = () => {
           </div>
         </div>
 
-        {/* ── Section 5: Внешний вид ── */}
-        <div className="settings-section">
-          <div className="settings-section-title">
-            {form.dark_mode ? <FiMoon size={16} /> : <FiSun size={16} />} Внешний вид
-          </div>
-          <div className="settings-section-body">
-            <Row label="Тёмная тема">
-              <Toggle value={form.dark_mode} onChange={(v) => handleChange('dark_mode', v)} />
-            </Row>
-          </div>
-        </div>
-
-        {/* ── Section 6: Данные ── */}
+        {/* ── Section 5: Данные ── */}
         <div className="settings-section">
           <div className="settings-section-title">
             <FiSettings size={16} /> Данные
@@ -482,7 +470,7 @@ const Settings = () => {
           </div>
         </div>
 
-        {/* ── Section 7: Аккаунт ── */}
+        {/* ── Section 6: Аккаунт ── */}
         <div className="settings-section">
           <div className="settings-section-title">
             <FiLogOut size={16} /> Аккаунт

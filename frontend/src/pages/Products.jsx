@@ -1862,7 +1862,7 @@ const Products = () => {
             <Input
               label="Закуп (¥ юань)"
               type="number"
-              step="0.01"
+              step="0.1"
               min="0"
               placeholder="0"
               value={formData.cny_price}
@@ -1906,8 +1906,8 @@ const Products = () => {
               <input
                 className="ios-input"
                 type="number"
-                min="0.01"
-                step="0.01"
+                min="0.1"
+                step="0.1"
                 value={customDeliveryRate}
                 onChange={(e) => setCustomDeliveryRate(e.target.value)}
                 placeholder="Свой тариф за кг"
