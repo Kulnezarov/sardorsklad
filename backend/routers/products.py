@@ -795,6 +795,13 @@ def delete_product(
         _delete_old_product_image_file(u)
     _persist_product_gallery(db_product, [])
 
+    old_sku = db_product.sku
+    old_barcode = db_product.barcode
+    # Освобождаем уникальные поля, чтобы удалённый товар не блокировал создание нового.
+    archived_suffix = datetime.now(UTC).strftime("%Y%m%d%H%M%S")
+    archived_sku = f"{old_sku}-archived-{db_product.id}-{archived_suffix}"
+    db_product.sku = archived_sku[:100]
+    db_product.barcode = None
     db_product.is_active = False
     write_audit_log(
         db,
@@ -802,7 +809,12 @@ def delete_product(
         action="DELETE_PRODUCT",
         entity_type="product",
         entity_id=product_id,
-        payload={"soft_delete": True},
+        payload={
+            "soft_delete": True,
+            "released_unique_fields": True,
+            "old_sku": old_sku,
+            "old_barcode": old_barcode,
+        },
     )
     db.add(
         models.History(
@@ -811,7 +823,11 @@ def delete_product(
             quantity_change=0,
             reference_type="product",
             reference_id=product_id,
-            details={"message": f"Товар {db_product.name} архивирован"},
+            details={
+                "message": f"Товар {db_product.name} архивирован",
+                "old_sku": old_sku,
+                "old_barcode": old_barcode,
+            },
         )
     )
     try:

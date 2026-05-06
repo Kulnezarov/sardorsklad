@@ -234,6 +234,7 @@ const Products = () => {
   const [formData, setFormData] = useState(emptyForm);
   const [formError, setFormError] = useState('');
   const [duplicateBarcodeProduct, setDuplicateBarcodeProduct] = useState(null);
+  const [duplicateBarcodeValue, setDuplicateBarcodeValue] = useState('');
   const [barcodeLocked, setBarcodeLocked] = useState(false);
   const [showQrPanel, setShowQrPanel] = useState(false);
 
@@ -639,6 +640,7 @@ const Products = () => {
       queryClient.invalidateQueries({ queryKey: ['categories'] });
       if (!wasEdit && res.data) { setSavedProduct(res.data); setShowPrintSuggest(true); }
       setDuplicateBarcodeProduct(null);
+      setDuplicateBarcodeValue('');
       resetForm();
     },
     onError: async (err, vars) => {
@@ -667,14 +669,18 @@ const Products = () => {
           try {
             const byId = await productApi.getById(duplicateId);
             setDuplicateBarcodeProduct(byId?.data || null);
+            setDuplicateBarcodeValue(String(byId?.data?.barcode || vars?.barcode || formRef.current?.barcode || '').trim());
           } catch {
             setDuplicateBarcodeProduct(null);
+            setDuplicateBarcodeValue(String(vars?.barcode || formRef.current?.barcode || '').trim());
           }
         } else {
           const candidateBarcode = String(vars?.barcode || formRef.current?.barcode || '').trim();
           if (!candidateBarcode) {
             setDuplicateBarcodeProduct(null);
+            setDuplicateBarcodeValue('');
           } else {
+            setDuplicateBarcodeValue(candidateBarcode);
             try {
               const r = await productApi.getByBarcode(candidateBarcode, {
                 allow404: true,
@@ -688,11 +694,37 @@ const Products = () => {
         }
       } else {
         setDuplicateBarcodeProduct(null);
+        setDuplicateBarcodeValue('');
       }
       toast.error(`✕ ${message}`);
       setFormError(message);
     },
   });
+
+  const openDuplicateBarcodeProduct = async () => {
+    if (duplicateBarcodeProduct) {
+      setDuplicateBarcodeProduct(null);
+      setDuplicateBarcodeValue('');
+      setFormError('');
+      handleEdit(duplicateBarcodeProduct);
+      return;
+    }
+    const code = String(duplicateBarcodeValue || formData.barcode || '').trim();
+    if (!code) return;
+    try {
+      const r = await productApi.getByBarcode(code, { allow404: true, includeInactive: true });
+      if (r?.status === 200 && r?.data) {
+        setDuplicateBarcodeProduct(null);
+        setDuplicateBarcodeValue('');
+        setFormError('');
+        handleEdit(r.data);
+      } else {
+        toast.error('Товар с этим штрих-кодом не найден даже в архиве');
+      }
+    } catch {
+      toast.error('Не удалось открыть товар по штрих-коду');
+    }
+  };
 
   const importMutation = useMutation({
     mutationFn: async (file) => {
@@ -783,6 +815,7 @@ const Products = () => {
     setShowForm(false);
     setFormError('');
     setDuplicateBarcodeProduct(null);
+    setDuplicateBarcodeValue('');
     setBarcodeLocked(false);
     setShowQrPanel(false);
     setForceCreateMode(false);
@@ -1566,14 +1599,10 @@ const Products = () => {
         {formError && (
           <div style={{ marginBottom: 16, display: 'grid', gap: 10 }}>
             <Alert type="danger" message={formError} onClose={() => setFormError('')} />
-            {duplicateBarcodeProduct && (
+            {(duplicateBarcodeProduct || duplicateBarcodeValue) && (
               <Button
                 variant="secondary"
-                onClick={() => {
-                  setDuplicateBarcodeProduct(null);
-                  setFormError('');
-                  handleEdit(duplicateBarcodeProduct);
-                }}
+                onClick={openDuplicateBarcodeProduct}
               >
                 Открыть товар с таким штрих-кодом
               </Button>
