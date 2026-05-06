@@ -230,6 +230,7 @@ const Products = () => {
   const [showStale, setShowStale] = useState(false);
 
   const [showForm, setShowForm] = useState(false);
+  const [forceCreateMode, setForceCreateMode] = useState(false);
   const [formData, setFormData] = useState(emptyForm);
   const [formError, setFormError] = useState('');
   const [barcodeLocked, setBarcodeLocked] = useState(false);
@@ -432,6 +433,7 @@ const Products = () => {
       });
       setFormData({ ...emptyForm(), barcode: generateEAN13() });
       setFormError(''); setBarcodeLocked(false); setShowQrPanel(false); setShowForm(true);
+      setForceCreateMode(true);
       navigate(location.pathname, { replace: true, state: {} });
     } else if (location.state?.openAdd) {
       setImageBlobUrl((p) => {
@@ -441,6 +443,7 @@ const Products = () => {
       const bc = location.state.barcode || '';
       setFormData({ ...emptyForm(), barcode: bc });
       setFormError(''); setBarcodeLocked(Boolean(bc)); setShowQrPanel(false); setShowForm(true);
+      setForceCreateMode(true);
       navigate(location.pathname, { replace: true, state: {} });
     }
   }, [location.state, location.pathname, navigate]);
@@ -731,6 +734,7 @@ const Products = () => {
     setFormError('');
     setBarcodeLocked(false);
     setShowQrPanel(false);
+    setForceCreateMode(false);
   };
 
   const showFormRef = useRef(false);
@@ -865,6 +869,7 @@ const Products = () => {
       return '';
     });
     setShowForm(true); setBarcodeLocked(true); setShowQrPanel(false); setFormError('');
+    setForceCreateMode(false);
     setDeliveryMode('normal');
     setCustomDeliveryRate(String(settingsDeliveryRate || 800));
     setSideProduct(null);
@@ -874,7 +879,8 @@ const Products = () => {
     e?.preventDefault?.(); setFormError('');
     if (!formData.name?.trim()) { setFormError('Название товара обязательно'); return; }
     if (num(formData.sale_price) <= 0) { setFormError('Цена продажи должна быть больше 0'); return; }
-    saveMutation.mutate(buildPayload(formData, cnyRate));
+    const payload = buildPayload(formData, cnyRate);
+    saveMutation.mutate(forceCreateMode ? { ...payload, id: null } : payload);
   };
 
   const openNew = () => {
@@ -890,6 +896,7 @@ const Products = () => {
     setDeliveryMode('normal');
     setCustomDeliveryRate(String(settingsDeliveryRate || 800));
     setShowForm(true);
+    setForceCreateMode(true);
   };
 
   const productImageDisplaySrc = (url) => {
@@ -1354,6 +1361,7 @@ const Products = () => {
                   setBarcodeLocked(true);
                   setFormError('');
                   setShowForm(true);
+                  setForceCreateMode(true);
                   setScanNotFound(null);
                 }}
                 style={{ flex: 2, padding: '13px', borderRadius: 14, border: 'none', background: 'linear-gradient(135deg, #6366f1, #7c3aed)', color: '#fff', fontWeight: 700, fontSize: 14, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}
