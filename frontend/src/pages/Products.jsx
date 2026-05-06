@@ -643,23 +643,47 @@ const Products = () => {
     },
     onError: async (err, vars) => {
       const detail = err.response?.data?.detail;
+      const detailMessage =
+        detail && typeof detail === 'object' && !Array.isArray(detail)
+          ? (detail.message || detail.msg || '')
+          : '';
       const message = typeof detail === 'string'
         ? detail
+        : detailMessage
+          ? String(detailMessage)
         : Array.isArray(detail)
           ? detail.map((x) => `${x?.loc?.join?.('.') || 'field'}: ${x?.msg || 'invalid'}`).join('; ')
           : 'Ошибка при сохранении товара';
-      const isBarcodeDuplicate = /barcode.*already exists/i.test(message) || /уже существует/i.test(message);
+      const duplicateId =
+        detail && typeof detail === 'object' && !Array.isArray(detail)
+          ? Number(detail.product_id)
+          : NaN;
+      const isBarcodeDuplicate =
+        (detail && typeof detail === 'object' && !Array.isArray(detail) && detail.code === 'BARCODE_EXISTS')
+        || /barcode.*already exists/i.test(message)
+        || /уже существует/i.test(message);
       if (isBarcodeDuplicate) {
-        const candidateBarcode = String(vars?.barcode || formRef.current?.barcode || '').trim();
-        if (candidateBarcode) {
+        if (Number.isInteger(duplicateId) && duplicateId > 0) {
           try {
-            const r = await productApi.getByBarcode(candidateBarcode, {
-              allow404: true,
-              includeInactive: true,
-            });
-            setDuplicateBarcodeProduct(r?.status === 200 && r?.data ? r.data : null);
+            const byId = await productApi.getById(duplicateId);
+            setDuplicateBarcodeProduct(byId?.data || null);
           } catch {
             setDuplicateBarcodeProduct(null);
+          }
+        } else {
+          const candidateBarcode = String(vars?.barcode || formRef.current?.barcode || '').trim();
+          if (!candidateBarcode) {
+            setDuplicateBarcodeProduct(null);
+          } else {
+            try {
+              const r = await productApi.getByBarcode(candidateBarcode, {
+                allow404: true,
+                includeInactive: true,
+              });
+              setDuplicateBarcodeProduct(r?.status === 200 && r?.data ? r.data : null);
+            } catch {
+              setDuplicateBarcodeProduct(null);
+            }
           }
         }
       } else {

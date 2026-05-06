@@ -492,7 +492,16 @@ def create_product(
     if payload.get("barcode"):
         existing_barcode = db.query(models.Product).filter(models.Product.barcode == payload["barcode"]).first()
         if existing_barcode:
-            raise HTTPException(status_code=400, detail="Barcode already exists")
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "code": "BARCODE_EXISTS",
+                    "message": "Barcode already exists",
+                    "product_id": existing_barcode.id,
+                    "is_active": bool(existing_barcode.is_active),
+                    "barcode": existing_barcode.barcode,
+                },
+            )
 
     existing_sku = db.query(models.Product).filter(models.Product.sku == payload["sku"]).first()
     if existing_sku:
@@ -574,7 +583,16 @@ def update_product(
             models.Product.id != product_id,
         ).first()
         if existing:
-            raise HTTPException(status_code=400, detail="Barcode already exists")
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "code": "BARCODE_EXISTS",
+                    "message": "Barcode already exists",
+                    "product_id": existing.id,
+                    "is_active": bool(existing.is_active),
+                    "barcode": existing.barcode,
+                },
+            )
 
     vkey = "compatibility_vehicle_model_ids" in update_data
     ekey = "compatibility_engine_family_ids" in update_data
