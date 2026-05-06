@@ -263,6 +263,16 @@ const Products = () => {
 
   const [scanNotFound, setScanNotFound] = useState(null); // scanned barcode string when not found
   const [showSuggestions, setShowSuggestions] = useState(false);
+  const [selectedIds, setSelectedIds] = useState([]);
+  const [bulkEditOpen, setBulkEditOpen] = useState(false);
+  const [bulkForm, setBulkForm] = useState({
+    name: '',
+    brand: '',
+    model: '',
+    purchase_price: '',
+    sale_price: '',
+    quantity: '',
+  });
 
   const importAbortRef = useRef(null);
   const searchWrapRef = useRef(null);
@@ -967,6 +977,41 @@ const Products = () => {
     saveMutation.mutate(forceCreateMode ? { ...payload, id: null, _forceCreate: true } : payload);
   };
 
+  const selectedProducts = useMemo(
+    () => displayProducts.filter((p) => selectedIds.includes(p.id)),
+    [displayProducts, selectedIds],
+  );
+  const canBulkEdit = useMemo(() => {
+    if (selectedProducts.length < 2) return false;
+    const cat = selectedProducts[0]?.category || '';
+    return selectedProducts.every((p) => (p.category || '') === cat);
+  }, [selectedProducts]);
+
+  const bulkMutation = useMutation({
+    mutationFn: async () => {
+      const updates = selectedProducts.map((p) => {
+        const payload = {
+          name: bulkForm.name.trim() || p.name,
+          brand: bulkForm.brand.trim() || p.brand,
+          model: bulkForm.model.trim() || p.model,
+          purchase_price: bulkForm.purchase_price === '' ? Number(p.purchase_price || 0) : Number(bulkForm.purchase_price),
+          sale_price: bulkForm.sale_price === '' ? Number(p.sale_price || 0) : Number(bulkForm.sale_price),
+          quantity: bulkForm.quantity === '' ? Number(p.quantity || 0) : Number(bulkForm.quantity),
+        };
+        return productApi.update(p.id, payload);
+      });
+      await Promise.all(updates);
+    },
+    onSuccess: () => {
+      toast.success('Массовое обновление выполнено');
+      queryClient.invalidateQueries({ queryKey: ['products'] });
+      setBulkEditOpen(false);
+      setSelectedIds([]);
+      setBulkForm({ name: '', brand: '', model: '', purchase_price: '', sale_price: '', quantity: '' });
+    },
+    onError: (err) => toast.error(getApiErrorMessage(err, 'Не удалось выполнить массовое обновление')),
+  });
+
   const openNew = () => {
     setGalleryFocusIdx(0);
     setImageBlobUrl((prev) => {
@@ -1188,7 +1233,20 @@ const Products = () => {
   const listId = 'product-category-suggestions';
 
   /* Только первый холодный старт: иначе при смене search весь экран → Spinner и инпут размонтируется (потеря фокуса). */
-  if (isPending && !productsPages) return <LoadingSpinner message="Загружаем товары..." />;
+  if (isPending && !productsPages) {
+    return (
+      <div className="products-page-shell" style={{ padding: '10px 14px' }}>
+        <div className="ui-skeleton-card" style={{ marginBottom: 12 }}>
+          <div className="ui-skeleton-line" style={{ width: '30%', height: 26, marginBottom: 10 }} />
+          <div className="ui-skeleton-line" style={{ width: '46%', height: 14 }} />
+        </div>
+        <div className="ui-skeleton-card">
+          <div className="ui-skeleton-line" style={{ width: '100%', height: 42, marginBottom: 10 }} />
+          <div className="ui-skeleton-line" style={{ width: '100%', height: 260 }} />
+        </div>
+      </div>
+    );
+  }
 
   /* ─────────── RENDER ─────────── */
   return (
@@ -1234,6 +1292,21 @@ const Products = () => {
           </p>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          {selectedIds.length > 0 && (
+            <button
+              type="button"
+              onClick={() => {
+                if (!canBulkEdit) {
+                  toast.error('Для массового редактирования выберите товары одной категории');
+                  return;
+                }
+                setBulkEditOpen(true);
+              }}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '9px 14px', borderRadius: 12, border: '1px solid var(--border)', background: 'var(--surface)', fontWeight: 600, fontSize: 13 }}
+            >
+              Массово ({selectedIds.length})
+            </button>
+          )}
           <button
             type="button"
             className="btn-ios-secondary"
@@ -1321,12 +1394,22 @@ const Products = () => {
           <div style={{ padding: '48px 16px', textAlign: 'center', color: 'var(--text-muted)' }}>
             <FiPackage size={36} style={{ marginBottom: 12, opacity: 0.4 }} />
             <div style={{ fontSize: 15, fontWeight: 600 }}>{search || selectedCategory || showStale ? 'Ничего не найдено по фильтрам' : 'Добавьте первый товар'}</div>
+            {(search || selectedCategory || showStale) && (
+              <button
+                type="button"
+                className="btn-ios-secondary"
+                style={{ marginTop: 12 }}
+                onClick={() => { setSearchInput(''); setSelectedCategory(''); setShowStale(false); }}
+              >
+                Сбросить фильтры
+              </button>
+            )}
           </div>
         ) : (
           <table className="products-catalog-table">
             <thead className="products-catalog-thead">
               <tr>
-                {['Штрих-код', 'Название', 'Марка', 'Модель', 'Категория', 'Закуп', 'Продажа', 'Прибыль', 'Место', 'Остаток', ''].map((h) => (
+                {['✓', 'Штрих-код', 'Название', 'Марка', 'Модель', 'Категория', 'Закуп', 'Продажа', 'Прибыль', 'Место', 'Остаток', ''].map((h) => (
                   <th key={h}>{h}</th>
                 ))}
               </tr>
@@ -1334,7 +1417,7 @@ const Products = () => {
             <tbody>
               {catalogVirtual.padTop > 0 && (
                 <tr aria-hidden="true" style={{ height: catalogVirtual.padTop, pointerEvents: 'none' }}>
-                  <td colSpan={11} style={{ padding: 0, border: 'none', height: catalogVirtual.padTop, lineHeight: 0 }} />
+                  <td colSpan={12} style={{ padding: 0, border: 'none', height: catalogVirtual.padTop, lineHeight: 0 }} />
                 </tr>
               )}
               {catalogVirtual.slice.map((row) => {
@@ -1351,6 +1434,17 @@ const Products = () => {
                     style={{ height: CATALOG_ROW_HEIGHT }}
                     onClick={() => setSideProduct(row)}
                   >
+                    <td style={{ padding: '12px 10px' }}>
+                      <input
+                        type="checkbox"
+                        checked={selectedIds.includes(row.id)}
+                        onChange={(e) => {
+                          e.stopPropagation();
+                          setSelectedIds((prev) => (prev.includes(row.id) ? prev.filter((x) => x !== row.id) : [...prev, row.id]));
+                        }}
+                        onClick={(e) => e.stopPropagation()}
+                      />
+                    </td>
                     <td style={{ padding: '12px 14px', fontFamily: 'ui-monospace,monospace', fontSize: 12, color: 'var(--text-muted)', fontWeight: 600, whiteSpace: 'nowrap' }}>{row.barcode || row.sku || '—'}</td>
                     <td style={{ padding: '12px 14px', fontWeight: 700, color: 'var(--text)', minWidth: 140, maxWidth: 220 }}>
                       <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.name}</div>
@@ -1383,7 +1477,7 @@ const Products = () => {
               })}
               {catalogVirtual.padBottom > 0 && (
                 <tr aria-hidden="true" style={{ height: catalogVirtual.padBottom, pointerEvents: 'none' }}>
-                  <td colSpan={11} style={{ padding: 0, border: 'none', height: catalogVirtual.padBottom, lineHeight: 0 }} />
+                  <td colSpan={12} style={{ padding: 0, border: 'none', height: catalogVirtual.padBottom, lineHeight: 0 }} />
                 </tr>
               )}
             </tbody>
@@ -1480,7 +1574,7 @@ const Products = () => {
                 {[
                   ['Штрих-код', sideProduct.barcode || sideProduct.sku || '—', true],
                   ['Модель', sideProduct.model || '—'],
-                  ['Поставщик', sideProduct.supplier || '—'],
+                  ['Производитель', sideProduct.supplier || '—'],
                   ['Закуп (₸)', `${Number(sideProduct.purchase_price || 0).toLocaleString('ru-RU')} ₸`],
                   ['Доставка', sideProduct.delivery_cost_kzt ? `${Number(sideProduct.delivery_cost_kzt).toLocaleString('ru-RU')} ₸` : '—'],
                   ['Вес (доставка)', formatSideDeliveryKg(sideProduct, deliveryKztPerKg)],
@@ -2095,7 +2189,7 @@ const Products = () => {
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
             <div style={{ gridColumn: '1 / -1' }}>
-              <Input label="Поставщик" placeholder="По желанию" value={formData.supplier || ''} onChange={(e) => setFormData({ ...formData, supplier: e.target.value })} style={formData.id ? { border: '1px solid var(--primary)' } : {}} />
+              <Input label="Производитель" placeholder="По желанию" value={formData.supplier || ''} onChange={(e) => setFormData({ ...formData, supplier: e.target.value })} style={formData.id ? { border: '1px solid var(--primary)' } : {}} />
             </div>
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
@@ -2134,6 +2228,30 @@ const Products = () => {
         initialLabelType={printType}
         labelSize={settingsRow?.label_size || 'small'}
       />
+      <Modal
+        isOpen={bulkEditOpen}
+        onClose={() => setBulkEditOpen(false)}
+        title="Массовое редактирование"
+        size="md"
+        actions={(
+          <>
+            <Button variant="secondary" onClick={() => setBulkEditOpen(false)}>Отмена</Button>
+            <Button variant="primary" onClick={() => bulkMutation.mutate()} loading={bulkMutation.isPending}>Сохранить</Button>
+          </>
+        )}
+      >
+        <p style={{ marginTop: 0, color: 'var(--text-muted)', fontSize: 13 }}>
+          Только товары одной категории. Пустое поле не изменяет текущее значение.
+        </p>
+        <div style={{ display: 'grid', gap: 10 }}>
+          <Input label="Название" value={bulkForm.name} onChange={(e) => setBulkForm((p) => ({ ...p, name: e.target.value }))} />
+          <Input label="Марка" value={bulkForm.brand} onChange={(e) => setBulkForm((p) => ({ ...p, brand: e.target.value }))} />
+          <Input label="Модель" value={bulkForm.model} onChange={(e) => setBulkForm((p) => ({ ...p, model: e.target.value }))} />
+          <Input label="Закуп (₸)" type="number" value={bulkForm.purchase_price} onChange={(e) => setBulkForm((p) => ({ ...p, purchase_price: e.target.value }))} />
+          <Input label="Продажа (₸)" type="number" value={bulkForm.sale_price} onChange={(e) => setBulkForm((p) => ({ ...p, sale_price: e.target.value }))} />
+          <Input label="Количество" type="number" value={bulkForm.quantity} onChange={(e) => setBulkForm((p) => ({ ...p, quantity: e.target.value }))} />
+        </div>
+      </Modal>
     </div>
   );
 };

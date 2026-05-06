@@ -49,14 +49,6 @@ const Pills = ({ options, value, onChange }) => (
   </div>
 );
 
-const Toggle = ({ value, onChange }) => (
-  <button
-    type="button"
-    onClick={() => onChange(!value)}
-    className={`ios-toggle ${value ? 'on' : ''}`}
-  />
-);
-
 const Row = ({ label, description, children }) => (
   <div className="settings-row">
     <div style={{ flex: 1 }}>
@@ -141,7 +133,7 @@ const Settings = () => {
 
   const formToPayload = (f) => ({
     store_name: f.store_name,
-    scan_auto_increment: f.scan_auto_increment,
+    scan_auto_increment: true,
     history_auto_clean_days: f.history_auto_clean_days,
     label_size: f.label_size,
     dark_mode: f.dark_mode,
@@ -360,11 +352,6 @@ const Settings = () => {
               />
             </Row>
 
-            <div className="settings-divider" />
-
-            <Row label="Авто +1 при сканировании">
-              <Toggle value={form.scan_auto_increment} onChange={(v) => handleChange('scan_auto_increment', v)} />
-            </Row>
           </div>
         </div>
 

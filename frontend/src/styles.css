@@ -1162,10 +1162,11 @@ textarea {
 
 /* iOS-style shell: glass panels, catalog, dock */
 .ios-glass-panel {
-  background: var(--surface);
+  background: color-mix(in srgb, var(--surface) 84%, transparent);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   box-shadow: none;
+  backdrop-filter: blur(14px);
 }
 
 .ios-mega-title {
@@ -1443,6 +1444,7 @@ textarea {
   gap: 8px;
   will-change: transform;
   transition: var(--transition);
+  min-height: 42px;
 }
 
 .btn-ios-primary:hover:not(:disabled) {
@@ -1451,6 +1453,34 @@ textarea {
 
 .btn-ios-primary:disabled {
   opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-ios-secondary {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 42px;
+  padding: 10px 14px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--surface) 86%, transparent);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  backdrop-filter: blur(10px);
+  transition: var(--transition);
+}
+
+.btn-ios-secondary:hover:not(:disabled) {
+  background: var(--ios-grouped-bg);
+  border-color: color-mix(in srgb, var(--primary) 30%, var(--border));
+}
+
+.btn-ios-secondary:disabled {
+  opacity: 0.6;
   cursor: not-allowed;
 }
 
@@ -1531,7 +1561,8 @@ textarea {
   padding: 14px 14px 10px;
   border: 1px solid var(--border);
   border-radius: 18px;
-  background: var(--surface);
+  background: color-mix(in srgb, var(--surface) 78%, transparent);
+  backdrop-filter: blur(14px);
 }
 
 .dash-welcome {
@@ -1756,7 +1787,7 @@ textarea {
   display: flex;
   flex-direction: column;
   min-height: 0;
-  background: var(--surface);
+  background: color-mix(in srgb, var(--surface) 82%, transparent);
   border: 1px solid var(--border);
   border-radius: 22px;
   box-shadow: none;
@@ -1900,8 +1931,9 @@ textarea {
 .dash-alert-window {
   border: 1px solid var(--border-light);
   border-radius: 16px;
-  background: var(--bg-secondary);
+  background: color-mix(in srgb, var(--bg-secondary) 82%, transparent);
   padding: 10px;
+  backdrop-filter: blur(10px);
 }
 
 .dash-alert-window-title {
@@ -2013,6 +2045,64 @@ textarea {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.dash-alert-link {
+  flex: 1;
+  min-width: 0;
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+}
+
+.dash-alert-link:hover {
+  color: var(--primary);
+  text-decoration: underline;
+}
+
+.dash-details-grid {
+  display: grid;
+  gap: 8px;
+}
+
+.dash-details-row {
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--bg-secondary);
+}
+
+.dash-details-row span {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.ui-skeleton-card {
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--surface) 84%, transparent);
+  backdrop-filter: blur(12px);
+  padding: 14px;
+}
+
+.ui-skeleton-line {
+  width: 100%;
+  border-radius: 10px;
+  background: linear-gradient(90deg, rgba(148, 163, 184, 0.22) 25%, rgba(148, 163, 184, 0.36) 50%, rgba(148, 163, 184, 0.22) 75%);
+  background-size: 280% 100%;
+  animation: ui-skeleton-wave 1.2s ease-in-out infinite;
+}
+
+@keyframes ui-skeleton-wave {
+  0% { background-position: 100% 0; }
+  100% { background-position: 0 0; }
 }
 
 .dash-alert-qty {
@@ -2919,13 +3009,14 @@ textarea {
 
 .reserve-modal-box {
   width: 100%;
-  background: var(--surface);
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
   border-radius: 24px;
   border: 1px solid var(--border);
   box-shadow: none;
   overflow: hidden;
   animation: sheetUp 0.22s ease-out;
   margin-bottom: 24px;
+  backdrop-filter: blur(16px);
 }
 
 .reserve-modal-header {
@@ -4087,7 +4178,7 @@ textarea {
   padding: 10px 14px;
   border-radius: 12px;
   border: 1px solid var(--border);
-  background: var(--surface);
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
   color: var(--text);
   font-size: 13px;
   font-weight: 600;
@@ -4095,7 +4186,8 @@ textarea {
   white-space: nowrap;
 }
 .orders-btn-ghost:hover {
-  background: var(--ios-grouped-bg);
+  background: color-mix(in srgb, var(--ios-grouped-bg) 92%, transparent);
+  border-color: color-mix(in srgb, var(--primary) 25%, var(--border));
 }
 .orders-stats {
   display: grid;

@@ -236,6 +236,13 @@ export default function Orders() {
     window.open(url, '_blank', 'noopener,noreferrer');
   };
 
+  const clearFilters = () => {
+    setStatus('');
+    setSource('');
+    setSearch('');
+    setSelected(null);
+  };
+
   return (
     <div className="page-ios orders-page">
       <header className="orders-header">
@@ -305,8 +312,20 @@ export default function Orders() {
 
       <div className="orders-layout">
         <section className="ios-card orders-list-card" aria-label="Список заказов">
-          {isLoading && <div className="orders-empty">Загрузка…</div>}
-          {!isLoading && orders.length === 0 && <div className="orders-empty">Нет заказов по текущим фильтрам</div>}
+          {isLoading && (
+            <div className="orders-empty">
+              <div className="ui-skeleton-line" style={{ height: 14, width: '70%', marginBottom: 8 }} />
+              <div className="ui-skeleton-line" style={{ height: 14, width: '55%' }} />
+            </div>
+          )}
+          {!isLoading && orders.length === 0 && (
+            <div className="orders-empty">
+              Нет заказов по текущим фильтрам
+              <button type="button" className="orders-btn-ghost" style={{ marginTop: 10 }} onClick={clearFilters}>
+                Сбросить фильтры
+              </button>
+            </div>
+          )}
           {!isLoading &&
             orders.map((o) => (
               <button

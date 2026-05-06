@@ -10,6 +10,7 @@ import {
   FiArrowRight,
   FiShoppingBag,
   FiLayers,
+  FiX,
 } from 'react-icons/fi';
 import { settingsApi } from '../api/settings';
 import { fetchAllProducts, getResolvedApiBaseUrl } from '../api/client';
@@ -80,6 +81,7 @@ const Dashboard = () => {
   const [welcomeFullText, setWelcomeFullText] = useState(WELCOME_VARIANTS[0]);
   const [outOfStockLimit, setOutOfStockLimit] = useState(ALERT_PAGE_SIZE);
   const [lowStockLimit, setLowStockLimit] = useState(ALERT_PAGE_SIZE);
+  const [stockDetails, setStockDetails] = useState(null);
 
   const {
     data: dash,
@@ -201,8 +203,41 @@ const Dashboard = () => {
     navigate(`/reserve?${q.toString()}`);
   };
 
+  const detailsRows = useMemo(() => {
+    if (!stockDetails) return [];
+    return [
+      ['Название', stockDetails.name || '—'],
+      ['Артикул (SKU)', stockDetails.sku || '—'],
+      ['Штрих-код', stockDetails.barcode || '—'],
+      ['Марка', stockDetails.brand || '—'],
+      ['Модель', stockDetails.model || '—'],
+      ['Категория', stockDetails.category || '—'],
+      ['Остаток', `${Number(stockDetails.quantity || 0)} шт`],
+      ['Закуп', `${formatNumber(stockDetails.purchase_price || 0)} ₸`],
+      ['Продажа', `${formatNumber(stockDetails.sale_price || 0)} ₸`],
+      ['Описание', stockDetails.description || '—'],
+    ];
+  }, [stockDetails]);
+
   if (isLoading) {
-    return <LoadingSpinner message="Загрузка…" />;
+    return (
+      <div className="dashboard-page">
+        <div className="dash-max">
+          <div className="ui-skeleton-card" style={{ marginBottom: 14 }}>
+            <div className="ui-skeleton-line" style={{ width: '34%', height: 28, marginBottom: 10 }} />
+            <div className="ui-skeleton-line" style={{ width: '24%', height: 13 }} />
+          </div>
+          <div className="dash-kpi-grid">
+            {[1, 2, 3, 4].map((k) => (
+              <div key={k} className="ui-skeleton-card">
+                <div className="ui-skeleton-line" style={{ width: '60%', height: 14, marginBottom: 10 }} />
+                <div className="ui-skeleton-line" style={{ width: '45%', height: 24 }} />
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -322,7 +357,9 @@ const Dashboard = () => {
                               <ul className="dash-alert-list">
                                 {visibleOutOfStock.map((a) => (
                                   <li key={`o-${a.id}`} className="dash-alert-row">
-                                    <span className="dash-alert-name">{a.name}</span>
+                                    <button type="button" className="dash-alert-link" onClick={() => setStockDetails(a)}>
+                                      {a.name}
+                                    </button>
                                     <span className="dash-alert-qty">{a.quantity} шт</span>
                                     <button
                                       type="button"
@@ -359,7 +396,9 @@ const Dashboard = () => {
                               <ul className="dash-alert-list">
                                 {visibleLowStock.map((a) => (
                                   <li key={`l-${a.id}`} className="dash-alert-row">
-                                    <span className="dash-alert-name">{a.name}</span>
+                                    <button type="button" className="dash-alert-link" onClick={() => setStockDetails(a)}>
+                                      {a.name}
+                                    </button>
                                     <span className="dash-alert-qty">{a.quantity} шт</span>
                                     <button
                                       type="button"
@@ -452,6 +491,32 @@ const Dashboard = () => {
           </>
         )}
       </div>
+      {stockDetails && (
+        <div className="reserve-modal-overlay" onClick={() => setStockDetails(null)} role="presentation">
+          <div className="reserve-modal-box" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 560 }}>
+            <div className="reserve-modal-header">
+              <div style={{ fontWeight: 800, fontSize: 17 }}>Карточка товара</div>
+              <button
+                type="button"
+                onClick={() => setStockDetails(null)}
+                style={{ width: 32, height: 32, borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface)' }}
+              >
+                <FiX size={16} />
+              </button>
+            </div>
+            <div className="reserve-modal-body">
+              <div className="dash-details-grid">
+                {detailsRows.map(([k, v]) => (
+                  <div key={k} className="dash-details-row">
+                    <span>{k}</span>
+                    <strong>{v}</strong>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
