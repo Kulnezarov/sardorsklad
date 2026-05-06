@@ -786,9 +786,48 @@ def delete_product(
     if not db_product:
         raise HTTPException(status_code=404, detail="Product not found")
 
-    # Уже скрыт из каталога — повторное «удаление» без ошибки (удобно при двойном клике / устаревшем UI)
+    # Уже скрыт из каталога. Для старых архивных записей освобождаем уникальные поля (barcode/sku),
+    # если они еще заняты, чтобы можно было создать новый товар с тем же штрих-кодом.
     if not db_product.is_active:
-        return JSONResponse({"ok": True, "already_inactive": True})
+        changed = False
+        old_sku = db_product.sku
+        old_barcode = db_product.barcode
+        if db_product.barcode:
+            db_product.barcode = None
+            changed = True
+        if db_product.sku and "-archived-" not in db_product.sku:
+            archived_suffix = datetime.now(UTC).strftime("%Y%m%d%H%M%S")
+            db_product.sku = f"{db_product.sku}-archived-{db_product.id}-{archived_suffix}"[:100]
+            changed = True
+        if changed:
+            write_audit_log(
+                db,
+                user_id=current_user.id,
+                action="RELEASE_ARCHIVED_PRODUCT_UNIQUES",
+                entity_type="product",
+                entity_id=product_id,
+                payload={"old_sku": old_sku, "old_barcode": old_barcode},
+            )
+            db.add(
+                models.History(
+                    product_id=product_id,
+                    operation_type=models.OperationType.DELETED.value,
+                    quantity_change=0,
+                    reference_type="product",
+                    reference_id=product_id,
+                    details={
+                        "message": f"Для архивного товара {db_product.name} освобождены уникальные поля",
+                        "old_sku": old_sku,
+                        "old_barcode": old_barcode,
+                    },
+                )
+            )
+            try:
+                db.commit()
+            except Exception:
+                db.rollback()
+                raise HTTPException(status_code=500, detail="Не удалось освободить barcode/sku у архивного товара")
+        return JSONResponse({"ok": True, "already_inactive": True, "released_unique_fields": changed})
 
     # При архивировании удаляем локальные WebP галереи.
     for u in _product_gallery_urls(db_product):
