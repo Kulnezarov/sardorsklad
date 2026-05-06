@@ -653,7 +653,10 @@ const Products = () => {
         const candidateBarcode = String(vars?.barcode || formRef.current?.barcode || '').trim();
         if (candidateBarcode) {
           try {
-            const r = await productApi.getByBarcode(candidateBarcode, { allow404: true });
+            const r = await productApi.getByBarcode(candidateBarcode, {
+              allow404: true,
+              includeInactive: true,
+            });
             setDuplicateBarcodeProduct(r?.status === 200 && r?.data ? r.data : null);
           } catch {
             setDuplicateBarcodeProduct(null);

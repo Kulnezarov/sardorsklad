@@ -246,18 +246,20 @@ def list_products(
 
 
 @router.get("/barcode/{barcode}", response_model=schemas.ProductResponse)
-def get_product_by_barcode(barcode: str, db: Session = Depends(get_db)):
+def get_product_by_barcode(
+    barcode: str,
+    include_inactive: bool = False,
+    db: Session = Depends(get_db),
+):
     code = (barcode or "").strip()
     if not code:
         raise HTTPException(status_code=400, detail="Barcode required")
-    product = (
-        db.query(models.Product)
-        .filter(
-            models.Product.is_active.is_(True),
-            or_(models.Product.barcode == code, models.Product.sku == code),
-        )
-        .first()
+    query = db.query(models.Product).filter(
+        or_(models.Product.barcode == code, models.Product.sku == code),
     )
+    if not include_inactive:
+        query = query.filter(models.Product.is_active.is_(True))
+    product = query.first()
     if not product:
         raise HTTPException(status_code=404, detail="Product not found")
     return _product_to_response(db, product)

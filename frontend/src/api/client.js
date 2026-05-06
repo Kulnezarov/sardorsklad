@@ -180,7 +180,9 @@ export const productApi = {
   getById: (id) => apiClient.get(`/api/v1/products/${id}`),
   getByBarcode: (barcode, options = {}) => {
     const allow404 = Boolean(options?.allow404)
+    const includeInactive = Boolean(options?.includeInactive)
     return apiClient.get(`/api/v1/products/barcode/${encodeURIComponent(String(barcode))}`, {
+      params: includeInactive ? { include_inactive: true } : undefined,
       validateStatus: (status) =>
         (status >= 200 && status < 300) || (allow404 && status === 404),
     })
