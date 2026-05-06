@@ -233,6 +233,7 @@ const Products = () => {
   const [forceCreateMode, setForceCreateMode] = useState(false);
   const [formData, setFormData] = useState(emptyForm);
   const [formError, setFormError] = useState('');
+  const [duplicateBarcodeProduct, setDuplicateBarcodeProduct] = useState(null);
   const [barcodeLocked, setBarcodeLocked] = useState(false);
   const [showQrPanel, setShowQrPanel] = useState(false);
 
@@ -616,29 +617,51 @@ const Products = () => {
   /* mutations */
   const saveMutation = useMutation({
     mutationFn: (payload) => {
+      if (payload?._forceCreate) {
+        const body = { ...payload };
+        delete body.id;
+        delete body._forceCreate;
+        return productApi.create(body);
+      }
       // payload.id can be intentionally null for "create new from scanned barcode".
       // Do not fallback to formRef.current.id in that case.
       const hasOwnId = Object.prototype.hasOwnProperty.call(payload || {}, 'id');
       const id = hasOwnId ? payload.id : formRef.current?.id;
       const body = { ...payload };
       delete body.id;
+      delete body._forceCreate;
       return id ? productApi.update(id, body) : productApi.create(body);
     },
     onSuccess: (res, vars) => {
-      const wasEdit = Boolean(vars?.id);
+      const wasEdit = Boolean(vars?.id) && !vars?._forceCreate;
       toast.success(wasEdit ? '✓ Товар обновлён' : '✓ Товар создан');
       queryClient.invalidateQueries({ queryKey: ['products'] });
       queryClient.invalidateQueries({ queryKey: ['categories'] });
       if (!wasEdit && res.data) { setSavedProduct(res.data); setShowPrintSuggest(true); }
+      setDuplicateBarcodeProduct(null);
       resetForm();
     },
-    onError: (err) => {
+    onError: async (err, vars) => {
       const detail = err.response?.data?.detail;
       const message = typeof detail === 'string'
         ? detail
         : Array.isArray(detail)
           ? detail.map((x) => `${x?.loc?.join?.('.') || 'field'}: ${x?.msg || 'invalid'}`).join('; ')
           : 'Ошибка при сохранении товара';
+      const isBarcodeDuplicate = /barcode.*already exists/i.test(message) || /уже существует/i.test(message);
+      if (isBarcodeDuplicate) {
+        const candidateBarcode = String(vars?.barcode || formRef.current?.barcode || '').trim();
+        if (candidateBarcode) {
+          try {
+            const r = await productApi.getByBarcode(candidateBarcode, { allow404: true });
+            setDuplicateBarcodeProduct(r?.status === 200 && r?.data ? r.data : null);
+          } catch {
+            setDuplicateBarcodeProduct(null);
+          }
+        }
+      } else {
+        setDuplicateBarcodeProduct(null);
+      }
       toast.error(`✕ ${message}`);
       setFormError(message);
     },
@@ -732,6 +755,7 @@ const Products = () => {
     setFormData(emptyForm());
     setShowForm(false);
     setFormError('');
+    setDuplicateBarcodeProduct(null);
     setBarcodeLocked(false);
     setShowQrPanel(false);
     setForceCreateMode(false);
@@ -880,7 +904,7 @@ const Products = () => {
     if (!formData.name?.trim()) { setFormError('Название товара обязательно'); return; }
     if (num(formData.sale_price) <= 0) { setFormError('Цена продажи должна быть больше 0'); return; }
     const payload = buildPayload(formData, cnyRate);
-    saveMutation.mutate(forceCreateMode ? { ...payload, id: null } : payload);
+    saveMutation.mutate(forceCreateMode ? { ...payload, id: null, _forceCreate: true } : payload);
   };
 
   const openNew = () => {
@@ -1512,7 +1536,23 @@ const Products = () => {
           <Button variant="primary" icon={formData.id ? FiEdit2 : FiPlus} onClick={handleSubmit} loading={saveMutation.isPending}>{formData.id ? 'Сохранить изменения' : 'Сохранить товар'}</Button>
         </>}
       >
-        {formError && <Alert type="danger" message={formError} onClose={() => setFormError('')} style={{ marginBottom: 16 }} />}
+        {formError && (
+          <div style={{ marginBottom: 16, display: 'grid', gap: 10 }}>
+            <Alert type="danger" message={formError} onClose={() => setFormError('')} />
+            {duplicateBarcodeProduct && (
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  setDuplicateBarcodeProduct(null);
+                  setFormError('');
+                  handleEdit(duplicateBarcodeProduct);
+                }}
+              >
+                Открыть товар с таким штрих-кодом
+              </Button>
+            )}
+          </div>
+        )}
 
         <div style={{ marginBottom: 18, padding: '12px 16px', borderRadius: 'var(--radius-ios)', background: 'var(--ios-grouped-bg)', border: '1px solid var(--border)' }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
