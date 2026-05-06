@@ -157,8 +157,8 @@ const Sales = () => {
     // Fallback: API lookup
     if (!found) {
       try {
-        const r = await productApi.getByBarcode(bc);
-        if (r.data) found = r.data;
+        const r = await productApi.getByBarcode(bc, { allow404: true });
+        if (r.status === 200 && r.data) found = r.data;
       } catch { /* not found */ }
     }
 

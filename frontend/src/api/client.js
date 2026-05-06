@@ -178,8 +178,13 @@ export const productApi = {
     })
   },
   getById: (id) => apiClient.get(`/api/v1/products/${id}`),
-  getByBarcode: (barcode) =>
-    apiClient.get(`/api/v1/products/barcode/${encodeURIComponent(String(barcode))}`),
+  getByBarcode: (barcode, options = {}) => {
+    const allow404 = Boolean(options?.allow404)
+    return apiClient.get(`/api/v1/products/barcode/${encodeURIComponent(String(barcode))}`, {
+      validateStatus: (status) =>
+        (status >= 200 && status < 300) || (allow404 && status === 404),
+    })
+  },
   create: (data) => apiClient.post('/api/v1/products', data),
   update: (id, data) => apiClient.put(`/api/v1/products/${id}`, data),
   delete: (id) => apiClient.delete(`/api/v1/products/${id}`),

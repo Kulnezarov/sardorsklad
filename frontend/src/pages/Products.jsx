@@ -613,13 +613,16 @@ const Products = () => {
   /* mutations */
   const saveMutation = useMutation({
     mutationFn: (payload) => {
-      const id = payload?.id ?? formRef.current?.id;
+      // payload.id can be intentionally null for "create new from scanned barcode".
+      // Do not fallback to formRef.current.id in that case.
+      const hasOwnId = Object.prototype.hasOwnProperty.call(payload || {}, 'id');
+      const id = hasOwnId ? payload.id : formRef.current?.id;
       const body = { ...payload };
       delete body.id;
       return id ? productApi.update(id, body) : productApi.create(body);
     },
-    onSuccess: (res) => {
-      const wasEdit = Boolean(formRef.current?.id);
+    onSuccess: (res, vars) => {
+      const wasEdit = Boolean(vars?.id);
       toast.success(wasEdit ? '✓ Товар обновлён' : '✓ Товар создан');
       queryClient.invalidateQueries({ queryKey: ['products'] });
       queryClient.invalidateQueries({ queryKey: ['categories'] });
@@ -765,10 +768,10 @@ const Products = () => {
           let found = productsRef.current.find((p) => productMatchesScan(p, buf));
           if (!found) {
             try {
-              const r = await productApi.getByBarcode(buf);
-              if (r?.data) found = r.data;
+              const r = await productApi.getByBarcode(buf, { allow404: true });
+              if (r?.status === 200 && r?.data) found = r.data;
             } catch {
-              /* 404 */
+              /* other errors */
             }
           }
           if (found) {
