@@ -148,6 +148,10 @@ export default function Orders() {
         .getAll({ status: status || undefined, source: source || undefined, customer: search || undefined, limit: 200 })
         .then((r) => r.data),
   });
+  const { data: ordersForStats = [] } = useQuery({
+    queryKey: ['orders', 'quick-stats'],
+    queryFn: () => orderApi.getAll({ limit: 200 }).then((r) => r.data),
+  });
 
   const selectedOrder = useMemo(() => orders.find((o) => o.id === selected) || null, [orders, selected]);
 
@@ -157,6 +161,16 @@ export default function Orders() {
     const site = list.filter((o) => o.source === 'website').length;
     return { count: list.length, sum, site };
   }, [orders]);
+  const quickStatusStats = useMemo(() => {
+    const src = Array.isArray(ordersForStats) ? ordersForStats : [];
+    const get = (st) => src.filter((o) => o.status === st).length;
+    return {
+      all: src.length,
+      new: get('Новый заказ') + get('Новый заказ с сайта'),
+      done: get('Выдано'),
+      cancel: get('Отменен'),
+    };
+  }, [ordersForStats]);
 
   const copyText = async (text, successMsg) => {
     if (!text) {
@@ -277,6 +291,20 @@ export default function Orders() {
       </div>
 
       <div className="ios-card orders-filters">
+        <div className="orders-quick-tabs">
+          <button type="button" className={`orders-quick-tab ${status === '' ? 'orders-quick-tab--active' : ''}`} onClick={() => setStatus('')}>
+            Все ({quickStatusStats.all})
+          </button>
+          <button type="button" className={`orders-quick-tab ${status === 'Новый заказ' ? 'orders-quick-tab--active' : ''}`} onClick={() => setStatus('Новый заказ')}>
+            Новые ({quickStatusStats.new})
+          </button>
+          <button type="button" className={`orders-quick-tab ${status === 'Выдано' ? 'orders-quick-tab--active' : ''}`} onClick={() => setStatus('Выдано')}>
+            Выдано ({quickStatusStats.done})
+          </button>
+          <button type="button" className={`orders-quick-tab ${status === 'Отменен' ? 'orders-quick-tab--active' : ''}`} onClick={() => setStatus('Отменен')}>
+            Отменено ({quickStatusStats.cancel})
+          </button>
+        </div>
         <div className="orders-filters-grid">
           <label className="orders-field">
             <span className="orders-field-label">Поиск клиента</span>
