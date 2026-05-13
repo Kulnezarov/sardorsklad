@@ -1336,8 +1336,8 @@ const Products = () => {
       {importError && <div style={{ marginBottom: 12 }}><Alert type="danger" title="Ошибка импорта Excel" message={importError} icon={FiAlertTriangle} onClose={() => setImportError('')} /></div>}
 
       {/* ── Search + categories ── */}
-      <div className="ios-glass-panel" style={{ padding: '14px 16px', marginBottom: 12 }}>
-        <div ref={searchWrapRef} style={{ position: 'relative', marginBottom: 10 }}>
+      <div className="ios-glass-panel" style={{ padding: '14px 16px', marginBottom: 12, position: 'relative', zIndex: 60 }}>
+        <div ref={searchWrapRef} style={{ position: 'relative', marginBottom: 10, zIndex: 60 }}>
           <div className="catalog-search-wrap">
             <FiSearch className="catalog-search-icon" size={17} />
             <input
