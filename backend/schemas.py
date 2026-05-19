@@ -641,6 +641,9 @@ class SettingsUpdate(BaseModel):
     cny_rate: Optional[float] = Field(None, gt=0)
     low_stock_threshold: Optional[int] = Field(None, gt=0)
     delivery_kzt_per_kg: Optional[float] = Field(None, gt=0)
+    mobile_min_app_version: Optional[str] = Field(None, max_length=20)
+    mobile_force_update: Optional[bool] = None
+    mobile_store_url: Optional[str] = Field(None, max_length=500)
 
 
 class SettingsResponse(BaseModel):
@@ -653,8 +656,29 @@ class SettingsResponse(BaseModel):
     cny_rate: float
     low_stock_threshold: int
     delivery_kzt_per_kg: float = 800.0
+    mobile_min_app_version: str = "1.0.0"
+    mobile_force_update: bool = False
+    mobile_store_url: Optional[str] = None
     created_at: datetime
     updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class CnyPriceHistoryCreate(BaseModel):
+    barcode: str = Field(..., min_length=1, max_length=50)
+    cny_price: Money10_2
+    delivery_cost_kzt: Optional[Money10_2] = None
+    product_id: Optional[int] = None
+
+
+class CnyPriceHistoryItem(BaseModel):
+    id: int
+    product_id: Optional[int] = None
+    barcode: str
+    cny_price: float
+    delivery_cost_kzt: Optional[float] = None
+    created_at: datetime
 
     model_config = {"from_attributes": True}
 

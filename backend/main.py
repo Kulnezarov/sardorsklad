@@ -17,7 +17,7 @@ import database
 import models
 import bootstrap_admin
 from fastapi.middleware.cors import CORSMiddleware
-from routers import auth, products, sales, reserve, history, revision, settings
+from routers import auth, products, sales, reserve, history, revision, settings, app_mobile
 from routers import wish_orders
 from routers import public, categories, orders, compatibility
 from config.logger import setup_logger
@@ -261,6 +261,7 @@ async def log_requests(request: Request, call_next):
 # ROUTERS
 # ============================================================================
 # Include all routers with versioned API prefixes
+app.include_router(app_mobile.router)
 app.include_router(auth.router)
 app.include_router(products.router)
 app.include_router(sales.router)

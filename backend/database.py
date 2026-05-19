@@ -398,6 +398,22 @@ def ensure_schema_updates():
         """,
         "settings.delivery_kzt_per_kg",
     )
+    _exec_schema_sql(
+        """
+        DO $$
+        BEGIN
+          IF EXISTS (
+            SELECT 1 FROM information_schema.tables
+            WHERE table_schema = 'public' AND table_name = 'settings'
+          ) THEN
+            ALTER TABLE settings ADD COLUMN IF NOT EXISTS mobile_min_app_version VARCHAR(20) DEFAULT '1.0.0' NOT NULL;
+            ALTER TABLE settings ADD COLUMN IF NOT EXISTS mobile_force_update BOOLEAN DEFAULT FALSE NOT NULL;
+            ALTER TABLE settings ADD COLUMN IF NOT EXISTS mobile_store_url VARCHAR(500);
+          END IF;
+        END $$;
+        """,
+        "settings.mobile_app",
+    )
 
     ensure_compatibility_tables()
     ensure_compatibility_table_columns()

@@ -254,12 +254,35 @@ class Product(Base):
     compatibility_engine_families = relationship(
         "ProductEngineFamilyLink", back_populates="product", cascade="all, delete-orphan"
     )
+    cny_price_history = relationship(
+        "ProductCnyPriceHistory", back_populates="product", cascade="all, delete-orphan"
+    )
 
     # Indexes
     __table_args__ = (
         Index('idx_products_category', 'category'),
         Index('idx_products_is_active', 'is_active'),
         Index('idx_products_created_at', 'created_at'),
+    )
+
+
+# ============================================================================
+# TABLE 2b: CNY PURCHASE PRICE HISTORY (варианты закупа в ¥)
+# ============================================================================
+class ProductCnyPriceHistory(Base):
+    __tablename__ = "product_cny_price_history"
+
+    id = Column(Integer, primary_key=True, index=True)
+    product_id = Column(Integer, ForeignKey("products.id", ondelete="CASCADE"), nullable=True, index=True)
+    barcode = Column(String(50), nullable=False, index=True)
+    cny_price = Column(Numeric(10, 2), nullable=False)
+    delivery_cost_kzt = Column(Numeric(10, 2), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    product = relationship("Product", back_populates="cny_price_history")
+
+    __table_args__ = (
+        Index("idx_cny_history_barcode_created", "barcode", "created_at"),
     )
 
 
@@ -493,6 +516,11 @@ class Settings(Base):
     low_stock_threshold = Column(Integer, default=5, nullable=False)
     # Тариф доставки: 1 кг = N ₸ (для связки «доставка ↔ вес» в карточке товара)
     delivery_kzt_per_kg = Column(Numeric(10, 2), default=800.0, nullable=False)
+
+    # Мобильное приложение
+    mobile_min_app_version = Column(String(20), default="1.0.0", nullable=False)
+    mobile_force_update = Column(Boolean, default=False, nullable=False)
+    mobile_store_url = Column(String(500), nullable=True)
     
     # Метаданные
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)

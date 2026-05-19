@@ -25,6 +25,7 @@ from database import SessionLocal, get_db
 from dependencies import require_manager_or_admin
 from services.audit import write_audit_log
 from services.excel_products import export_products_xlsx, import_products_from_xlsx
+from services.cny_price_history import record_cny_price_history
 from services.product_compatibility import apply_product_compatibility, build_compatibility_out
 
 router = APIRouter(
@@ -263,6 +264,62 @@ def get_product_by_barcode(
     if not product:
         raise HTTPException(status_code=404, detail="Product not found")
     return _product_to_response(db, product)
+
+
+@router.get("/cny-history/{barcode}", response_model=List[schemas.CnyPriceHistoryItem])
+def list_cny_price_history(
+    barcode: str,
+    limit: int = Query(30, ge=1, le=100),
+    db: Session = Depends(get_db),
+):
+    code = (barcode or "").strip()
+    if not code:
+        raise HTTPException(status_code=400, detail="Barcode required")
+    rows = (
+        db.query(models.ProductCnyPriceHistory)
+        .filter(models.ProductCnyPriceHistory.barcode == code)
+        .order_by(models.ProductCnyPriceHistory.created_at.desc())
+        .limit(limit)
+        .all()
+    )
+    return [
+        schemas.CnyPriceHistoryItem(
+            id=r.id,
+            product_id=r.product_id,
+            barcode=r.barcode,
+            cny_price=float(r.cny_price),
+            delivery_cost_kzt=float(r.delivery_cost_kzt) if r.delivery_cost_kzt is not None else None,
+            created_at=r.created_at,
+        )
+        for r in rows
+    ]
+
+
+@router.post("/cny-history", response_model=schemas.CnyPriceHistoryItem, status_code=status.HTTP_201_CREATED)
+def add_cny_price_history(
+    payload: schemas.CnyPriceHistoryCreate,
+    db: Session = Depends(get_db),
+):
+    code = payload.barcode.strip()
+    row = record_cny_price_history(
+        db,
+        barcode=code,
+        cny_price=payload.cny_price,
+        delivery_cost_kzt=payload.delivery_cost_kzt,
+        product_id=payload.product_id,
+    )
+    if row is None:
+        raise HTTPException(status_code=400, detail="Укажите штрих-код и цену в ¥")
+    db.commit()
+    db.refresh(row)
+    return schemas.CnyPriceHistoryItem(
+        id=row.id,
+        product_id=row.product_id,
+        barcode=row.barcode,
+        cny_price=float(row.cny_price),
+        delivery_cost_kzt=float(row.delivery_cost_kzt) if row.delivery_cost_kzt is not None else None,
+        created_at=row.created_at,
+    )
 
 
 @router.post("/import/excel", response_model=schemas.ImportExcelResponse)
@@ -542,6 +599,15 @@ def create_product(
         payload={"name": db_product.name, "sku": db_product.sku},
     )
 
+    if db_product.cny_price and float(db_product.cny_price) > 0:
+        record_cny_price_history(
+            db,
+            barcode=db_product.barcode,
+            cny_price=db_product.cny_price,
+            delivery_cost_kzt=db_product.delivery_cost_kzt,
+            product_id=db_product.id,
+        )
+
     try:
         db.commit()
     except IntegrityError:
@@ -657,6 +723,15 @@ def update_product(
         entity_id=product_id,
         payload=update_data,
     )
+
+    if db_product.cny_price and float(db_product.cny_price) > 0:
+        record_cny_price_history(
+            db,
+            barcode=db_product.barcode,
+            cny_price=db_product.cny_price,
+            delivery_cost_kzt=db_product.delivery_cost_kzt,
+            product_id=db_product.id,
+        )
 
     try:
         db.commit()
