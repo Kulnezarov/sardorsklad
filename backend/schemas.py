@@ -978,6 +978,10 @@ class DebtCustomerInlineCreate(BaseModel):
     notes: Optional[str] = Field(None, max_length=2000)
 
 
+class DebtConvertFromSale(BaseModel):
+    customer_id: int = Field(..., ge=1)
+
+
 class DebtSaleCreate(BaseModel):
     items: List[SaleItemCreate] = Field(..., min_length=1)
     customer_id: Optional[int] = Field(None, ge=1)

@@ -268,6 +268,8 @@ export const debtApi = {
   deleteCustomer: (id) => apiClient.delete(`/api/v1/debt/customers/${id}`),
   listCustomerSales: (id) => apiClient.get(`/api/v1/debt/customers/${id}/sales`),
   createSale: (data) => apiClient.post('/api/v1/debt/sales', data),
+  convertSale: (saleId, customerId) =>
+    apiClient.post(`/api/v1/debt/sales/convert/${saleId}`, { customer_id: customerId }),
   getSale: (id) => apiClient.get(`/api/v1/debt/sales/${id}`),
   addPayment: (id, data) => apiClient.post(`/api/v1/debt/sales/${id}/payments`, data),
 }

@@ -350,6 +350,64 @@ def create_debt_sale(payload: schemas.DebtSaleCreate, db: Session = Depends(get_
     return _debt_sale_to_response(db, debt_sale, receipt_seq=seq_map.get(debt_sale.id, 0))
 
 
+@router.post("/sales/convert/{sale_id}", response_model=schemas.DebtSaleResponse)
+def convert_sale_to_debt(
+    sale_id: int,
+    payload: schemas.DebtConvertFromSale,
+    db: Session = Depends(get_db),
+):
+    """Перевести обычную продажу (наличные/Kaspi) в долг без повторного списания со склада."""
+    sale = db.query(models.Sale).filter(models.Sale.id == sale_id).first()
+    if not sale:
+        raise HTTPException(status_code=404, detail="Sale not found")
+
+    if sale.payment_method == "credit":
+        raise HTTPException(status_code=400, detail="Продажа уже в долг")
+
+    existing = (
+        db.query(models.DebtSale).filter(models.DebtSale.sale_id == sale_id).first()
+    )
+    if existing:
+        raise HTTPException(status_code=400, detail="Для этой продажи уже есть долг")
+
+    customer = (
+        db.query(models.DebtCustomer)
+        .filter(models.DebtCustomer.id == payload.customer_id)
+        .first()
+    )
+    if not customer:
+        raise HTTPException(status_code=404, detail="Customer not found")
+
+    sale.payment_method = "credit"
+    sale.customer_info = {
+        "debt_customer_id": customer.id,
+        "name": customer.name,
+        "phone": customer.phone,
+    }
+
+    debt_sale = models.DebtSale(
+        customer_id=customer.id,
+        sale_id=sale.id,
+        total_amount=sale.total_amount,
+        paid_amount=Decimal("0"),
+    )
+    db.add(debt_sale)
+    db.commit()
+
+    debt_sale = (
+        db.query(models.DebtSale)
+        .options(
+            joinedload(models.DebtSale.sale),
+            joinedload(models.DebtSale.customer),
+            joinedload(models.DebtSale.payments),
+        )
+        .filter(models.DebtSale.id == debt_sale.id)
+        .first()
+    )
+    seq_map = _customer_receipt_seq_map(db, customer.id)
+    return _debt_sale_to_response(db, debt_sale, receipt_seq=seq_map.get(debt_sale.id, 0))
+
+
 @router.get("/sales/{debt_sale_id}", response_model=schemas.DebtSaleResponse)
 def get_debt_sale(debt_sale_id: int, db: Session = Depends(get_db)):
     debt_sale = (

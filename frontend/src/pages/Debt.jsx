@@ -26,6 +26,8 @@ export default function Debt({ onBack }) {
   const [receiptSale, setReceiptSale] = useState(null);
   const [payAmount, setPayAmount] = useState('');
   const [payNote, setPayNote] = useState('');
+  const [historySearch, setHistorySearch] = useState('');
+  const [onlyUnpaid, setOnlyUnpaid] = useState(false);
 
   const { data: customers = [], isLoading } = useQuery({
     queryKey: ['debt-customers', search],
@@ -111,7 +113,19 @@ export default function Debt({ onBack }) {
 
   const selectCustomer = (id) => {
     setSelectedId(id);
+    setHistorySearch('');
+    setOnlyUnpaid(false);
   };
+
+  const filteredSales = (sales || []).filter((s) => {
+    if (onlyUnpaid && num(s.balance) <= 0) return false;
+    const q = historySearch.trim().toLowerCase();
+    if (!q) return true;
+    const label = debtReceiptLabel(s).toLowerCase();
+    const date = formatDebtDateTime(s.created_at).toLowerCase();
+    const total = formatMoney(s.total_amount).toLowerCase();
+    return label.includes(q) || date.includes(q) || total.includes(q);
+  });
 
   return (
     <div className="page-ios" style={{ padding: '16px 16px 100px', maxWidth: 1200, margin: '0 auto' }}>
@@ -270,11 +284,56 @@ export default function Debt({ onBack }) {
                 )}
               </div>
               <div style={{ fontWeight: 800, marginBottom: 10, fontSize: 15 }}>История покупок</div>
+              {sales.length > 0 && (
+                <>
+                  <div style={{ display: 'flex', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
+                    <button
+                      type="button"
+                      onClick={() => setOnlyUnpaid(false)}
+                      style={{
+                        padding: '6px 12px',
+                        borderRadius: 10,
+                        border: `2px solid ${!onlyUnpaid ? '#d97706' : 'var(--border)'}`,
+                        background: !onlyUnpaid ? '#fff7ed' : 'var(--surface)',
+                        fontWeight: 700,
+                        fontSize: 13,
+                        cursor: 'pointer',
+                      }}
+                    >
+                      Все
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setOnlyUnpaid(true)}
+                      style={{
+                        padding: '6px 12px',
+                        borderRadius: 10,
+                        border: `2px solid ${onlyUnpaid ? '#d97706' : 'var(--border)'}`,
+                        background: onlyUnpaid ? '#fff7ed' : 'var(--surface)',
+                        fontWeight: 700,
+                        fontSize: 13,
+                        cursor: 'pointer',
+                      }}
+                    >
+                      С остатком
+                    </button>
+                  </div>
+                  <input
+                    className="input-ios"
+                    placeholder="Поиск по №, дате, сумме…"
+                    value={historySearch}
+                    onChange={(e) => setHistorySearch(e.target.value)}
+                    style={{ width: '100%', marginBottom: 10 }}
+                  />
+                </>
+              )}
               {sales.length === 0 ? (
                 <div style={{ color: 'var(--text-muted)', padding: '12px 0' }}>Покупок пока нет</div>
+              ) : filteredSales.length === 0 ? (
+                <div style={{ color: 'var(--text-muted)', padding: '12px 0' }}>Ничего не найдено</div>
               ) : (
                 <div style={{ display: 'grid', gap: 8 }}>
-                  {sales.map((s) => (
+                  {filteredSales.map((s) => (
                     <button
                       key={s.id}
                       type="button"
