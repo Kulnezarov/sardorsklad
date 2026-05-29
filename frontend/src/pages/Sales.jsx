@@ -20,7 +20,8 @@ const formatMoney = (v) => Number(v || 0).toLocaleString('ru-RU');
 const normalizeScanCode = (s) => String(s ?? '').replaceAll('\u0000', '').replace(/[\s\r\n\t]+/g, '').trim();
 
 /* ── POS component ── */
-const Sales = () => {
+const Sales = ({ mode = 'cash', onOpenClients }) => {
+  const isDebt = mode === 'debt';
   const navigate = useNavigate();
   const queryClient = useQueryClient();
 
@@ -57,6 +58,7 @@ const Sales = () => {
   const [showPayModal, setShowPayModal] = useState(false);
   const [showDebtPick, setShowDebtPick] = useState(false);
   const [debtReceipt, setDebtReceipt] = useState(null);
+  const [debtCustomer, setDebtCustomer] = useState(null);
 
   const searchRef = useRef(null);
   const barcodeRef = useRef(null);
@@ -269,6 +271,7 @@ const Sales = () => {
     },
     onSuccess: (res) => {
       setDebtReceipt(res.data);
+      setDebtCustomer(null);
       setCart([]);
       localStorage.removeItem(CART_STORAGE_KEY);
       queryClient.invalidateQueries({ queryKey: ['products-pos'] });
@@ -434,8 +437,34 @@ const Sales = () => {
         <div className="pos-left" style={{ display: 'flex', flexDirection: 'column', gap: 12, overflow: 'auto', minHeight: 0 }}>
 
           {/* Header */}
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
-            <h1 className="ios-mega-title">Продажи</h1>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+            <div>
+              <h1 className="ios-mega-title" style={{ margin: 0 }}>
+                {isDebt ? 'В долг' : 'Продажи'}
+              </h1>
+              {isDebt && (
+                <p style={{ margin: '4px 0 0', fontSize: 13, color: 'var(--text-muted)', maxWidth: 420 }}>
+                  Сканируйте товары как при обычной продаже, выберите клиента и оформите чек.
+                </p>
+              )}
+            </div>
+            {isDebt && onOpenClients && (
+              <button
+                type="button"
+                onClick={onOpenClients}
+                style={{
+                  padding: '8px 14px',
+                  borderRadius: 12,
+                  border: '1px solid var(--border)',
+                  background: 'var(--surface)',
+                  fontWeight: 700,
+                  fontSize: 13,
+                  cursor: 'pointer',
+                }}
+              >
+                Клиенты и история
+              </button>
+            )}
           </div>
 
           {/* Search */}
@@ -564,6 +593,34 @@ const Sales = () => {
 
           {/* Cart footer */}
           <div style={{ borderTop: '2px solid var(--border)', padding: '14px 16px', background: 'var(--surface)' }}>
+            {isDebt && (
+              <button
+                type="button"
+                onClick={() => setShowDebtPick(true)}
+                style={{
+                  width: '100%',
+                  marginBottom: 12,
+                  padding: '12px 14px',
+                  borderRadius: 14,
+                  border: debtCustomer ? '2px solid #d97706' : '1px dashed var(--border)',
+                  background: debtCustomer ? '#fff7ed' : 'var(--ios-grouped-bg)',
+                  cursor: 'pointer',
+                  textAlign: 'left',
+                }}
+              >
+                <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4 }}>
+                  Клиент
+                </div>
+                {debtCustomer ? (
+                  <>
+                    <div style={{ fontWeight: 800, fontSize: 15 }}>{debtCustomer.name}</div>
+                    <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>{debtCustomer.phone}</div>
+                  </>
+                ) : (
+                  <div style={{ fontWeight: 700, color: '#b45309' }}>Выберите клиента →</div>
+                )}
+              </button>
+            )}
             {/* Total */}
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
               <span style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>ИТОГО</span>
@@ -574,11 +631,34 @@ const Sales = () => {
             <button
               type="button"
               disabled={cart.length === 0 || saleMutation.isPending || debtSaleMutation.isPending}
-              onClick={() => setShowPayModal(true)}
-              style={{ width: '100%', height: 56, borderRadius: 18, border: cart.length === 0 ? '1px solid var(--border)' : '1px solid #4f46e5', background: cart.length === 0 ? 'var(--bg-secondary)' : 'linear-gradient(135deg, #6366f1, #7c3aed)', color: cart.length === 0 ? 'var(--text-muted)' : '#fff', fontWeight: 800, fontSize: 17, letterSpacing: '-0.02em', cursor: cart.length === 0 ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, boxShadow: 'none', transition: 'opacity 0.2s, transform 0.2s', marginBottom: 10, willChange: 'transform' }}
+              onClick={() => {
+                if (isDebt) {
+                  if (debtCustomer) debtSaleMutation.mutate(debtCustomer);
+                  else setShowDebtPick(true);
+                } else {
+                  setShowPayModal(true);
+                }
+              }}
+              style={{
+                width: '100%',
+                height: 56,
+                borderRadius: 18,
+                border: cart.length === 0 ? '1px solid var(--border)' : isDebt ? '1px solid #d97706' : '1px solid #4f46e5',
+                background: cart.length === 0 ? 'var(--bg-secondary)' : isDebt ? 'linear-gradient(135deg, #f59e0b, #d97706)' : 'linear-gradient(135deg, #6366f1, #7c3aed)',
+                color: cart.length === 0 ? 'var(--text-muted)' : '#fff',
+                fontWeight: 800,
+                fontSize: 17,
+                letterSpacing: '-0.02em',
+                cursor: cart.length === 0 ? 'not-allowed' : 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 10,
+                marginBottom: 10,
+              }}
             >
               <FiZap size={20} strokeWidth={2.5} />
-              {saleMutation.isPending || debtSaleMutation.isPending ? 'Продаём…' : 'ПРОДАТЬ'}
+              {saleMutation.isPending || debtSaleMutation.isPending ? 'Оформляем…' : isDebt ? 'В ДОЛГ' : 'ПРОДАТЬ'}
             </button>
 
             {cart.length > 0 && (
@@ -626,13 +706,15 @@ const Sales = () => {
             >
               Наличные / сразу
             </button>
-            <button
-              type="button"
-              onClick={() => { setShowPayModal(false); setShowDebtPick(true); }}
-              style={{ width: '100%', padding: 14, borderRadius: 14, border: 'none', background: 'linear-gradient(135deg, #f59e0b, #d97706)', color: '#fff', fontWeight: 700, cursor: 'pointer' }}
-            >
-              В долг
-            </button>
+            {!isDebt && (
+              <button
+                type="button"
+                onClick={() => { setShowPayModal(false); setShowDebtPick(true); }}
+                style={{ width: '100%', padding: 14, borderRadius: 14, border: 'none', background: 'linear-gradient(135deg, #f59e0b, #d97706)', color: '#fff', fontWeight: 700, cursor: 'pointer' }}
+              >
+                В долг
+              </button>
+            )}
           </div>
         </div>
       )}
@@ -640,7 +722,14 @@ const Sales = () => {
       <DebtCustomerPickModal
         isOpen={showDebtPick}
         onClose={() => setShowDebtPick(false)}
-        onSelect={(c) => debtSaleMutation.mutate(c)}
+        onSelect={(c) => {
+          if (isDebt) {
+            setDebtCustomer(c);
+            setShowDebtPick(false);
+          } else {
+            debtSaleMutation.mutate(c);
+          }
+        }}
       />
       <DebtReceiptModal sale={debtReceipt} onClose={() => setDebtReceipt(null)} />
     </div>

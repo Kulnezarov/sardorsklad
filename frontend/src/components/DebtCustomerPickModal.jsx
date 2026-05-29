@@ -3,6 +3,8 @@ import { FiX, FiPlus, FiUser } from 'react-icons/fi';
 import toast from 'react-hot-toast';
 import { debtApi, getApiErrorMessage } from '../api/client';
 import { Button, Input, Modal } from './ui';
+import PhoneInput from './PhoneInput';
+import { formatPhoneDisplay, normalizePhoneDigits } from '../utils/phoneMask';
 
 const num = (v) => {
   const n = parseFloat(String(v ?? 0).replace(',', '.'));
@@ -37,14 +39,15 @@ export default function DebtCustomerPickModal({ isOpen, onClose, onSelect }) {
   }, [isOpen, search]);
 
   const createAndSelect = async () => {
-    if (!form.name.trim() || form.phone.trim().length < 5) {
-      toast.error('Укажите имя и телефон');
+    const digits = normalizePhoneDigits(form.phone);
+    if (!form.name.trim() || digits.length < 11) {
+      toast.error('Укажите имя и полный номер телефона');
       return;
     }
     try {
       const r = await debtApi.createCustomer({
         name: form.name.trim(),
-        phone: form.phone.trim(),
+        phone: `+${digits}`,
         notes: form.notes.trim() || undefined,
       });
       onSelect(r.data);
@@ -123,7 +126,9 @@ export default function DebtCustomerPickModal({ isOpen, onClose, onSelect }) {
                     <FiUser />
                     <div style={{ flex: 1 }}>
                       <div style={{ fontWeight: 700 }}>{c.name}</div>
-                      <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>{c.phone}</div>
+                      <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>
+                        {formatPhoneDisplay(c.phone)}
+                      </div>
                     </div>
                     {num(c.open_balance) > 0 && (
                       <span style={{ fontWeight: 700, color: 'var(--warning)' }}>
@@ -151,7 +156,7 @@ export default function DebtCustomerPickModal({ isOpen, onClose, onSelect }) {
         )}
       >
         <Input label="Имя *" value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} />
-        <Input label="Телефон *" value={form.phone} onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value }))} />
+        <PhoneInput value={form.phone} onChange={(phone) => setForm((f) => ({ ...f, phone }))} />
         <Input label="Доп. информация" value={form.notes} onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))} />
       </Modal>
     </>

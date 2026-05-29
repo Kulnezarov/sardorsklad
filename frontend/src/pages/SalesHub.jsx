@@ -3,7 +3,7 @@ import Sales from './Sales';
 import Debt from './Debt';
 
 /**
- * Продажа: вкладка «Продажа» (касса) и «В долг» (клиенты и долги).
+ * Продажа: касса, касса «В долг» (со сканером) и управление клиентами.
  */
 export default function SalesHub() {
   const [tab, setTab] = useState('pos');
@@ -42,17 +42,26 @@ export default function SalesHub() {
             flex: 1,
             padding: '10px 16px',
             borderRadius: 12,
-            border: tab === 'debt' ? '2px solid var(--primary)' : '1px solid var(--border)',
-            background: tab === 'debt' ? 'var(--primary-light)' : 'var(--surface)',
+            border: tab === 'debt' ? '2px solid #d97706' : '1px solid var(--border)',
+            background: tab === 'debt' ? '#fff7ed' : 'var(--surface)',
             fontWeight: 700,
             cursor: 'pointer',
+            color: tab === 'debt' ? '#b45309' : 'inherit',
           }}
         >
           В долг
         </button>
       </div>
       <div style={{ flex: 1 }}>
-        {tab === 'pos' ? <Sales /> : <Debt />}
+        {tab === 'pos' && <Sales />}
+        {tab === 'debt' && (
+          <Sales mode="debt" onOpenClients={() => setTab('clients')} />
+        )}
+        {tab === 'clients' && (
+          <Debt
+            onBack={() => setTab('debt')}
+          />
+        )}
       </div>
     </div>
   );

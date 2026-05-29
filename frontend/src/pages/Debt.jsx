@@ -1,11 +1,13 @@
 import React, { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
-import { FiPlus, FiTrash2, FiChevronRight } from 'react-icons/fi';
+import { FiPlus, FiTrash2, FiChevronRight, FiArrowLeft, FiUser } from 'react-icons/fi';
 import { debtApi, getApiErrorMessage } from '../api/client';
 import { Button, Input, Modal } from '../components/ui';
+import PhoneInput from '../components/PhoneInput';
 import DebtReceiptModal from '../components/DebtReceiptModal';
 import { buildDebtReceiptText, formatDebtDateTime } from '../utils/debtReceipt';
+import { formatPhoneDisplay, normalizePhoneDigits } from '../utils/phoneMask';
 import { openWhatsApp } from '../utils/whatsapp';
 
 const num = (v) => {
@@ -14,7 +16,7 @@ const num = (v) => {
 };
 const formatMoney = (v) => Number(v || 0).toLocaleString('ru-RU');
 
-export default function Debt() {
+export default function Debt({ onBack }) {
   const qc = useQueryClient();
   const [search, setSearch] = useState('');
   const [selectedId, setSelectedId] = useState(null);
@@ -46,18 +48,22 @@ export default function Debt() {
   const selected = customers.find((c) => c.id === selectedId);
 
   const createCustomer = useMutation({
-    mutationFn: () => debtApi.createCustomer({
-      name: form.name.trim(),
-      phone: form.phone.trim(),
-      notes: form.notes.trim() || undefined,
-    }),
+    mutationFn: () => {
+      const digits = normalizePhoneDigits(form.phone);
+      if (digits.length < 11) throw new Error('Укажите полный номер телефона');
+      return debtApi.createCustomer({
+        name: form.name.trim(),
+        phone: `+${digits}`,
+        notes: form.notes.trim() || undefined,
+      });
+    },
     onSuccess: () => {
       toast.success('Клиент добавлен');
       setAddOpen(false);
       setForm({ name: '', phone: '', notes: '' });
       qc.invalidateQueries({ queryKey: ['debt-customers'] });
     },
-    onError: (e) => toast.error(getApiErrorMessage(e)),
+    onError: (e) => toast.error(getApiErrorMessage(e, e.message)),
   });
 
   const deleteCustomer = useMutation({
@@ -94,18 +100,70 @@ export default function Debt() {
     }
   };
 
+  const selectCustomer = async (id) => {
+    setSelectedId(id);
+    try {
+      const r = await debtApi.listCustomerSales(id);
+      const list = r.data || [];
+      if (list.length === 0) return;
+      const pick = list.find((s) => num(s.balance) > 0) || list[0];
+      const full = await debtApi.getSale(pick.id);
+      setReceiptSale(full.data);
+    } catch (e) {
+      toast.error(getApiErrorMessage(e));
+    }
+  };
+
   return (
     <div className="page-ios" style={{ padding: '16px 16px 100px', maxWidth: 1200, margin: '0 auto' }}>
-      <h1 style={{ fontSize: 26, fontWeight: 800, margin: '0 0 12px' }}>В долг</h1>
-      <p style={{ color: 'var(--text-muted)', margin: '0 0 16px', fontSize: 14 }}>
-        Клиенты, история покупок и частичные оплаты. Чек можно отправить в WhatsApp.
-      </p>
-
-      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(260px, 1fr) minmax(280px, 1.2fr)', gap: 16 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
+        {onBack && (
+          <button
+            type="button"
+            onClick={onBack}
+            style={{
+              width: 40,
+              height: 40,
+              borderRadius: 12,
+              border: '1px solid var(--border)',
+              background: 'var(--surface)',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+            aria-label="Назад к кассе"
+          >
+            <FiArrowLeft size={20} />
+          </button>
+        )}
         <div>
+          <h1 style={{ fontSize: 26, fontWeight: 800, margin: 0 }}>Клиенты в долг</h1>
+          <p style={{ color: 'var(--text-muted)', margin: '6px 0 0', fontSize: 14 }}>
+            История, оплаты и чеки. При выборе клиента открывается последний чек.
+          </p>
+        </div>
+      </div>
+
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
+          gap: 16,
+          alignItems: 'start',
+        }}
+      >
+        <div
+          style={{
+            background: 'var(--surface)',
+            border: '1px solid var(--border)',
+            borderRadius: 18,
+            padding: 14,
+          }}
+        >
           <input
             className="input-ios"
-            placeholder="Поиск"
+            placeholder="Поиск по имени или телефону"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             style={{ width: '100%', marginBottom: 10 }}
@@ -114,27 +172,35 @@ export default function Debt() {
             Добавить клиента
           </Button>
           {isLoading ? (
-            <div>Загрузка…</div>
+            <div style={{ padding: 24, textAlign: 'center', color: 'var(--text-muted)' }}>Загрузка…</div>
+          ) : customers.length === 0 ? (
+            <div style={{ padding: 32, textAlign: 'center', color: 'var(--text-muted)' }}>
+              <FiUser size={32} style={{ opacity: 0.35, marginBottom: 8 }} />
+              <div>Клиентов пока нет</div>
+            </div>
           ) : (
-            <div style={{ display: 'grid', gap: 8 }}>
+            <div style={{ display: 'grid', gap: 8, maxHeight: 'min(70vh, 520px)', overflowY: 'auto' }}>
               {customers.map((c) => (
                 <button
                   key={c.id}
                   type="button"
-                  onClick={() => setSelectedId(c.id)}
+                  onClick={() => selectCustomer(c.id)}
                   style={{
                     textAlign: 'left',
-                    padding: '12px 14px',
+                    padding: '14px 16px',
                     borderRadius: 14,
-                    border: `2px solid ${selectedId === c.id ? 'var(--primary)' : 'var(--border)'}`,
-                    background: 'var(--surface)',
+                    border: `2px solid ${selectedId === c.id ? '#d97706' : 'var(--border)'}`,
+                    background: selectedId === c.id ? '#fff7ed' : 'var(--ios-grouped-bg)',
                     cursor: 'pointer',
+                    transition: 'border-color 0.15s, background 0.15s',
                   }}
                 >
-                  <div style={{ fontWeight: 700 }}>{c.name}</div>
-                  <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>{c.phone}</div>
+                  <div style={{ fontWeight: 800, fontSize: 15 }}>{c.name}</div>
+                  <div style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 2 }}>
+                    {formatPhoneDisplay(c.phone)}
+                  </div>
                   {num(c.open_balance) > 0 && (
-                    <div style={{ marginTop: 6, fontWeight: 700, color: 'var(--danger)' }}>
+                    <div style={{ marginTop: 8, fontWeight: 800, color: 'var(--danger)', fontSize: 14 }}>
                       Долг: {formatMoney(c.open_balance)} ₸
                     </div>
                   )}
@@ -144,16 +210,53 @@ export default function Debt() {
           )}
         </div>
 
-        <div style={{ border: '1px solid var(--border)', borderRadius: 16, padding: 16, background: 'var(--surface)', minHeight: 280 }}>
+        <div
+          style={{
+            border: '1px solid var(--border)',
+            borderRadius: 18,
+            padding: 18,
+            background: 'var(--surface)',
+            minHeight: 320,
+            boxShadow: '0 4px 24px rgba(0,0,0,0.04)',
+          }}
+        >
           {!selected ? (
-            <div style={{ color: 'var(--text-muted)', padding: 40, textAlign: 'center' }}>Выберите клиента</div>
+            <div style={{ color: 'var(--text-muted)', padding: 48, textAlign: 'center' }}>
+              Выберите клиента слева — откроется чек или история
+            </div>
           ) : (
             <>
-              <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginBottom: 12 }}>
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: 18, fontWeight: 800 }}>{selected.name}</div>
-                  <div style={{ color: 'var(--text-muted)' }}>{selected.phone}</div>
-                  {selected.notes && <div style={{ marginTop: 8, fontSize: 13 }}>{selected.notes}</div>}
+              <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, marginBottom: 16 }}>
+                <div
+                  style={{
+                    width: 48,
+                    height: 48,
+                    borderRadius: 14,
+                    background: '#fff7ed',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    color: '#d97706',
+                    flexShrink: 0,
+                  }}
+                >
+                  <FiUser size={24} />
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 20, fontWeight: 800 }}>{selected.name}</div>
+                  <div style={{ color: 'var(--text-muted)', fontSize: 15 }}>
+                    {formatPhoneDisplay(selected.phone)}
+                  </div>
+                  {selected.notes && (
+                    <div style={{ marginTop: 8, fontSize: 13, color: 'var(--text-secondary)' }}>
+                      {selected.notes}
+                    </div>
+                  )}
+                  {num(selected.open_balance) > 0 && (
+                    <div style={{ marginTop: 10, fontWeight: 800, fontSize: 18, color: 'var(--danger)' }}>
+                      Общий долг: {formatMoney(selected.open_balance)} ₸
+                    </div>
+                  )}
                 </div>
                 {num(selected.open_balance) === 0 && (
                   <Button
@@ -167,9 +270,9 @@ export default function Debt() {
                   </Button>
                 )}
               </div>
-              <div style={{ fontWeight: 700, marginBottom: 10 }}>История покупок</div>
+              <div style={{ fontWeight: 800, marginBottom: 10, fontSize: 15 }}>История покупок</div>
               {sales.length === 0 ? (
-                <div style={{ color: 'var(--text-muted)' }}>Покупок нет</div>
+                <div style={{ color: 'var(--text-muted)', padding: '12px 0' }}>Покупок пока нет</div>
               ) : (
                 <div style={{ display: 'grid', gap: 8 }}>
                   {sales.map((s) => (
@@ -181,8 +284,8 @@ export default function Debt() {
                         display: 'flex',
                         alignItems: 'center',
                         gap: 8,
-                        padding: '12px',
-                        borderRadius: 12,
+                        padding: '14px 16px',
+                        borderRadius: 14,
                         border: '1px solid var(--border)',
                         background: 'var(--ios-grouped-bg)',
                         cursor: 'pointer',
@@ -190,12 +293,15 @@ export default function Debt() {
                       }}
                     >
                       <div style={{ flex: 1 }}>
-                        <div style={{ fontWeight: 600 }}>{formatDebtDateTime(s.created_at)}</div>
-                        <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>
+                        <div style={{ fontWeight: 700 }}>{formatDebtDateTime(s.created_at)}</div>
+                        <div style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 2 }}>
                           {formatMoney(s.total_amount)} ₸
                           {num(s.balance) > 0 ? ` · остаток ${formatMoney(s.balance)} ₸` : ' · оплачен'}
                         </div>
                       </div>
+                      <span style={{ fontSize: 12, fontWeight: 700, color: num(s.balance) > 0 ? 'var(--warning)' : 'var(--success)' }}>
+                        Чек
+                      </span>
                       <FiChevronRight />
                     </button>
                   ))}
@@ -218,7 +324,7 @@ export default function Debt() {
         )}
       >
         <Input label="Имя *" value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} />
-        <Input label="Телефон *" value={form.phone} onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value }))} />
+        <PhoneInput value={form.phone} onChange={(phone) => setForm((f) => ({ ...f, phone }))} />
         <Input label="Доп. информация" value={form.notes} onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))} />
       </Modal>
 
