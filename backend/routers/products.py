@@ -27,6 +27,7 @@ from services.audit import write_audit_log
 from services.excel_products import export_products_xlsx, import_products_from_xlsx
 from services.cny_price_history import record_cny_price_history
 from services.product_compatibility import apply_product_compatibility, build_compatibility_out
+from services.product_sku import find_product_by_sku, normalize_sku, sku_conflict_detail
 
 router = APIRouter(
     prefix="/api/v1/products",
@@ -262,6 +263,24 @@ def get_product_by_barcode(
         query = query.filter(models.Product.is_active.is_(True))
     product = query.first()
     if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+    return _product_to_response(db, product)
+
+
+@router.get("/sku/{sku}", response_model=schemas.ProductResponse)
+def get_product_by_sku(
+    sku: str,
+    exclude_id: Optional[int] = Query(None, ge=1),
+    include_inactive: bool = True,
+    db: Session = Depends(get_db),
+):
+    norm = normalize_sku(sku)
+    if not norm:
+        raise HTTPException(status_code=400, detail="SKU required")
+    product = find_product_by_sku(db, norm, exclude_id=exclude_id)
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+    if not include_inactive and not product.is_active:
         raise HTTPException(status_code=404, detail="Product not found")
     return _product_to_response(db, product)
 
@@ -542,6 +561,7 @@ def create_product(
     current_user: models.User = Depends(require_manager_or_admin),
 ):
     payload = product.model_dump()
+    allow_duplicate_sku = bool(payload.pop("allow_duplicate_sku", False))
     payload.pop("image_url", None)
     payload.pop("image_urls", None)
     payload["sku"] = payload.get("sku") or build_generated_sku(db)
@@ -560,9 +580,9 @@ def create_product(
                 },
             )
 
-    existing_sku = db.query(models.Product).filter(models.Product.sku == payload["sku"]).first()
-    if existing_sku:
-        raise HTTPException(status_code=400, detail="SKU already exists")
+    existing_sku = find_product_by_sku(db, payload["sku"])
+    if existing_sku and not allow_duplicate_sku:
+        raise HTTPException(status_code=400, detail=sku_conflict_detail(existing_sku))
 
     payload.pop("profit_percent", None)
     v_ids = payload.pop("compatibility_vehicle_model_ids", None)
@@ -632,16 +652,14 @@ def update_product(
         raise HTTPException(status_code=404, detail="Product not found")
 
     update_data = product_update.model_dump(exclude_unset=True)
+    allow_duplicate_sku = bool(update_data.pop("allow_duplicate_sku", False))
     update_data.pop("image_url", None)
     update_data.pop("image_urls", None)
 
     if "sku" in update_data and update_data["sku"] and update_data["sku"] != db_product.sku:
-        existing = db.query(models.Product).filter(
-            models.Product.sku == update_data["sku"],
-            models.Product.id != product_id,
-        ).first()
-        if existing:
-            raise HTTPException(status_code=400, detail="SKU already exists")
+        existing = find_product_by_sku(db, update_data["sku"], exclude_id=product_id)
+        if existing and not allow_duplicate_sku:
+            raise HTTPException(status_code=400, detail=sku_conflict_detail(existing))
 
     if "barcode" in update_data and update_data["barcode"] and update_data["barcode"] != db_product.barcode:
         existing = db.query(models.Product).filter(

@@ -198,7 +198,7 @@ class Product(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(255), nullable=False, index=True)
-    sku = Column(String(100), unique=True, nullable=False, index=True)
+    sku = Column(String(100), unique=False, nullable=False, index=True)
     barcode = Column(String(50), unique=True, nullable=True, index=True)
     category = Column(String(100), nullable=True, index=True)
     brand = Column(String(100), nullable=True, index=True)
@@ -329,6 +329,51 @@ class SaleItem(Base):
         Index('idx_sale_items_sale_id', 'sale_id'),
         Index('idx_sale_items_product_id', 'product_id'),
     )
+
+
+# ============================================================================
+# DEBT / CREDIT SALES (продажа в долг)
+# ============================================================================
+class DebtCustomer(Base):
+    __tablename__ = "debt_customers"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(255), nullable=False, index=True)
+    phone = Column(String(30), nullable=False, index=True)
+    notes = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    debt_sales = relationship("DebtSale", back_populates="customer", cascade="all, delete-orphan")
+
+
+class DebtSale(Base):
+    __tablename__ = "debt_sales"
+
+    id = Column(Integer, primary_key=True, index=True)
+    customer_id = Column(Integer, ForeignKey("debt_customers.id", ondelete="CASCADE"), nullable=False, index=True)
+    sale_id = Column(Integer, ForeignKey("sales.id", ondelete="RESTRICT"), nullable=False, unique=True, index=True)
+    total_amount = Column(Numeric(10, 2), nullable=False)
+    paid_amount = Column(Numeric(10, 2), nullable=False, default=0)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    customer = relationship("DebtCustomer", back_populates="debt_sales")
+    sale = relationship("Sale")
+    payments = relationship("DebtPayment", back_populates="debt_sale", cascade="all, delete-orphan")
+
+    __table_args__ = (Index("idx_debt_sales_customer_created", "customer_id", "created_at"),)
+
+
+class DebtPayment(Base):
+    __tablename__ = "debt_payments"
+
+    id = Column(Integer, primary_key=True, index=True)
+    debt_sale_id = Column(Integer, ForeignKey("debt_sales.id", ondelete="CASCADE"), nullable=False, index=True)
+    amount = Column(Numeric(10, 2), nullable=False)
+    note = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    debt_sale = relationship("DebtSale", back_populates="payments")
 
 
 # ============================================================================

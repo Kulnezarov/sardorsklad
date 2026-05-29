@@ -187,6 +187,19 @@ export const productApi = {
         (status >= 200 && status < 300) || (allow404 && status === 404),
     })
   },
+  getBySku: (sku, options = {}) => {
+    const allow404 = Boolean(options?.allow404)
+    const excludeId = options?.excludeId
+    const includeInactive = options?.includeInactive !== false
+    const params = {}
+    if (excludeId != null && excludeId !== '') params.exclude_id = excludeId
+    if (!includeInactive) params.include_inactive = false
+    return apiClient.get(`/api/v1/products/sku/${encodeURIComponent(String(sku).trim())}`, {
+      params: Object.keys(params).length ? params : undefined,
+      validateStatus: (status) =>
+        (status >= 200 && status < 300) || (allow404 && status === 404),
+    })
+  },
   create: (data) => apiClient.post('/api/v1/products', data),
   update: (id, data) => apiClient.put(`/api/v1/products/${id}`, data),
   delete: (id) => apiClient.delete(`/api/v1/products/${id}`),
@@ -240,6 +253,23 @@ export const saleApi = {
   getTodayRevenue: () => apiClient.get('/api/v1/sales/today/revenue'),
   getTopSalesToday: (limit = 5) => apiClient.get('/api/v1/sales/top-sales/today', { params: { limit } }),
   clearAll: () => apiClient.delete('/api/v1/sales'),
+}
+
+// ============================================================================
+// DEBT / CREDIT SALES API
+// ============================================================================
+export const debtApi = {
+  listCustomers: (search) =>
+    apiClient.get('/api/v1/debt/customers', {
+      params: search?.trim() ? { search: search.trim() } : undefined,
+    }),
+  createCustomer: (data) => apiClient.post('/api/v1/debt/customers', data),
+  getCustomer: (id) => apiClient.get(`/api/v1/debt/customers/${id}`),
+  deleteCustomer: (id) => apiClient.delete(`/api/v1/debt/customers/${id}`),
+  listCustomerSales: (id) => apiClient.get(`/api/v1/debt/customers/${id}/sales`),
+  createSale: (data) => apiClient.post('/api/v1/debt/sales', data),
+  getSale: (id) => apiClient.get(`/api/v1/debt/sales/${id}`),
+  addPayment: (id, data) => apiClient.post(`/api/v1/debt/sales/${id}/payments`, data),
 }
 
 // ============================================================================

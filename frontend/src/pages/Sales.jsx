@@ -6,8 +6,10 @@ import {
   FiSearch, FiGrid, FiShoppingCart, FiX, FiPlus, FiMinus,
   FiZap, FiCamera,
 } from 'react-icons/fi';
-import { saleApi, fetchAllProducts, productApi, getApiErrorMessage } from '../api/client';
+import { saleApi, debtApi, fetchAllProducts, productApi, getApiErrorMessage } from '../api/client';
 import CameraBarcodeScanner from '../components/CameraBarcodeScanner';
+import DebtCustomerPickModal from '../components/DebtCustomerPickModal';
+import DebtReceiptModal from '../components/DebtReceiptModal';
 
 /* ── helpers ── */
 const num = (v) => { const n = parseFloat(String(v || 0).replace(',', '.')); return Number.isFinite(n) ? n : 0; };
@@ -52,6 +54,9 @@ const Sales = () => {
   const [successAmount, setSuccessAmount] = useState(0);
   /** Индекс позиции чека для карточки «подробнее» (марка, описание…) */
   const [cartDetailIdx, setCartDetailIdx] = useState(null);
+  const [showPayModal, setShowPayModal] = useState(false);
+  const [showDebtPick, setShowDebtPick] = useState(false);
+  const [debtReceipt, setDebtReceipt] = useState(null);
 
   const searchRef = useRef(null);
   const barcodeRef = useRef(null);
@@ -247,6 +252,31 @@ const Sales = () => {
       setTimeout(() => { setShowSuccess(false); setCart([]); localStorage.removeItem(CART_STORAGE_KEY); }, 1500);
     },
     onError: (err) => { toast.error(getApiErrorMessage(err, 'Ошибка при продаже')); },
+  });
+
+  const debtSaleMutation = useMutation({
+    mutationFn: (customer) => {
+      if (cart.length === 0) throw new Error('Корзина пуста');
+      const body = {
+        items: cart.map((i) => ({
+          product_id: i.product.id,
+          quantity: i.quantity,
+          unit_price: num(i.product.sale_price),
+        })),
+        customer_id: customer.id,
+      };
+      return debtApi.createSale(body);
+    },
+    onSuccess: (res) => {
+      setDebtReceipt(res.data);
+      setCart([]);
+      localStorage.removeItem(CART_STORAGE_KEY);
+      queryClient.invalidateQueries({ queryKey: ['products-pos'] });
+      queryClient.invalidateQueries({ queryKey: ['products'] });
+      queryClient.invalidateQueries({ queryKey: ['debt-customers'] });
+      toast.success('Продажа в долг оформлена');
+    },
+    onError: (err) => { toast.error(getApiErrorMessage(err, 'Ошибка продажи в долг')); },
   });
 
   /* ─── RENDER ─── */
@@ -543,12 +573,12 @@ const Sales = () => {
             {/* Sell button */}
             <button
               type="button"
-              disabled={cart.length === 0 || saleMutation.isPending}
-              onClick={() => saleMutation.mutate()}
+              disabled={cart.length === 0 || saleMutation.isPending || debtSaleMutation.isPending}
+              onClick={() => setShowPayModal(true)}
               style={{ width: '100%', height: 56, borderRadius: 18, border: cart.length === 0 ? '1px solid var(--border)' : '1px solid #4f46e5', background: cart.length === 0 ? 'var(--bg-secondary)' : 'linear-gradient(135deg, #6366f1, #7c3aed)', color: cart.length === 0 ? 'var(--text-muted)' : '#fff', fontWeight: 800, fontSize: 17, letterSpacing: '-0.02em', cursor: cart.length === 0 ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, boxShadow: 'none', transition: 'opacity 0.2s, transform 0.2s', marginBottom: 10, willChange: 'transform' }}
             >
               <FiZap size={20} strokeWidth={2.5} />
-              {saleMutation.isPending ? 'Продаём…' : 'ПРОДАТЬ'}
+              {saleMutation.isPending || debtSaleMutation.isPending ? 'Продаём…' : 'ПРОДАТЬ'}
             </button>
 
             {cart.length > 0 && (
@@ -576,6 +606,43 @@ const Sales = () => {
         onClose={() => setShowCameraScanner(false)}
         onDetected={(code) => handleBarcodeScan(code)}
       />
+
+      {showPayModal && (
+        <div
+          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 600, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}
+          onClick={() => setShowPayModal(false)}
+          role="presentation"
+        >
+          <div
+            style={{ width: '100%', maxWidth: 360, background: 'var(--surface)', borderRadius: 24, padding: '22px 20px' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ fontSize: 20, fontWeight: 800, marginBottom: 6, textAlign: 'center' }}>Способ оплаты</div>
+            <div style={{ fontSize: 24, fontWeight: 800, color: 'var(--primary)', textAlign: 'center', marginBottom: 16 }}>{formatMoney(total)} ₸</div>
+            <button
+              type="button"
+              onClick={() => { setShowPayModal(false); saleMutation.mutate(); }}
+              style={{ width: '100%', padding: 14, borderRadius: 14, border: '1px solid var(--border)', background: 'var(--ios-grouped-bg)', fontWeight: 700, marginBottom: 8, cursor: 'pointer' }}
+            >
+              Наличные / сразу
+            </button>
+            <button
+              type="button"
+              onClick={() => { setShowPayModal(false); setShowDebtPick(true); }}
+              style={{ width: '100%', padding: 14, borderRadius: 14, border: 'none', background: 'linear-gradient(135deg, #f59e0b, #d97706)', color: '#fff', fontWeight: 700, cursor: 'pointer' }}
+            >
+              В долг
+            </button>
+          </div>
+        </div>
+      )}
+
+      <DebtCustomerPickModal
+        isOpen={showDebtPick}
+        onClose={() => setShowDebtPick(false)}
+        onSelect={(c) => debtSaleMutation.mutate(c)}
+      />
+      <DebtReceiptModal sale={debtReceipt} onClose={() => setDebtReceipt(null)} />
     </div>
   );
 };

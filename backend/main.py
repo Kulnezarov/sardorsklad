@@ -14,12 +14,12 @@ from enum import Enum
 from sqlalchemy.exc import OperationalError
 
 import database
-import models
+import models  # noqa: F401 — регистрация таблиц debt_*
 import bootstrap_admin
 from fastapi.middleware.cors import CORSMiddleware
 from routers import auth, products, sales, reserve, history, revision, settings, app_mobile
 from routers import wish_orders
-from routers import public, categories, orders, compatibility
+from routers import public, categories, orders, compatibility, debt
 from config.logger import setup_logger
 
 # ============================================================================
@@ -265,6 +265,7 @@ app.include_router(app_mobile.router)
 app.include_router(auth.router)
 app.include_router(products.router)
 app.include_router(sales.router)
+app.include_router(debt.router)
 app.include_router(reserve.router)
 app.include_router(history.router)
 app.include_router(revision.router)

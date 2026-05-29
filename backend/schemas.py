@@ -98,6 +98,7 @@ class ProductBase(BaseModel):
 
 
 class ProductCreate(ProductBase):
+    allow_duplicate_sku: bool = False
     compatibility_vehicle_model_ids: Optional[List[int]] = None
     compatibility_engine_family_ids: Optional[List[int]] = None
 
@@ -110,6 +111,7 @@ class ProductCreate(ProductBase):
 
 
 class ProductUpdate(BaseModel):
+    allow_duplicate_sku: bool = False
     name: Optional[str] = Field(None, min_length=1, max_length=255)
     sku: Optional[str] = Field(None, max_length=100)
     barcode: Optional[str] = Field(None, max_length=50)
@@ -940,3 +942,96 @@ class OrderStatusUpdate(BaseModel):
     status: str = Field(..., min_length=2, max_length=80)
     cancellation_reason: Optional[CancellationReasonCode] = None
     cancellation_comment: Optional[str] = Field(None, max_length=4000)
+
+
+# ============================================================================
+# DEBT / CREDIT SALES
+# ============================================================================
+class DebtCustomerCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=255)
+    phone: str = Field(..., min_length=5, max_length=30)
+    notes: Optional[str] = Field(None, max_length=2000)
+
+
+class DebtCustomerUpdate(BaseModel):
+    name: Optional[str] = Field(None, min_length=1, max_length=255)
+    phone: Optional[str] = Field(None, min_length=5, max_length=30)
+    notes: Optional[str] = Field(None, max_length=2000)
+
+
+class DebtCustomerResponse(BaseModel):
+    id: int
+    name: str
+    phone: str
+    notes: Optional[str]
+    open_balance: Decimal = Decimal("0")
+    open_sales_count: int = 0
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class DebtCustomerInlineCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=255)
+    phone: str = Field(..., min_length=5, max_length=30)
+    notes: Optional[str] = Field(None, max_length=2000)
+
+
+class DebtSaleCreate(BaseModel):
+    items: List[SaleItemCreate] = Field(..., min_length=1)
+    customer_id: Optional[int] = Field(None, ge=1)
+    customer: Optional[DebtCustomerInlineCreate] = None
+    notes: Optional[str] = None
+
+    @field_validator("customer", mode="before")
+    @classmethod
+    def empty_customer_as_none(cls, v):
+        if v == {} or v == "":
+            return None
+        return v
+
+
+class DebtPaymentCreate(BaseModel):
+    amount: Money10_2 = Field(..., gt=0)
+    note: Optional[str] = Field(None, max_length=500)
+
+    @field_validator("amount", mode="before")
+    @classmethod
+    def convert_decimal(cls, value):
+        return Decimal(str(value))
+
+
+class DebtPaymentResponse(BaseModel):
+    id: int
+    debt_sale_id: int
+    amount: Decimal
+    note: Optional[str]
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class DebtSaleItemLine(BaseModel):
+    product_id: Optional[int]
+    product_name: str
+    quantity: int
+    unit_price: Decimal
+    subtotal: Decimal
+
+
+class DebtSaleResponse(BaseModel):
+    id: int
+    customer_id: int
+    sale_id: int
+    receipt_number: str
+    total_amount: Decimal
+    paid_amount: Decimal
+    balance: Decimal
+    status: str
+    created_at: datetime
+    customer_name: str
+    customer_phone: str
+    customer_notes: Optional[str] = None
+    items: List[DebtSaleItemLine] = []
+    payments: List[DebtPaymentResponse] = []

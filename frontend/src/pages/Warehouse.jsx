@@ -1,7 +1,8 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 import LabelPrint from '../components/LabelPrint';
+import SkuConflictModal from '../components/SkuConflictModal';
 import { productsApi } from '../api/products';
 import { resolveUploadedAssetUrl, getApiErrorMessage } from '../api/client';
 import { settingsApi } from '../api/settings';
@@ -82,6 +83,11 @@ const Warehouse = () => {
   const [imageBlobUrl, setImageBlobUrl] = useState('');
   const [galleryFocusIdx, setGalleryFocusIdx] = useState(0);
   const [showCameraScanner, setShowCameraScanner] = useState(false);
+  const [skuConflictOpen, setSkuConflictOpen] = useState(false);
+  const [skuConflictExisting, setSkuConflictExisting] = useState(null);
+  const [skuConflictSku, setSkuConflictSku] = useState('');
+  const [skuConflictPayload, setSkuConflictPayload] = useState(null);
+  const skuOpenAfterSaveRef = useRef(null);
   const queryClient = useQueryClient();
 
   const { data: products = [], isLoading } = useQuery({
@@ -101,20 +107,36 @@ const Warehouse = () => {
   });
 
   const saveMutation = useMutation({
-    mutationFn: (payload) =>
-      payload.id
-        ? productsApi.updateProduct(payload.id, payload)
-        : productsApi.createProduct(payload),
+    mutationFn: (payload) => {
+      const body = { ...payload };
+      delete body.id;
+      return payload.id
+        ? productsApi.updateProduct(payload.id, body)
+        : productsApi.createProduct(body);
+    },
     onSuccess: (response) => {
       const saved = response.data;
       const urls = normalizeProductGallery(saved);
       toast.success(formData.id ? 'Товар обновлён' : 'Товар создан');
       queryClient.invalidateQueries({ queryKey: ['products'] });
+      const openAfter = skuOpenAfterSaveRef.current;
+      skuOpenAfterSaveRef.current = null;
+      if (openAfter?.id) {
+        openProduct(openAfter);
+        return;
+      }
       setSelectedProduct(saved);
       setFormData({ ...saved, image_urls: urls, image_url: urls[0] || '' });
     },
     onError: (error) => {
-      toast.error(error.response?.data?.detail || 'Не удалось сохранить товар');
+      const detail = error.response?.data?.detail;
+      if (detail && typeof detail === 'object' && detail.code === 'SKU_EXISTS') {
+        setSkuConflictSku(String(detail.sku || formData.sku || '').trim());
+        setSkuConflictExisting(detail);
+        setSkuConflictOpen(true);
+        return;
+      }
+      toast.error(getApiErrorMessage(error, 'Не удалось сохранить товар'));
     },
   });
 
@@ -181,20 +203,73 @@ const Warehouse = () => {
     setFormData((prev) => ({ ...prev, [field]: value }));
   };
 
-  const handleSave = () => {
-    if (!formData.name || Number(formData.purchase_price) <= 0 || Number(formData.sale_price) <= 0) {
-      toast.error('Укажите название, себестоимость и стоимость продажи');
-      return;
-    }
-
-    saveMutation.mutate({
+  const buildSavePayload = (allowDuplicateSku = false) => {
+    const payload = {
       ...formData,
       quantity: Number(formData.quantity) || 0,
       min_quantity: Number(formData.min_quantity) || 0,
       purchase_price: Number(formData.purchase_price) || 0,
       sale_price: Number(formData.sale_price) || 0,
       cny_price: Number(formData.cny_price) || 0,
-    });
+    };
+    if (allowDuplicateSku) payload.allow_duplicate_sku = true;
+    return payload;
+  };
+
+  const closeSkuConflict = () => {
+    setSkuConflictOpen(false);
+    setSkuConflictExisting(null);
+    setSkuConflictSku('');
+    setSkuConflictPayload(null);
+    skuOpenAfterSaveRef.current = null;
+  };
+
+  const handleSave = async () => {
+    if (!formData.name || Number(formData.purchase_price) <= 0 || Number(formData.sale_price) <= 0) {
+      toast.error('Укажите название, себестоимость и стоимость продажи');
+      return;
+    }
+
+    const payload = buildSavePayload();
+    const sku = String(formData.sku || '').trim();
+    if (sku) {
+      try {
+        const r = await productsApi.getBySku(sku, {
+          allow404: true,
+          excludeId: formData.id || undefined,
+        });
+        if (r?.status === 200 && r?.data) {
+          setSkuConflictSku(sku);
+          setSkuConflictExisting(r.data);
+          setSkuConflictPayload(payload);
+          skuOpenAfterSaveRef.current = null;
+          setSkuConflictOpen(true);
+          return;
+        }
+      } catch {
+        /* fallback: API вернёт SKU_EXISTS */
+      }
+    }
+    saveMutation.mutate(payload);
+  };
+
+  const handleSkuConflictSaveAnyway = () => {
+    if (!skuConflictPayload) {
+      closeSkuConflict();
+      return;
+    }
+    saveMutation.mutate(buildSavePayload(true));
+    closeSkuConflict();
+  };
+
+  const handleSkuConflictShowExisting = () => {
+    if (!skuConflictExisting?.id || !skuConflictPayload) {
+      closeSkuConflict();
+      return;
+    }
+    skuOpenAfterSaveRef.current = skuConflictExisting;
+    saveMutation.mutate({ ...buildSavePayload(true), id: skuConflictPayload.id });
+    closeSkuConflict();
   };
 
   const productImageDisplaySrc = (url) => {
@@ -712,6 +787,16 @@ const Warehouse = () => {
           </div>
         </div>
       </Modal>
+
+      <SkuConflictModal
+        isOpen={skuConflictOpen}
+        sku={skuConflictSku}
+        existing={skuConflictExisting}
+        saving={saveMutation.isPending}
+        onCancel={closeSkuConflict}
+        onSaveAnyway={handleSkuConflictSaveAnyway}
+        onShowExisting={handleSkuConflictShowExisting}
+      />
 
       <LabelPrint
         isOpen={showPrint}

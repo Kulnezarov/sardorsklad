@@ -160,6 +160,29 @@ def ensure_schema_updates():
     _exec_schema_sql("CREATE INDEX IF NOT EXISTS idx_products_brand_id ON products(brand_id)", "products.idx_brand_id")
     _exec_schema_sql("CREATE INDEX IF NOT EXISTS idx_products_engine_code_id ON products(engine_code_id)", "products.idx_engine_code_id")
 
+    # Артикул (SKU) может повторяться — пользователь подтверждает дубликат в UI (как в мобильном приложении).
+    _exec_schema_sql(
+        """
+        DO $$
+        DECLARE cname text;
+        BEGIN
+          FOR cname IN
+            SELECT con.conname
+            FROM pg_constraint con
+            JOIN pg_class rel ON rel.oid = con.conrelid
+            JOIN pg_namespace nsp ON nsp.oid = rel.relnamespace
+            WHERE nsp.nspname = 'public'
+              AND rel.relname = 'products'
+              AND con.contype = 'u'
+              AND pg_get_constraintdef(con.oid) ILIKE '%sku%'
+          LOOP
+            EXECUTE format('ALTER TABLE products DROP CONSTRAINT IF EXISTS %I', cname);
+          END LOOP;
+        END $$;
+        """,
+        "products.drop_sku_unique",
+    )
+
     _exec_schema_sql(
         """
         DO $$
@@ -541,6 +564,61 @@ def ensure_compatibility_table_columns() -> None:
         END $$;
         """,
         "vehicle_models.ts_fix",
+    )
+
+    _exec_schema_sql(
+        """
+        CREATE TABLE IF NOT EXISTS debt_customers (
+          id SERIAL PRIMARY KEY,
+          name VARCHAR(255) NOT NULL,
+          phone VARCHAR(30) NOT NULL,
+          notes TEXT,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc', now()),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc', now())
+        );
+        """,
+        "debt_customers.create",
+    )
+    _exec_schema_sql(
+        "CREATE INDEX IF NOT EXISTS idx_debt_customers_name ON debt_customers(name);",
+        "debt_customers.idx_name",
+    )
+    _exec_schema_sql(
+        "CREATE INDEX IF NOT EXISTS idx_debt_customers_phone ON debt_customers(phone);",
+        "debt_customers.idx_phone",
+    )
+    _exec_schema_sql(
+        """
+        CREATE TABLE IF NOT EXISTS debt_sales (
+          id SERIAL PRIMARY KEY,
+          customer_id INTEGER NOT NULL REFERENCES debt_customers(id) ON DELETE CASCADE,
+          sale_id INTEGER NOT NULL UNIQUE REFERENCES sales(id) ON DELETE RESTRICT,
+          total_amount NUMERIC(10, 2) NOT NULL,
+          paid_amount NUMERIC(10, 2) NOT NULL DEFAULT 0,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc', now())
+        );
+        """,
+        "debt_sales.create",
+    )
+    _exec_schema_sql(
+        "CREATE INDEX IF NOT EXISTS idx_debt_sales_customer_created ON debt_sales(customer_id, created_at);",
+        "debt_sales.idx_customer_created",
+    )
+    _exec_schema_sql(
+        """
+        CREATE TABLE IF NOT EXISTS debt_payments (
+          id SERIAL PRIMARY KEY,
+          debt_sale_id INTEGER NOT NULL REFERENCES debt_sales(id) ON DELETE CASCADE,
+          amount NUMERIC(10, 2) NOT NULL,
+          note TEXT,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc', now())
+        );
+        """,
+        "debt_payments.create",
+    )
+    _exec_schema_sql(
+        "CREATE INDEX IF NOT EXISTS idx_debt_payments_sale ON debt_payments(debt_sale_id);",
+        "debt_payments.idx_sale",
     )
 
 

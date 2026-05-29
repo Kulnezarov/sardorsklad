@@ -8,7 +8,7 @@ import CnyRateSync from './components/CnyRateSync';
 import LoginPage from './auth/LoginPage';
 import Dashboard from './pages/Dashboard';
 import Products from './pages/Products';
-import Sales from './pages/Sales';
+import SalesHub from './pages/SalesHub';
 import ProductFound from './pages/ProductFound';
 import Reserve from './pages/Reserve';
 import History from './pages/History';
@@ -57,7 +57,7 @@ function AppShell() {
               <Route path="/" element={<Navigate to="/dashboard" replace />} />
               <Route path="/dashboard" element={<Dashboard />} />
               <Route path="/products" element={<Products />} />
-              <Route path="/sales" element={<Sales />} />
+              <Route path="/sales" element={<SalesHub />} />
               <Route path="/sales/found" element={<ProductFound />} />
               <Route path="/reserve" element={<Reserve />} />
               <Route path="/orders" element={<Orders />} />

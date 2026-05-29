@@ -13,6 +13,7 @@ import { importExcelStream } from '../api/importExcelStream';
 import { settingsApi } from '../api/settings';
 import { generateEAN13 } from '../utils/barcodeGen';
 import LabelPrint from '../components/LabelPrint';
+import SkuConflictModal from '../components/SkuConflictModal';
 import { QRCodeSVG } from 'qrcode.react';
 import JsBarcode from 'jsbarcode';
 
@@ -235,6 +236,11 @@ const Products = () => {
   const [formError, setFormError] = useState('');
   const [duplicateBarcodeProduct, setDuplicateBarcodeProduct] = useState(null);
   const [duplicateBarcodeValue, setDuplicateBarcodeValue] = useState('');
+  const [skuConflictOpen, setSkuConflictOpen] = useState(false);
+  const [skuConflictExisting, setSkuConflictExisting] = useState(null);
+  const [skuConflictSku, setSkuConflictSku] = useState('');
+  const [skuConflictPayload, setSkuConflictPayload] = useState(null);
+  const skuOpenAfterSaveRef = useRef(null);
   const [barcodeLocked, setBarcodeLocked] = useState(false);
   const [showQrPanel, setShowQrPanel] = useState(false);
 
@@ -648,9 +654,16 @@ const Products = () => {
       toast.success(wasEdit ? '✓ Товар обновлён' : '✓ Товар создан');
       queryClient.invalidateQueries({ queryKey: ['products'] });
       queryClient.invalidateQueries({ queryKey: ['categories'] });
-      if (!wasEdit && res.data) { setSavedProduct(res.data); setShowPrintSuggest(true); }
+      const openAfter = skuOpenAfterSaveRef.current;
+      skuOpenAfterSaveRef.current = null;
       setDuplicateBarcodeProduct(null);
       setDuplicateBarcodeValue('');
+      if (openAfter?.id) {
+        resetForm();
+        handleEdit(openAfter);
+        return;
+      }
+      if (!wasEdit && res.data) { setSavedProduct(res.data); setShowPrintSuggest(true); }
       resetForm();
     },
     onError: async (err, vars) => {
@@ -705,6 +718,26 @@ const Products = () => {
       } else {
         setDuplicateBarcodeProduct(null);
         setDuplicateBarcodeValue('');
+      }
+      const isSkuDuplicate =
+        (detail && typeof detail === 'object' && !Array.isArray(detail) && detail.code === 'SKU_EXISTS')
+        || /sku.*already exists/i.test(message)
+        || /артикул.*уже/i.test(message);
+      if (isSkuDuplicate && detail && typeof detail === 'object' && !Array.isArray(detail)) {
+        const skuVal = String(detail.sku || vars?.sku || formRef.current?.sku || '').trim();
+        setSkuConflictSku(skuVal);
+        setSkuConflictExisting({
+          id: detail.product_id,
+          name: detail.name,
+          brand: detail.brand,
+          sale_price: detail.sale_price,
+          sku: detail.sku,
+          barcode: detail.barcode,
+        });
+        setSkuConflictPayload(vars || null);
+        setSkuConflictOpen(true);
+        setFormError('');
+        return;
       }
       toast.error(`✕ ${message}`);
       setFormError(message);
@@ -969,12 +1002,67 @@ const Products = () => {
     setSideProduct(null);
   };
 
-  const handleSubmit = (e) => {
-    e?.preventDefault?.(); setFormError('');
+  const submitProductPayload = (payload, opts = {}) => {
+    const body = { ...payload };
+    if (opts.allowDuplicateSku) body.allow_duplicate_sku = true;
+    saveMutation.mutate(forceCreateMode ? { ...body, id: null, _forceCreate: true } : body);
+  };
+
+  const handleSubmit = async (e) => {
+    e?.preventDefault?.();
+    setFormError('');
     if (!formData.name?.trim()) { setFormError('Название товара обязательно'); return; }
     if (num(formData.sale_price) <= 0) { setFormError('Цена продажи должна быть больше 0'); return; }
     const payload = buildPayload(formData, cnyRate);
-    saveMutation.mutate(forceCreateMode ? { ...payload, id: null, _forceCreate: true } : payload);
+    const sku = String(formData.sku || '').trim();
+    if (sku) {
+      try {
+        const r = await productApi.getBySku(sku, {
+          allow404: true,
+          excludeId: formData.id || undefined,
+        });
+        if (r?.status === 200 && r?.data) {
+          setSkuConflictSku(sku);
+          setSkuConflictExisting(r.data);
+          setSkuConflictPayload(payload);
+          skuOpenAfterSaveRef.current = null;
+          setSkuConflictOpen(true);
+          return;
+        }
+      } catch {
+        /* сеть — сохраним и обработаем ответ API */
+      }
+    }
+    submitProductPayload(payload);
+  };
+
+  const closeSkuConflict = () => {
+    setSkuConflictOpen(false);
+    setSkuConflictExisting(null);
+    setSkuConflictSku('');
+    setSkuConflictPayload(null);
+    skuOpenAfterSaveRef.current = null;
+  };
+
+  const handleSkuConflictSaveAnyway = () => {
+    if (!skuConflictPayload) {
+      closeSkuConflict();
+      return;
+    }
+    submitProductPayload(skuConflictPayload, { allowDuplicateSku: true });
+    closeSkuConflict();
+  };
+
+  const handleSkuConflictShowExisting = async () => {
+    const existing = skuConflictExisting;
+    const payload = skuConflictPayload;
+    if (!existing?.id || !payload) {
+      closeSkuConflict();
+      return;
+    }
+    skuOpenAfterSaveRef.current = existing;
+    submitProductPayload(payload, { allowDuplicateSku: true });
+    closeSkuConflict();
   };
 
   const selectedProducts = useMemo(
@@ -1640,6 +1728,16 @@ const Products = () => {
           </div>
         </div>
       )}
+
+      <SkuConflictModal
+        isOpen={skuConflictOpen}
+        sku={skuConflictSku}
+        existing={skuConflictExisting}
+        saving={saveMutation.isPending}
+        onCancel={closeSkuConflict}
+        onSaveAnyway={handleSkuConflictSaveAnyway}
+        onShowExisting={handleSkuConflictShowExisting}
+      />
 
       {/* ── Print suggest after create ── */}
       {showPrintSuggest && savedProduct && (
