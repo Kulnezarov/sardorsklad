@@ -23,8 +23,12 @@ def list_sales(
     db: Session = Depends(get_db),
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=1000),
+    today: bool = Query(False, description="Только продажи за сегодня (серверное время)"),
 ):
-    return db.query(models.Sale).order_by(models.Sale.created_at.desc()).offset(skip).limit(limit).all()
+    q = db.query(models.Sale)
+    if today:
+        q = q.filter(func.date(models.Sale.created_at) == date.today())
+    return q.order_by(models.Sale.created_at.desc()).offset(skip).limit(limit).all()
 
 
 @router.get("/{sale_id}", response_model=schemas.SaleResponse)

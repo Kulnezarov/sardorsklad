@@ -1025,6 +1025,7 @@ class DebtSaleResponse(BaseModel):
     customer_id: int
     sale_id: int
     receipt_number: str
+    receipt_seq: int = 0
     total_amount: Decimal
     paid_amount: Decimal
     balance: Decimal

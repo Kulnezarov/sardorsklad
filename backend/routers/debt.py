@@ -82,7 +82,26 @@ def _sale_item_lines(db: Session, sale: models.Sale) -> List[schemas.DebtSaleIte
     return lines
 
 
-def _debt_sale_to_response(db: Session, debt_sale: models.DebtSale) -> schemas.DebtSaleResponse:
+def _title_name(name: str) -> str:
+    return " ".join(w[:1].upper() + w[1:].lower() if w else "" for w in name.strip().split())
+
+
+def _customer_receipt_seq_map(db: Session, customer_id: int) -> dict[int, int]:
+    rows = (
+        db.query(models.DebtSale.id)
+        .filter(models.DebtSale.customer_id == customer_id)
+        .order_by(models.DebtSale.created_at.asc())
+        .all()
+    )
+    return {row[0]: i + 1 for i, row in enumerate(rows)}
+
+
+def _debt_sale_to_response(
+    db: Session,
+    debt_sale: models.DebtSale,
+    *,
+    receipt_seq: Optional[int] = None,
+) -> schemas.DebtSaleResponse:
     sale = debt_sale.sale
     if not sale:
         sale = db.query(models.Sale).filter(models.Sale.id == debt_sale.sale_id).first()
@@ -96,6 +115,7 @@ def _debt_sale_to_response(db: Session, debt_sale: models.DebtSale) -> schemas.D
         customer_id=debt_sale.customer_id,
         sale_id=debt_sale.sale_id,
         receipt_number=sale.receipt_number if sale else "",
+        receipt_seq=receipt_seq or 0,
         total_amount=debt_sale.total_amount,
         paid_amount=debt_sale.paid_amount or Decimal("0"),
         balance=bal if bal > 0 else Decimal("0"),
@@ -192,7 +212,7 @@ def create_debt_customer(
     db: Session = Depends(get_db),
 ):
     customer = models.DebtCustomer(
-        name=payload.name.strip(),
+        name=_title_name(payload.name),
         phone=payload.phone.strip(),
         notes=(payload.notes or "").strip() or None,
     )
@@ -221,7 +241,7 @@ def update_debt_customer(
         raise HTTPException(status_code=404, detail="Customer not found")
     data = payload.model_dump(exclude_unset=True)
     if "name" in data and data["name"]:
-        customer.name = data["name"].strip()
+        customer.name = _title_name(data["name"])
     if "phone" in data and data["phone"]:
         customer.phone = data["phone"].strip()
     if "notes" in data:
@@ -271,7 +291,8 @@ def list_customer_debt_sales(customer_id: int, db: Session = Depends(get_db)):
         .order_by(models.DebtSale.created_at.desc())
         .all()
     )
-    return [_debt_sale_to_response(db, ds) for ds in sales]
+    seq_map = _customer_receipt_seq_map(db, customer_id)
+    return [_debt_sale_to_response(db, ds, receipt_seq=seq_map.get(ds.id, 0)) for ds in sales]
 
 
 @router.post("/sales", response_model=schemas.DebtSaleResponse, status_code=status.HTTP_201_CREATED)
@@ -286,7 +307,7 @@ def create_debt_sale(payload: schemas.DebtSaleCreate, db: Session = Depends(get_
     else:
         c = payload.customer
         customer = models.DebtCustomer(
-            name=c.name.strip(),
+            name=_title_name(c.name),
             phone=c.phone.strip(),
             notes=(c.notes or "").strip() or None,
         )
@@ -325,7 +346,8 @@ def create_debt_sale(payload: schemas.DebtSaleCreate, db: Session = Depends(get_
         .filter(models.DebtSale.id == debt_sale.id)
         .first()
     )
-    return _debt_sale_to_response(db, debt_sale)
+    seq_map = _customer_receipt_seq_map(db, customer.id)
+    return _debt_sale_to_response(db, debt_sale, receipt_seq=seq_map.get(debt_sale.id, 0))
 
 
 @router.get("/sales/{debt_sale_id}", response_model=schemas.DebtSaleResponse)
@@ -342,7 +364,8 @@ def get_debt_sale(debt_sale_id: int, db: Session = Depends(get_db)):
     )
     if not debt_sale:
         raise HTTPException(status_code=404, detail="Debt sale not found")
-    return _debt_sale_to_response(db, debt_sale)
+    seq_map = _customer_receipt_seq_map(db, debt_sale.customer_id)
+    return _debt_sale_to_response(db, debt_sale, receipt_seq=seq_map.get(debt_sale.id, 0))
 
 
 @router.post("/sales/{debt_sale_id}/payments", response_model=schemas.DebtSaleResponse)
@@ -385,4 +408,5 @@ def add_debt_payment(
     debt_sale.paid_amount = Decimal(str(debt_sale.paid_amount or 0)) + amount
     db.commit()
     db.refresh(debt_sale)
-    return _debt_sale_to_response(db, debt_sale)
+    seq_map = _customer_receipt_seq_map(db, debt_sale.customer_id)
+    return _debt_sale_to_response(db, debt_sale, receipt_seq=seq_map.get(debt_sale.id, 0))

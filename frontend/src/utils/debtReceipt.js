@@ -3,7 +3,24 @@ const num = (v) => {
   return Number.isFinite(n) ? n : 0;
 };
 
+import { formatPhoneDisplay } from './phoneMask';
+
 const formatMoney = (v) => Number(v || 0).toLocaleString('ru-RU');
+
+export function capitalizeWords(raw) {
+  const t = String(raw || '').trim();
+  if (!t) return '';
+  return t
+    .split(/\s+/)
+    .map((w) => (w ? w[0].toUpperCase() + w.slice(1).toLowerCase() : ''))
+    .join(' ');
+}
+
+export function debtReceiptLabel(sale) {
+  const seq = sale?.receipt_seq;
+  if (seq != null && Number(seq) > 0) return `№ ${Number(seq)}`;
+  return sale?.receipt_number || '—';
+}
 
 export function formatDebtDateTime(value) {
   if (!value) return '—';
@@ -20,9 +37,9 @@ export function formatDebtDateTime(value) {
 
 export function buildDebtReceiptText(sale) {
   const when = formatDebtDateTime(sale.created_at);
-  const receipt = sale.receipt_number || '';
-  const name = sale.customer_name || '';
-  const phone = sale.customer_phone || '';
+  const receipt = debtReceiptLabel(sale);
+  const name = capitalizeWords(sale.customer_name || '');
+  const phone = formatPhoneDisplay(sale.customer_phone || '');
   const total = num(sale.total_amount);
   const paid = num(sale.paid_amount);
   const balance = num(sale.balance);
@@ -36,7 +53,7 @@ export function buildDebtReceiptText(sale) {
   const parts = [
     'SkladPro — чек в долг',
     `Дата: ${when}`,
-    `Чек: ${receipt}`,
+    `Чек ${receipt}`,
     `Клиент: ${name}`,
     `Телефон: ${phone}`,
     lines.length ? `\nТовары:\n${lines.join('\n')}` : '',

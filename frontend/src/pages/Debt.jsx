@@ -6,7 +6,7 @@ import { debtApi, getApiErrorMessage } from '../api/client';
 import { Button, Input, Modal } from '../components/ui';
 import PhoneInput from '../components/PhoneInput';
 import DebtReceiptModal from '../components/DebtReceiptModal';
-import { buildDebtReceiptText, formatDebtDateTime } from '../utils/debtReceipt';
+import { buildDebtReceiptText, debtReceiptLabel, formatDebtDateTime, capitalizeWords } from '../utils/debtReceipt';
 import { formatPhoneDisplay, normalizePhoneDigits } from '../utils/phoneMask';
 import { openWhatsApp } from '../utils/whatsapp';
 
@@ -52,7 +52,7 @@ export default function Debt({ onBack }) {
       const digits = normalizePhoneDigits(form.phone);
       if (digits.length < 11) throw new Error('Укажите полный номер телефона');
       return debtApi.createCustomer({
-        name: form.name.trim(),
+        name: capitalizeWords(form.name),
         phone: `+${digits}`,
         notes: form.notes.trim() || undefined,
       });
@@ -89,7 +89,16 @@ export default function Debt({ onBack }) {
     onError: (e) => toast.error(getApiErrorMessage(e)),
   });
 
-  const openSale = async (id) => {
+  const openSaleReceipt = async (id) => {
+    try {
+      const r = await debtApi.getSale(id);
+      setReceiptSale(r.data);
+    } catch (e) {
+      toast.error(getApiErrorMessage(e));
+    }
+  };
+
+  const openSalePayment = async (id) => {
     try {
       const r = await debtApi.getSale(id);
       setSaleDetail(r.data);
@@ -100,18 +109,8 @@ export default function Debt({ onBack }) {
     }
   };
 
-  const selectCustomer = async (id) => {
+  const selectCustomer = (id) => {
     setSelectedId(id);
-    try {
-      const r = await debtApi.listCustomerSales(id);
-      const list = r.data || [];
-      if (list.length === 0) return;
-      const pick = list.find((s) => num(s.balance) > 0) || list[0];
-      const full = await debtApi.getSale(pick.id);
-      setReceiptSale(full.data);
-    } catch (e) {
-      toast.error(getApiErrorMessage(e));
-    }
   };
 
   return (
@@ -195,7 +194,7 @@ export default function Debt({ onBack }) {
                     transition: 'border-color 0.15s, background 0.15s',
                   }}
                 >
-                  <div style={{ fontWeight: 800, fontSize: 15 }}>{c.name}</div>
+                  <div style={{ fontWeight: 800, fontSize: 15 }}>{capitalizeWords(c.name)}</div>
                   <div style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 2 }}>
                     {formatPhoneDisplay(c.phone)}
                   </div>
@@ -243,7 +242,7 @@ export default function Debt({ onBack }) {
                   <FiUser size={24} />
                 </div>
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 20, fontWeight: 800 }}>{selected.name}</div>
+                  <div style={{ fontSize: 20, fontWeight: 800 }}>{capitalizeWords(selected.name)}</div>
                   <div style={{ color: 'var(--text-muted)', fontSize: 15 }}>
                     {formatPhoneDisplay(selected.phone)}
                   </div>
@@ -279,7 +278,7 @@ export default function Debt({ onBack }) {
                     <button
                       key={s.id}
                       type="button"
-                      onClick={() => openSale(s.id)}
+                      onClick={() => openSaleReceipt(s.id)}
                       style={{
                         display: 'flex',
                         alignItems: 'center',
@@ -293,12 +292,30 @@ export default function Debt({ onBack }) {
                       }}
                     >
                       <div style={{ flex: 1 }}>
-                        <div style={{ fontWeight: 700 }}>{formatDebtDateTime(s.created_at)}</div>
+                        <div style={{ fontWeight: 800, color: 'var(--primary)' }}>{debtReceiptLabel(s)}</div>
+                        <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>{formatDebtDateTime(s.created_at)}</div>
                         <div style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 2 }}>
                           {formatMoney(s.total_amount)} ₸
                           {num(s.balance) > 0 ? ` · остаток ${formatMoney(s.balance)} ₸` : ' · оплачен'}
                         </div>
                       </div>
+                      {num(s.balance) > 0 && (
+                        <button
+                          type="button"
+                          onClick={(e) => { e.stopPropagation(); openSalePayment(s.id); }}
+                          style={{
+                            fontSize: 12,
+                            fontWeight: 700,
+                            padding: '6px 10px',
+                            borderRadius: 8,
+                            border: '1px solid var(--border)',
+                            background: 'var(--surface)',
+                            cursor: 'pointer',
+                          }}
+                        >
+                          Оплата
+                        </button>
+                      )}
                       <span style={{ fontSize: 12, fontWeight: 700, color: num(s.balance) > 0 ? 'var(--warning)' : 'var(--success)' }}>
                         Чек
                       </span>
