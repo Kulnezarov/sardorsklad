@@ -395,11 +395,26 @@ class SaleCreate(BaseModel):
     payment_method: Optional[str] = Field(None, max_length=20)
     customer_info: Optional[Any] = None
     notes: Optional[str] = None
+    discount_percent: Optional[Money10_2] = Field(
+        None,
+        ge=0,
+        le=100,
+        description="Скидка от суммы чека, %",
+    )
+
+    @field_validator("discount_percent", mode="before")
+    @classmethod
+    def discount_optional(cls, value):
+        if value is None or value == "":
+            return None
+        return Decimal(str(value))
 
 
 class SaleResponse(BaseModel):
     id: int
     receipt_number: str
+    subtotal_amount: Optional[Decimal] = None
+    discount_percent: Optional[Decimal] = None
     total_amount: Decimal
     payment_method: Optional[str]
     customer_info: Optional[Any]
@@ -987,6 +1002,14 @@ class DebtSaleCreate(BaseModel):
     customer_id: Optional[int] = Field(None, ge=1)
     customer: Optional[DebtCustomerInlineCreate] = None
     notes: Optional[str] = None
+    discount_percent: Optional[Money10_2] = Field(None, ge=0, le=100)
+
+    @field_validator("discount_percent", mode="before")
+    @classmethod
+    def debt_discount_optional(cls, value):
+        if value is None or value == "":
+            return None
+        return Decimal(str(value))
 
     @field_validator("customer", mode="before")
     @classmethod
@@ -1030,6 +1053,8 @@ class DebtSaleResponse(BaseModel):
     sale_id: int
     receipt_number: str
     receipt_seq: int = 0
+    subtotal_amount: Optional[Decimal] = None
+    discount_percent: Optional[Decimal] = None
     total_amount: Decimal
     paid_amount: Decimal
     balance: Decimal

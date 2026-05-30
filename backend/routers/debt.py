@@ -12,6 +12,7 @@ import models
 import schemas
 from database import get_db
 from dependencies import require_manager_or_admin
+from services.sale_discount import apply_sale_discount
 
 router = APIRouter(
     prefix="/api/v1/debt",
@@ -116,6 +117,8 @@ def _debt_sale_to_response(
         sale_id=debt_sale.sale_id,
         receipt_number=sale.receipt_number if sale else "",
         receipt_seq=receipt_seq or 0,
+        subtotal_amount=sale.subtotal_amount if sale else None,
+        discount_percent=sale.discount_percent if sale else None,
         total_amount=debt_sale.total_amount,
         paid_amount=debt_sale.paid_amount or Decimal("0"),
         balance=bal if bal > 0 else Decimal("0"),
@@ -136,9 +139,10 @@ def _commit_sale(
     payment_method: str,
     customer_info: Optional[dict] = None,
     notes: Optional[str] = None,
+    discount_percent: Optional[Decimal] = None,
 ) -> models.Sale:
     receipt_number = f"RCPT-{int(datetime.now(UTC).timestamp())}"
-    total_amount = Decimal("0")
+    subtotal_amount = Decimal("0")
     items_to_create = []
 
     for item in items:
@@ -148,12 +152,16 @@ def _commit_sale(
         if product.quantity < item.quantity:
             raise HTTPException(status_code=400, detail=f"Insufficient stock for {product.name}")
 
-        subtotal = Decimal(str(item.unit_price)) * item.quantity
-        total_amount += subtotal
-        items_to_create.append((product, item, subtotal))
+        line_subtotal = Decimal(str(item.unit_price)) * item.quantity
+        subtotal_amount += line_subtotal
+        items_to_create.append((product, item, line_subtotal))
+
+    total_amount, _, discount_pct = apply_sale_discount(subtotal_amount, discount_percent)
 
     db_sale = models.Sale(
         receipt_number=receipt_number,
+        subtotal_amount=subtotal_amount,
+        discount_percent=discount_pct,
         total_amount=total_amount,
         payment_method=payment_method,
         customer_info=customer_info,
@@ -325,6 +333,7 @@ def create_debt_sale(payload: schemas.DebtSaleCreate, db: Session = Depends(get_
         payment_method="credit",
         customer_info=customer_info,
         notes=payload.notes,
+        discount_percent=payload.discount_percent,
     )
 
     debt_sale = models.DebtSale(

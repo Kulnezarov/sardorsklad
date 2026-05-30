@@ -294,6 +294,8 @@ class Sale(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     receipt_number = Column(String(50), unique=True, nullable=False, index=True)
+    subtotal_amount = Column(Numeric(10, 2), nullable=True)
+    discount_percent = Column(Numeric(5, 2), nullable=True)
     total_amount = Column(Numeric(10, 2), nullable=False)
     payment_method = Column(String(20), nullable=True)
     customer_info = Column(JSONB, nullable=True)

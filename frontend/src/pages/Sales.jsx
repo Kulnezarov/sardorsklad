@@ -10,6 +10,7 @@ import { saleApi, debtApi, fetchAllProducts, productApi, getApiErrorMessage } fr
 import CameraBarcodeScanner from '../components/CameraBarcodeScanner';
 import DebtCustomerPickModal from '../components/DebtCustomerPickModal';
 import DebtReceiptModal from '../components/DebtReceiptModal';
+import SaleDiscountBar from '../components/SaleDiscountBar';
 
 /* ── helpers ── */
 const num = (v) => { const n = parseFloat(String(v || 0).replace(',', '.')); return Number.isFinite(n) ? n : 0; };
@@ -59,6 +60,7 @@ const Sales = ({ mode = 'cash', onOpenClients }) => {
   const [showDebtPick, setShowDebtPick] = useState(false);
   const [debtReceipt, setDebtReceipt] = useState(null);
   const [debtCustomer, setDebtCustomer] = useState(null);
+  const [discountPercent, setDiscountPercent] = useState(0);
 
   const searchRef = useRef(null);
   const barcodeRef = useRef(null);
@@ -145,7 +147,12 @@ const Sales = ({ mode = 'cash', onOpenClients }) => {
     });
   };
 
-  const total = useMemo(() => cart.reduce((s, i) => s + num(i.product.sale_price) * i.quantity, 0), [cart]);
+  const subtotal = useMemo(() => cart.reduce((s, i) => s + num(i.product.sale_price) * i.quantity, 0), [cart]);
+  const discountAmount = useMemo(
+    () => (discountPercent > 0 ? (subtotal * discountPercent) / 100 : 0),
+    [subtotal, discountPercent],
+  );
+  const total = useMemo(() => subtotal - discountAmount, [subtotal, discountAmount]);
   const cartCount = useMemo(() => cart.reduce((s, i) => s + i.quantity, 0), [cart]);
 
   // Barcode scan — show confirmation instead of immediately adding
@@ -230,6 +237,7 @@ const Sales = ({ mode = 'cash', onOpenClients }) => {
       return saleApi.create({
         items: cart.map((i) => ({ product_id: i.product.id, quantity: i.quantity, unit_price: num(i.product.sale_price) })),
         payment_method: 'cash',
+        ...(discountPercent > 0 ? { discount_percent: discountPercent } : {}),
       });
     },
     onSuccess: () => {
@@ -251,7 +259,12 @@ const Sales = ({ mode = 'cash', onOpenClients }) => {
       } catch {
         /* AudioContext / автозапуск */
       }
-      setTimeout(() => { setShowSuccess(false); setCart([]); localStorage.removeItem(CART_STORAGE_KEY); }, 1500);
+      setTimeout(() => {
+        setShowSuccess(false);
+        setCart([]);
+        setDiscountPercent(0);
+        localStorage.removeItem(CART_STORAGE_KEY);
+      }, 1500);
     },
     onError: (err) => { toast.error(getApiErrorMessage(err, 'Ошибка при продаже')); },
   });
@@ -266,12 +279,14 @@ const Sales = ({ mode = 'cash', onOpenClients }) => {
           unit_price: num(i.product.sale_price),
         })),
         customer_id: customer.id,
+        ...(discountPercent > 0 ? { discount_percent: discountPercent } : {}),
       };
       return debtApi.createSale(body);
     },
     onSuccess: (res) => {
       setDebtReceipt(res.data);
       setDebtCustomer(null);
+      setDiscountPercent(0);
       setCart([]);
       localStorage.removeItem(CART_STORAGE_KEY);
       queryClient.invalidateQueries({ queryKey: ['products-pos'] });
@@ -621,10 +636,26 @@ const Sales = ({ mode = 'cash', onOpenClients }) => {
                 )}
               </button>
             )}
-            {/* Total */}
+            {cart.length > 0 && (
+              <SaleDiscountBar
+                subtotal={subtotal}
+                discountPercent={discountPercent}
+                onChange={setDiscountPercent}
+                accentDebt={isDebt}
+              />
+            )}
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
-              <span style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>ИТОГО</span>
-              <span style={{ fontSize: 22, fontWeight: 800, color: 'var(--text)', letterSpacing: '-0.04em' }}>{formatMoney(total)} ₸</span>
+              <span style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                {discountPercent > 0 ? 'К ОПЛАТЕ' : 'ИТОГО'}
+              </span>
+              <div style={{ textAlign: 'right' }}>
+                {discountPercent > 0 && (
+                  <div style={{ fontSize: 12, color: 'var(--text-muted)', textDecoration: 'line-through' }}>
+                    {formatMoney(subtotal)} ₸
+                  </div>
+                )}
+                <span style={{ fontSize: 22, fontWeight: 800, color: 'var(--text)', letterSpacing: '-0.04em' }}>{formatMoney(total)} ₸</span>
+              </div>
             </div>
 
             {/* Sell button */}
@@ -662,7 +693,7 @@ const Sales = ({ mode = 'cash', onOpenClients }) => {
             </button>
 
             {cart.length > 0 && (
-              <button type="button" onClick={() => { if (window.confirm('Очистить чек?')) { setCart([]); localStorage.removeItem(CART_STORAGE_KEY); } }} style={{ width: '100%', background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, color: 'var(--text-muted)', fontWeight: 600, padding: '6px', textAlign: 'center' }}>
+              <button type="button" onClick={() => { if (window.confirm('Очистить чек?')) { setCart([]); setDiscountPercent(0); localStorage.removeItem(CART_STORAGE_KEY); } }} style={{ width: '100%', background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, color: 'var(--text-muted)', fontWeight: 600, padding: '6px', textAlign: 'center' }}>
                 Очистить чек
               </button>
             )}

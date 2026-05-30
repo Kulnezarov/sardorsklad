@@ -621,6 +621,15 @@ def ensure_compatibility_table_columns() -> None:
         "debt_payments.idx_sale",
     )
 
+    _exec_schema_sql(
+        "ALTER TABLE sales ADD COLUMN IF NOT EXISTS subtotal_amount NUMERIC(10, 2);",
+        "sales.subtotal_amount",
+    )
+    _exec_schema_sql(
+        "ALTER TABLE sales ADD COLUMN IF NOT EXISTS discount_percent NUMERIC(5, 2);",
+        "sales.discount_percent",
+    )
+
 
 def drop_tables():
     """Drop all tables (synchronous, for testing)."""

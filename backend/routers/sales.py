@@ -10,6 +10,7 @@ import models
 import schemas
 from database import get_db
 from dependencies import require_manager_or_admin
+from services.sale_discount import apply_sale_discount
 
 router = APIRouter(
     prefix="/api/v1/sales",
@@ -42,7 +43,7 @@ def get_sale(sale_id: int, db: Session = Depends(get_db)):
 @router.post("/", response_model=schemas.SaleResponse, status_code=status.HTTP_201_CREATED)
 def create_sale(sale: schemas.SaleCreate, db: Session = Depends(get_db)):
     receipt_number = f"RCPT-{int(datetime.now(UTC).timestamp())}"
-    total_amount = Decimal("0")
+    subtotal_amount = Decimal("0")
     items_to_create = []
 
     for item in sale.items:
@@ -52,12 +53,18 @@ def create_sale(sale: schemas.SaleCreate, db: Session = Depends(get_db)):
         if product.quantity < item.quantity:
             raise HTTPException(status_code=400, detail=f"Insufficient stock for {product.name}")
 
-        subtotal = Decimal(str(item.unit_price)) * item.quantity
-        total_amount += subtotal
-        items_to_create.append((product, item, subtotal))
+        line_subtotal = Decimal(str(item.unit_price)) * item.quantity
+        subtotal_amount += line_subtotal
+        items_to_create.append((product, item, line_subtotal))
+
+    total_amount, _, discount_pct = apply_sale_discount(
+        subtotal_amount, sale.discount_percent
+    )
 
     db_sale = models.Sale(
         receipt_number=receipt_number,
+        subtotal_amount=subtotal_amount,
+        discount_percent=discount_pct,
         total_amount=total_amount,
         payment_method=sale.payment_method,
         customer_info=sale.customer_info,

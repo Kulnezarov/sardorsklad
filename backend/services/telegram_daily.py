@@ -53,6 +53,14 @@ def build_daily_report_text(db: Session, tz_name: str) -> str:
     )
 
     total_revenue = sum((Decimal(str(s.total_amount or 0)) for s in sales), start=Decimal("0"))
+    discount_sum = Decimal("0")
+    discounted_checks = 0
+    for s in sales:
+        sub = Decimal(str(s.subtotal_amount or s.total_amount or 0))
+        tot = Decimal(str(s.total_amount or 0))
+        if s.discount_percent and Decimal(str(s.discount_percent)) > 0 and sub > tot:
+            discount_sum += sub - tot
+            discounted_checks += 1
     receipts = len(sales)
     total_units = 0
     total_profit = Decimal("0")
@@ -85,6 +93,7 @@ def build_daily_report_text(db: Session, tz_name: str) -> str:
         f"🕐 Часовой пояс: {tz_name}",
         "",
         f"💰 <b>Выручка:</b> {_money_kzt(total_revenue)} ₸",
+        f"🏷 <b>Скидки:</b> −{_money_kzt(discount_sum)} ₸ ({discounted_checks} чек.)",
         f"📈 <b>Оценка прибыли:</b> {_money_kzt(total_profit)} ₸",
         f"🧾 <b>Чеков:</b> {receipts}",
         f"📦 <b>Всего единиц (шт):</b> {total_units}",
