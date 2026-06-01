@@ -648,6 +648,37 @@ class PurchaseOrder(Base):
 
 
 # ============================================================================
+# TABLE 9b: INTAKE INVOICES (Накладные поступления — мобильное приложение)
+# ============================================================================
+class IntakeInvoice(Base):
+    """Черновик/накладная прихода: строки в JSONB, привязка к пользователю."""
+
+    __tablename__ = "intake_invoices"
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(String(64), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+
+    number = Column(Integer, nullable=False, index=True)
+    date_str = Column(String(20), nullable=False)
+    lines = Column(JSONB, nullable=False, default=list)
+
+    uploaded = Column(Boolean, default=False, nullable=False)
+    pending_warehouse_upload = Column(Boolean, default=False, nullable=False)
+    uploaded_at = Column(String(40), nullable=True)
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    user = relationship("User", backref="intake_invoices")
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "client_id", name="uq_intake_invoices_user_client"),
+        Index("idx_intake_invoices_user_number", "user_id", "number"),
+    )
+
+
+# ============================================================================
 # TABLE 10: DASHBOARD STATS (Вычисляемые статистики)
 # ============================================================================
 class DashboardStats(Base):

@@ -18,7 +18,7 @@ import models  # noqa: F401 — регистрация таблиц debt_*
 import bootstrap_admin
 from fastapi.middleware.cors import CORSMiddleware
 from routers import auth, products, sales, reserve, history, revision, settings, app_mobile
-from routers import wish_orders
+from routers import wish_orders, intake_invoices
 from routers import public, categories, orders, compatibility, debt
 from config.logger import setup_logger
 
@@ -271,6 +271,7 @@ app.include_router(history.router)
 app.include_router(revision.router)
 app.include_router(settings.router)
 app.include_router(wish_orders.router)
+app.include_router(intake_invoices.router)
 app.include_router(public.router)
 app.include_router(categories.router)
 app.include_router(categories.brands_router)

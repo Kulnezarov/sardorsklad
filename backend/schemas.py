@@ -1065,3 +1065,31 @@ class DebtSaleResponse(BaseModel):
     customer_notes: Optional[str] = None
     items: List[DebtSaleItemLine] = []
     payments: List[DebtPaymentResponse] = []
+
+
+# ── Intake invoices (накладные поступления, мобильное приложение) ─────────────
+class IntakeInvoiceUpsert(BaseModel):
+    """Тело как в мобильном приложении (id = client_id)."""
+    id: str = Field(..., min_length=1, max_length=64)
+    number: int = Field(..., ge=1)
+    date: str = Field(..., min_length=1, max_length=20)
+    lines: List[Any] = Field(default_factory=list)
+    uploaded: bool = False
+    pending_warehouse_upload: bool = False
+    uploaded_at: Optional[str] = None
+
+
+class IntakeInvoiceResponse(BaseModel):
+    id: str
+    server_id: int
+    number: int
+    date: str
+    lines: List[Any]
+    uploaded: bool
+    pending_warehouse_upload: bool
+    uploaded_at: Optional[str] = None
+    updated_at: Optional[datetime] = None
+
+
+class IntakeInvoiceNextNumberResponse(BaseModel):
+    next: int
