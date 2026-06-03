@@ -21,6 +21,7 @@ import {
   computeLinePurchase,
   fetchCnyHistory,
   lineToProductForPrint,
+  newIntakeLineId,
   MAX_INTAKE_PHOTOS,
   num,
   productGalleryFromApi,
@@ -113,6 +114,7 @@ export default function IntakeLineModal({
   isOpen,
   onClose,
   line,
+  seedLine = null,
   onSave,
   readonly = false,
   cnyRate = 65,
@@ -164,20 +166,45 @@ export default function IntakeLineModal({
     [form.cny_price, form.delivery_kzt, cnyRate],
   );
 
+  const positionTotalsPreview = useMemo(() => {
+    const qty = parseInt(form.quantity, 10) || 0;
+    if (qty <= 0) return null;
+    const unitSale = num(form.sale_price);
+    const unitPurchase = purchasePreview;
+    if (unitPurchase <= 0 && unitSale <= 0) return null;
+    return {
+      qty,
+      unitPurchase: roundMoney2(unitPurchase),
+      unitSale: roundMoney2(unitSale),
+      saleTotal: unitSale > 0 ? roundMoney2(unitSale * qty) : 0,
+    };
+  }, [form.quantity, form.sale_price, purchasePreview]);
+
   useEffect(() => {
     if (!isOpen) return;
-    setForm(lineToForm(line));
     setDeliveryMode('normal');
     setCustomRate('');
     setKnownOnWarehouse(false);
     setShowPrint(false);
-    setPhotos(photosFromLine(line));
-    if (line?.barcode) {
-      fetchCnyHistory(line.barcode).then(setCnyHistory);
-    } else {
-      setCnyHistory([]);
+    if (line) {
+      setForm(lineToForm(line));
+      setPhotos(photosFromLine(line));
+      if (line.barcode) fetchCnyHistory(line.barcode).then(setCnyHistory);
+      else setCnyHistory([]);
+      return;
     }
-  }, [isOpen, line]);
+    const draft = {
+      local_id: seedLine?.local_id || newIntakeLineId(),
+      barcode: seedLine?.barcode || generateEAN13(),
+      ...seedLine,
+      quantity: null,
+    };
+    setForm(lineToForm(draft));
+    setPhotos(photosFromLine(draft));
+    const bc = String(draft.barcode || '').trim();
+    if (bc.length >= 4) fetchCnyHistory(bc).then(setCnyHistory);
+    else setCnyHistory([]);
+  }, [isOpen, line, seedLine]);
 
   const setField = (key, value) => setForm((f) => ({ ...f, [key]: value }));
 
@@ -249,7 +276,7 @@ export default function IntakeLineModal({
   }, []);
 
   const applyWarehouseProduct = useCallback(
-    async (p, { updateBarcode = false } = {}) => {
+    async (p, { updateBarcode = false, force = false } = {}) => {
       const bc = updateBarcode && p.barcode ? p.barcode : form.barcode;
       if (updateBarcode && p.barcode) setField('barcode', p.barcode);
       const history = await fetchCnyHistory(bc);
@@ -258,14 +285,17 @@ export default function IntakeLineModal({
       let syncDelKzt = null;
       setForm((f) => {
         const next = { ...f };
-        if (!next.sku.trim()) next.sku = capitalizeWords(p.sku || '');
-        if (!next.name.trim()) next.name = capitalizeWords(p.name || '');
-        if (!next.brand.trim()) next.brand = capitalizeWords(p.brand || '');
-        if (!next.model.trim()) next.model = capitalizeWords(p.model || '');
-        if (!next.category.trim()) next.category = capitalizeWords(p.category || '');
-        if (!next.manufacturer.trim()) next.manufacturer = capitalizeWords(p.supplier || '');
-        if (!next.extra_info.trim()) next.extra_info = p.description || '';
-        if (!next.cny_price.trim()) {
+        const fill = (key, val) => {
+          if (force || !String(next[key] ?? '').trim()) next[key] = val;
+        };
+        fill('sku', capitalizeWords(p.sku || ''));
+        fill('name', capitalizeWords(p.name || ''));
+        fill('brand', capitalizeWords(p.brand || ''));
+        fill('model', capitalizeWords(p.model || ''));
+        fill('category', capitalizeWords(p.category || ''));
+        fill('manufacturer', capitalizeWords(p.supplier || ''));
+        fill('extra_info', p.description || '');
+        if (force || !next.cny_price.trim()) {
           const latest = history[0];
           if (latest?.cny > 0) {
             next.cny_price = String(latest.cny);
@@ -277,13 +307,18 @@ export default function IntakeLineModal({
             next.cny_price = String(p.cny_price);
           }
         }
-        if (!next.delivery_kzt.trim() && num(p.delivery_cost_kzt) > 0) {
+        if (force || (!next.delivery_kzt.trim() && num(p.delivery_cost_kzt) > 0)) {
           syncDelKzt = String(Math.round(num(p.delivery_cost_kzt)));
           next.delivery_kzt = syncDelKzt;
         }
-        if (!next.sale_price.trim() && num(p.sale_price) > 0) {
+        const delKg = num(p.delivery_weight_kg);
+        if (delKg > 0 && (force || !next.delivery_kg.trim())) {
+          next.delivery_kg = String(delKg);
+        }
+        if (force || (!next.sale_price.trim() && num(p.sale_price) > 0)) {
           next.sale_price = String(p.sale_price);
         }
+        next.quantity = '';
         return next;
       });
       if (syncDelKzt) onKztChanged(syncDelKzt);
@@ -300,6 +335,30 @@ export default function IntakeLineModal({
     },
     [form.barcode, form.delivery_kzt, onKztChanged],
   );
+
+  useEffect(() => {
+    if (!isOpen || line) return;
+    const bc = String(seedLine?.barcode || form.barcode || '').trim();
+    if (bc.length < 4) return;
+    let cancelled = false;
+    (async () => {
+      setLookingUp(true);
+      try {
+        const res = await productApi.getByBarcode(bc, { allow404: true });
+        if (cancelled) return;
+        if (res.status === 200 && res.data) {
+          await applyWarehouseProduct(res.data, { force: true });
+        }
+      } catch {
+        /* ignore */
+      } finally {
+        if (!cancelled) setLookingUp(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen, line, seedLine?.barcode, applyWarehouseProduct]);
 
   const lookupBarcode = useCallback(async () => {
     const code = String(form.barcode || '').trim();
@@ -441,7 +500,7 @@ export default function IntakeLineModal({
     }
 
     const saved = {
-      local_id: line?.local_id || `line_${Date.now()}`,
+      local_id: line?.local_id || seedLine?.local_id || newIntakeLineId(),
       barcode,
       sku: form.sku.trim() || null,
       name,
@@ -763,12 +822,6 @@ export default function IntakeLineModal({
             </div>
           </IntakeFormCard>
 
-          {purchasePreview > 0 && (
-            <p className="intake-form-purchase-total">
-              Закуп итого: <strong>{purchasePreview.toLocaleString('ru-RU')} ₸</strong>
-            </p>
-          )}
-
           <div className="intake-form-row-2">
             <IntakeFormCard title="Стоимость (₸)" className="intake-form-card--accent">
               <input
@@ -791,6 +844,37 @@ export default function IntakeLineModal({
               />
             </IntakeFormCard>
           </div>
+
+          {positionTotalsPreview && (
+            <div className="intake-form-position-totals">
+              <div className="intake-form-position-totals-head">
+                <span className="intake-form-position-totals-title">По позиции</span>
+                <span className="intake-form-position-totals-qty">{positionTotalsPreview.qty} шт</span>
+              </div>
+              <div className="intake-form-position-totals-cols">
+                <div className="intake-form-position-stat intake-form-position-stat--purchase">
+                  <span className="intake-form-position-stat-label">Закуп</span>
+                  <span className="intake-form-position-stat-value">
+                    {positionTotalsPreview.unitPurchase.toLocaleString('ru-RU')} ₸
+                  </span>
+                  <span className="intake-form-position-stat-unit">за 1 шт</span>
+                </div>
+                <div className="intake-form-position-stat intake-form-position-stat--sale">
+                  <span className="intake-form-position-stat-label">Продажа</span>
+                  <span className="intake-form-position-stat-value">
+                    {positionTotalsPreview.unitSale > 0
+                      ? `${positionTotalsPreview.unitSale.toLocaleString('ru-RU')} ₸`
+                      : '—'}
+                  </span>
+                  <span className="intake-form-position-stat-unit">
+                    {positionTotalsPreview.unitSale > 0 && positionTotalsPreview.saleTotal > 0
+                      ? `всего ${positionTotalsPreview.saleTotal.toLocaleString('ru-RU')} ₸`
+                      : 'за 1 шт'}
+                  </span>
+                </div>
+              </div>
+            </div>
+          )}
 
           <IntakeFormCard title="Производитель">
             <input

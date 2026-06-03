@@ -39,9 +39,28 @@ export function computeLinePurchase(cny, deliveryKzt, cnyRate) {
   return roundMoney2(c * num(cnyRate) + d);
 }
 
+export function intakeLineQty(line) {
+  const qty = parseInt(line?.quantity, 10);
+  return Number.isFinite(qty) && qty > 0 ? qty : 0;
+}
+
+/** Суммы по строке: цена за 1 шт × количество (без кол-ва в итог не входят). */
+export function lineMoneyTotals(line) {
+  const qty = intakeLineQty(line);
+  const unitPurchase = num(line?.purchase_kzt);
+  const unitSale = num(line?.sale_price);
+  return {
+    qty,
+    unitPurchase,
+    unitSale,
+    purchaseTotal: qty > 0 ? roundMoney2(unitPurchase * qty) : 0,
+    saleTotal: qty > 0 ? roundMoney2(unitSale * qty) : 0,
+  };
+}
+
 export function isLineWarehouseReady(line) {
   const name = (line.name || '').trim();
-  const qty = parseInt(line.quantity, 10) || 0;
+  const qty = intakeLineQty(line);
   const sale = num(line.sale_price);
   return Boolean(name && qty > 0 && sale > 0);
 }
@@ -51,12 +70,10 @@ export function computeInvoiceSummary(lines) {
   let saleKzt = 0;
   let notReady = 0;
   for (const l of lines) {
-    purchaseKzt += num(l.purchase_kzt);
-    saleKzt += num(l.sale_price);
-    const qty = parseInt(l.quantity, 10) || 0;
-    const sale = num(l.sale_price);
-    const name = (l.name || '').trim();
-    if (!name || qty <= 0 || sale <= 0) notReady += 1;
+    const t = lineMoneyTotals(l);
+    purchaseKzt += t.purchaseTotal;
+    saleKzt += t.saleTotal;
+    if (!isLineWarehouseReady(l)) notReady += 1;
   }
   return {
     positions: lines.length,
@@ -239,6 +256,38 @@ export async function uploadInvoiceLinesToWarehouse(lines, cnyRate) {
     }
   }
   return { ...report, lines: updatedLines };
+}
+
+export function newIntakeLineId() {
+  return `line_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+}
+
+/** Строка накладной из товара склада (без количества). */
+export function warehouseProductToIntakeLine(p) {
+  const gallery = productGalleryFromApi(p);
+  const cny = num(p.cny_price);
+  const delKzt = num(p.delivery_cost_kzt);
+  const delKg = num(p.delivery_weight_kg);
+  const purchase = num(p.purchase_price);
+  const sale = num(p.sale_price);
+  return {
+    local_id: newIntakeLineId(),
+    barcode: String(p.barcode || '').trim() || null,
+    sku: p.sku ? String(p.sku).trim() : null,
+    name: String(p.name || '').trim(),
+    brand: p.brand ? String(p.brand).trim() : null,
+    model: p.model ? String(p.model).trim() : null,
+    category: p.category ? String(p.category).trim() : null,
+    manufacturer: p.supplier ? String(p.supplier).trim() : null,
+    extra_info: p.description ? String(p.description).trim() : null,
+    cny_price: cny > 0 ? roundMoney2(cny) : null,
+    delivery_kg: delKg > 0 ? roundWeight2(delKg) : null,
+    delivery_kzt: delKzt > 0 ? roundMoney2(delKzt) : null,
+    purchase_kzt: purchase > 0 ? roundMoney2(purchase) : null,
+    sale_price: sale > 0 ? roundMoney2(sale) : null,
+    quantity: null,
+    ...(gallery.length ? { warehouse_image_urls: gallery } : {}),
+  };
 }
 
 export function copyIntakeLine(src) {

@@ -19,21 +19,27 @@ import {
   FiClock,
   FiAlertCircle,
 } from 'react-icons/fi';
-import { Button, LoadingSpinner } from '../components/ui';
+import { Button, LoadingSpinner, Modal } from '../components/ui';
+import IntakeAddFab from '../components/IntakeAddFab';
 import IntakeLineModal from '../components/IntakeLineModal';
 import { intakeApi } from '../api/intake';
 import { settingsApi } from '../api/settings';
-import { getApiErrorMessage } from '../api/client';
+import { getApiErrorMessage, productApi } from '../api/client';
+import { generateEAN13 } from '../utils/barcodeGen';
 import {
   computeInvoiceSummary,
   copyIntakeLine,
   fetchLinePhotoUrlsByBarcode,
   getLineThumbSrc,
+  intakeLineQty,
   invoiceDateLabel,
   isLineWarehouseReady,
+  lineMoneyTotals,
   newClientId,
+  newIntakeLineId,
   num,
   uploadInvoiceLinesToWarehouse,
+  warehouseProductToIntakeLine,
 } from '../utils/intakeHelpers';
 
 const INTAKE_VIEW_KEY = 'skladpro_intake_view';
@@ -49,6 +55,30 @@ function readViewMode() {
 
 function formatKzt(value) {
   return `${num(value).toLocaleString('ru-RU')} ₸`;
+}
+
+function IntakeLineMoneyValue({ line, kind }) {
+  const t = lineMoneyTotals(line);
+  const unit = kind === 'purchase' ? t.unitPurchase : t.unitSale;
+  const total = kind === 'purchase' ? t.purchaseTotal : t.saleTotal;
+  if (t.qty <= 0) {
+    return (
+      <span className="intake-line-money">
+        <span className="intake-col-value">{unit > 0 ? formatKzt(unit) : '—'}</span>
+        {unit > 0 ? <span className="intake-col-hint">за 1 шт</span> : null}
+      </span>
+    );
+  }
+  return (
+    <span className="intake-line-money">
+      <span className="intake-col-value">{formatKzt(total)}</span>
+      {t.qty > 1 && unit > 0 ? (
+        <span className="intake-col-hint">
+          {formatKzt(unit)} × {t.qty}
+        </span>
+      ) : null}
+    </span>
+  );
 }
 
 function linePhotoKey(line) {
@@ -125,6 +155,7 @@ function IntakeLineActions({ isUploaded, onPrint, onCopy, onDelete }) {
 
 function IntakeLineRow({ line, photoUrls, isUploaded, showWarn, onOpen, onPrint, onCopy, onDelete }) {
   const qty = parseInt(line.quantity, 10) || 0;
+  const money = lineMoneyTotals(line);
   return (
     <div
       role="button"
@@ -146,8 +177,12 @@ function IntakeLineRow({ line, photoUrls, isUploaded, showWarn, onOpen, onPrint,
         </div>
         <IntakeLineChips line={line} />
         <div className="intake-line-prices intake-line-prices--mobile">
-          <span className="intake-price-pill intake-price-pill--muted">Закуп {formatKzt(line.purchase_kzt)}</span>
-          <span className="intake-price-pill intake-price-pill--sale">Продажа {formatKzt(line.sale_price)}</span>
+          <span className="intake-price-pill intake-price-pill--muted">
+            Закуп {money.qty > 0 ? formatKzt(money.purchaseTotal) : formatKzt(line.purchase_kzt)}
+          </span>
+          <span className="intake-price-pill intake-price-pill--sale">
+            Продажа {money.qty > 0 ? formatKzt(money.saleTotal) : formatKzt(line.sale_price)}
+          </span>
         </div>
       </div>
       <div className="intake-line-col intake-line-col-qty">
@@ -156,11 +191,13 @@ function IntakeLineRow({ line, photoUrls, isUploaded, showWarn, onOpen, onPrint,
       </div>
       <div className="intake-line-col intake-line-col-purchase">
         <span className="intake-col-label">Закуп</span>
-        <span className="intake-col-value">{formatKzt(line.purchase_kzt)}</span>
+        <IntakeLineMoneyValue line={line} kind="purchase" />
       </div>
       <div className="intake-line-col intake-line-col-sale">
         <span className="intake-col-label">Продажа</span>
-        <span className="intake-col-value intake-col-value--primary">{formatKzt(line.sale_price)}</span>
+        <span className="intake-col-value--primary">
+          <IntakeLineMoneyValue line={line} kind="sale" />
+        </span>
       </div>
       <IntakeLineActions isUploaded={isUploaded} onPrint={onPrint} onCopy={onCopy} onDelete={onDelete} />
     </div>
@@ -169,6 +206,7 @@ function IntakeLineRow({ line, photoUrls, isUploaded, showWarn, onOpen, onPrint,
 
 function IntakeLineGridCard({ line, photoUrls, isUploaded, showWarn, onOpen, onPrint, onCopy, onDelete }) {
   const qty = parseInt(line.quantity, 10) || 0;
+  const money = lineMoneyTotals(line);
   const thumb = getLineThumbSrc(line, photoUrls);
   return (
     <div
@@ -194,11 +232,15 @@ function IntakeLineGridCard({ line, photoUrls, isUploaded, showWarn, onOpen, onP
       <div className="intake-line-card-foot">
         <div className="intake-line-card-price-box">
           <span className="intake-line-card-price-label">Закуп</span>
-          <span className="intake-line-card-price-val">{formatKzt(line.purchase_kzt)}</span>
+          <span className="intake-line-card-price-val">
+            {money.qty > 0 ? formatKzt(money.purchaseTotal) : formatKzt(line.purchase_kzt)}
+          </span>
         </div>
         <div className="intake-line-card-price-box intake-line-card-price-box--sale">
           <span className="intake-line-card-price-label">Продажа</span>
-          <span className="intake-line-card-price-val">{formatKzt(line.sale_price)}</span>
+          <span className="intake-line-card-price-val">
+            {money.qty > 0 ? formatKzt(money.saleTotal) : formatKzt(line.sale_price)}
+          </span>
         </div>
         <IntakeLineActions isUploaded={isUploaded} onPrint={onPrint} onCopy={onCopy} onDelete={onDelete} />
       </div>
@@ -436,7 +478,10 @@ function IntakeDetail() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [search, setSearch] = useState('');
+  const [onlyNotReady, setOnlyNotReady] = useState(false);
   const [lineModal, setLineModal] = useState(null);
+  const [seedLine, setSeedLine] = useState(null);
+  const [duplicateIndex, setDuplicateIndex] = useState(null);
   const [lineReadonly, setLineReadonly] = useState(false);
   const [viewMode, setViewMode] = useState(readViewMode);
   const [linePhotoUrls, setLinePhotoUrls] = useState({});
@@ -537,20 +582,102 @@ function IntakeDetail() {
 
   const visibleLines = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return lines.map((l, i) => ({ line: l, index: i }));
-    return lines
-      .map((l, i) => ({ line: l, index: i }))
-      .filter(({ line: l }) => {
+    let items = lines.map((l, i) => ({ line: l, index: i }));
+    if (onlyNotReady && !isUploaded) {
+      items = items.filter(({ line: l }) => !isLineWarehouseReady(l));
+    }
+    if (q) {
+      items = items.filter(({ line: l }) => {
         const name = (l.name || '').toLowerCase();
         const bc = (l.barcode || '').toLowerCase();
         const sku = (l.sku || '').toLowerCase();
         return name.includes(q) || bc.includes(q) || sku.includes(q);
       });
-  }, [lines, search]);
+    }
+    if (!isUploaded) {
+      items = [...items].sort((a, b) => {
+        const ar = isLineWarehouseReady(a.line) ? 1 : 0;
+        const br = isLineWarehouseReady(b.line) ? 1 : 0;
+        return ar - br;
+      });
+    }
+    return items;
+  }, [lines, search, onlyNotReady, isUploaded]);
+
+  const closeLineModal = () => {
+    setLineModal(null);
+    setSeedLine(null);
+  };
+
+  const openNewLine = (seed = null) => {
+    setSeedLine(seed);
+    setLineReadonly(false);
+    setLineModal(-1);
+  };
 
   const openLine = (index, readonly = false) => {
+    setSeedLine(null);
     setLineReadonly(readonly || isUploaded);
     setLineModal(index);
+  };
+
+  const findLineIndexByBarcode = (code) => {
+    const c = String(code || '').trim();
+    if (c.length < 4) return null;
+    for (let i = 0; i < lines.length; i++) {
+      if (String(lines[i]?.barcode || '').trim() === c) return i;
+    }
+    return null;
+  };
+
+  const appendLineFromWarehouse = async (product) => {
+    const line = warehouseProductToIntakeLine(product);
+    const next = [...lines, line];
+    await saveInvoice(next);
+    toast.success(`«${line.name || 'Товар'}» добавлен из склада — укажите количество`);
+  };
+
+  const incrementLineQty = async (index) => {
+    const next = lines.map((l, i) => {
+      if (i !== index) return l;
+      const qty = intakeLineQty(l) + 1;
+      return { ...l, quantity: qty };
+    });
+    await saveInvoice(next);
+    toast.success(`«${next[index]?.name}»: ${intakeLineQty(next[index])} шт`);
+  };
+
+  const processBarcodeForAdd = async (rawCode) => {
+    const code = String(rawCode || '').trim();
+    if (code.length < 4) {
+      toast.error('Штрих-код слишком короткий');
+      return;
+    }
+    const existing = findLineIndexByBarcode(code);
+    if (existing != null) {
+      setDuplicateIndex(existing);
+      return;
+    }
+    try {
+      const res = await productApi.getByBarcode(code, { allow404: true });
+      if (res.status === 200 && res.data) {
+        await appendLineFromWarehouse(res.data);
+        return;
+      }
+    } catch {
+      /* откроем форму */
+    }
+    openNewLine({ barcode: code, local_id: newIntakeLineId() });
+  };
+
+  const handleEnterBarcode = () => {
+    const code = window.prompt('Штрих-код товара');
+    if (code == null || !String(code).trim()) return;
+    processBarcodeForAdd(code.trim());
+  };
+
+  const handleAutoBarcode = () => {
+    openNewLine({ barcode: generateEAN13(), local_id: newIntakeLineId() });
   };
 
   const handleLineSave = async (saved) => {
@@ -562,6 +689,7 @@ function IntakeDetail() {
     }
     await saveInvoice(next);
     toast.success('Позиция сохранена');
+    closeLineModal();
   };
 
   const handleCopyLine = async (index) => {
@@ -631,10 +759,8 @@ function IntakeDetail() {
     );
   }
 
-  const searchActive = search.trim().length > 0;
-
   return (
-    <div className="page-stack intake-page">
+    <div className="page-stack intake-page intake-page--detail">
       <div className="intake-detail-hero">
         <div className="intake-detail-hero-left">
           <button type="button" className="intake-back-btn" onClick={() => navigate('/intake')} aria-label="Назад">
@@ -712,11 +838,6 @@ function IntakeDetail() {
 
       <div className="intake-toolbar-panel">
         <div className="intake-toolbar">
-          {!isUploaded && (
-            <Button icon={FiPlus} onClick={() => { setLineReadonly(false); setLineModal(-1); }}>
-              Добавить товар
-            </Button>
-          )}
           {lines.length > 0 && (
             <>
               <div className="intake-toolbar-grow">
@@ -728,29 +849,22 @@ function IntakeDetail() {
                   onChange={(e) => setSearch(e.target.value)}
                 />
               </div>
-              <IntakeViewToggle viewMode={viewMode} onChange={setViewMode} />
+              <div className="intake-toolbar-actions">
+                {!isUploaded && summary.notReadyCount > 0 && (
+                  <button
+                    type="button"
+                    className={`intake-filter-chip${onlyNotReady ? ' intake-filter-chip--active' : ''}`}
+                    onClick={() => setOnlyNotReady((v) => !v)}
+                  >
+                    Не готовые ({summary.notReadyCount})
+                  </button>
+                )}
+                <IntakeViewToggle viewMode={viewMode} onChange={setViewMode} />
+              </div>
             </>
           )}
         </div>
-        {lines.length > 0 && (
-          <div className="intake-results-meta">
-            {searchActive
-              ? `Найдено ${visibleLines.length} из ${lines.length}`
-              : `${lines.length} позиций`}
-          </div>
-        )}
       </div>
-
-      {lines.length > 0 && viewMode === 'list' && (
-        <div className="intake-lines-list-head" aria-hidden="true">
-          <span />
-          <span>Товар</span>
-          <span>Кол-во</span>
-          <span>Закуп</span>
-          <span>Продажа</span>
-          <span />
-        </div>
-      )}
 
       {lines.length === 0 ? (
         <IntakeEmpty
@@ -759,17 +873,69 @@ function IntakeDetail() {
           hint="Добавьте товар, заполните цены и количество — затем загрузите на склад"
         />
       ) : visibleLines.length === 0 ? (
-        <IntakeEmpty icon={FiSearch} title="Ничего не найдено" hint="Измените запрос в поиске" />
+        <IntakeEmpty
+          icon={onlyNotReady ? FiAlertCircle : FiSearch}
+          title="Ничего не найдено"
+          hint={
+            onlyNotReady
+              ? 'Все позиции готовы к складу — снимите фильтр'
+              : 'Измените запрос в поиске'
+          }
+        />
       ) : viewMode === 'grid' ? (
         <div className="intake-lines-grid">{visibleLines.map(renderLine)}</div>
       ) : (
         <div className="intake-lines-list">{visibleLines.map(renderLine)}</div>
       )}
 
+      <IntakeAddFab
+        disabled={isUploaded}
+        showScan={false}
+        onAutoBarcode={handleAutoBarcode}
+        onEnterBarcode={handleEnterBarcode}
+      />
+
+      <Modal
+        isOpen={duplicateIndex != null}
+        onClose={() => setDuplicateIndex(null)}
+        title="Уже в накладной"
+      >
+        {duplicateIndex != null && (
+          <div className="intake-duplicate-modal">
+            <p className="intake-duplicate-modal-text">
+              «{lines[duplicateIndex]?.name || 'Товар'}»
+              {intakeLineQty(lines[duplicateIndex]) > 0
+                ? ` · ${intakeLineQty(lines[duplicateIndex])} шт`
+                : ''}
+            </p>
+            <div className="intake-duplicate-modal-actions">
+              <Button
+                onClick={async () => {
+                  await incrementLineQty(duplicateIndex);
+                  setDuplicateIndex(null);
+                }}
+              >
+                +1 к количеству
+              </Button>
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  openLine(duplicateIndex);
+                  setDuplicateIndex(null);
+                }}
+              >
+                Открыть позицию
+              </Button>
+            </div>
+          </div>
+        )}
+      </Modal>
+
       <IntakeLineModal
         isOpen={lineModal !== null}
-        onClose={() => setLineModal(null)}
+        onClose={closeLineModal}
         line={lineModal != null && lineModal >= 0 ? lines[lineModal] : null}
+        seedLine={lineModal === -1 ? seedLine : null}
         onSave={handleLineSave}
         readonly={lineReadonly}
         cnyRate={cnyRate}

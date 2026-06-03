@@ -1,26 +1,32 @@
-import { defineConfig } from 'vite'
+import { defineConfig, loadEnv } from 'vite'
 import react from '@vitejs/plugin-react'
 
-export default defineConfig({
-  plugins: [react()],
-  server: {
-    port: 5173,
-    proxy: {
-      '/api': {
-        target: 'http://localhost:8000',
-        changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/api/, '')
+export default defineConfig(({ mode }) => {
+  const env = loadEnv(mode, process.cwd(), '')
+  /** Куда проксировать /api и /uploads в dev (без CORS). */
+  const apiTarget = (env.VITE_DEV_PROXY_TARGET || 'http://194.32.142.253').replace(/\/$/, '')
+
+  return {
+    plugins: [react()],
+    server: {
+      port: 5173,
+      proxy: {
+        '/api': {
+          target: apiTarget,
+          changeOrigin: true,
+          secure: false,
+        },
+        '/uploads': {
+          target: apiTarget,
+          changeOrigin: true,
+          secure: false,
+        },
       },
-      '/uploads': {
-        target: 'http://localhost:8000',
-        changeOrigin: true
-      }
-    }
-  },
-  build: {
-    outDir: 'dist',
-    sourcemap: true,
-    /* один основной бандл ~600k — предупреждение Vite не информативно для сценария */
-    chunkSizeWarningLimit: 700,
+    },
+    build: {
+      outDir: 'dist',
+      sourcemap: true,
+      chunkSizeWarningLimit: 700,
+    },
   }
 })

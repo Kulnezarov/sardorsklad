@@ -34,21 +34,29 @@ export async function fetchAllProducts(filters = {}) {
   return acc
 }
 
-const DEV_PORTS_NEED_SEPARATE_API = new Set(['5173', '3000', '4173', '8080'])
+function isLocalDevHost() {
+  if (typeof window === 'undefined') return false
+  const h = window.location.hostname
+  return h === 'localhost' || h === '127.0.0.1' || h === '[::1]'
+}
 
 export function getResolvedApiBaseUrl() {
   const raw = (import.meta.env.VITE_API_URL || '').trim()
+  // Локальный Vite: всегда через proxy (даже если в .env указан IP сервера — иначе CORS).
+  if (isLocalDevHost()) {
+    return `${window.location.origin}/api/v1`
+  }
   if (raw && raw !== 'auto') {
     return raw.replace(/\/$/, '')
   }
   if (typeof window !== 'undefined' && window.location?.hostname) {
     const pagePort = (window.location.port || '').trim()
+    if (!pagePort || pagePort === '80' || pagePort === '443') {
+      return `${window.location.origin}/api/v1`
+    }
     const apiPort = String(import.meta.env.VITE_API_PORT || '8000').trim()
     const { hostname, protocol } = window.location
-    if (DEV_PORTS_NEED_SEPARATE_API.has(pagePort)) {
-      return `${protocol}//${hostname}:${apiPort}/api/v1`
-    }
-    return `${window.location.origin}/api/v1`
+    return `${protocol}//${hostname}:${apiPort}/api/v1`
   }
   return 'http://localhost:8000/api/v1'
 }
@@ -63,9 +71,12 @@ export function resolveUploadedAssetUrl(relativeOrAbsolute) {
   if (!s) return ''
   if (/^https?:\/\//i.test(s)) return s
   const path = s.startsWith('/') ? s : `/${s}`
+  if (isLocalDevHost()) {
+    return `${window.location.origin}${path}`
+  }
   if (typeof window !== 'undefined' && window.location?.hostname) {
     const pagePort = (window.location.port || '').trim()
-    if (!DEV_PORTS_NEED_SEPARATE_API.has(pagePort)) {
+    if (!pagePort || pagePort === '80' || pagePort === '443') {
       return `${window.location.origin}${path}`
     }
   }
