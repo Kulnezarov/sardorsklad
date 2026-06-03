@@ -449,16 +449,6 @@ function IntakeDetail() {
     }
   }, [viewMode]);
 
-  useEffect(() => {
-    let cancelled = false;
-    fetchLinePhotoUrlsByBarcode(lines).then((map) => {
-      if (!cancelled) setLinePhotoUrls(map);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [lines]);
-
   const { data: settingsRow } = useQuery({
     queryKey: ['settings'],
     queryFn: async () => {
@@ -489,6 +479,16 @@ function IntakeDetail() {
     () => (Array.isArray(invoice?.lines) ? invoice.lines : []),
     [invoice],
   );
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchLinePhotoUrlsByBarcode(lines).then((map) => {
+      if (!cancelled) setLinePhotoUrls(map);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [lines]);
 
   const summary = useMemo(() => computeInvoiceSummary(lines), [lines]);
 
