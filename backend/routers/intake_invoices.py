@@ -1,5 +1,8 @@
 """Накладные поступления (мобильное приложение) — хранение на сервере."""
-from fastapi import APIRouter, Depends, HTTPException, status
+import logging
+
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from PIL import UnidentifiedImageError
 from sqlalchemy.orm import Session
 from sqlalchemy import desc, func
 from typing import List
@@ -8,11 +11,36 @@ import models
 import schemas
 from database import get_db
 from dependencies import require_manager_or_admin
+from services.intake_images import (
+    MAX_IMAGE_SIZE_BYTES,
+    MAX_INTAKE_LINE_IMAGES,
+    save_intake_line_image,
+)
 
 router = APIRouter(
     tags=["intake_invoices"],
     dependencies=[Depends(require_manager_or_admin)],
 )
+
+
+def _find_line_index(lines: list, line_local_id: str) -> int:
+    key = line_local_id.strip()
+    for i, raw in enumerate(lines):
+        if not isinstance(raw, dict):
+            continue
+        lid = str(raw.get("local_id") or "").strip()
+        if lid and lid == key:
+            return i
+        if not lid and str(raw.get("barcode") or "").strip() == key:
+            return i
+    return -1
+
+
+def _line_image_urls(line: dict) -> list[str]:
+    urls = line.get("warehouse_image_urls")
+    if isinstance(urls, list):
+        return [str(u).strip() for u in urls if str(u or "").strip()]
+    return []
 
 
 def _to_response(row: models.IntakeInvoice) -> schemas.IntakeInvoiceResponse:
@@ -99,6 +127,84 @@ def upsert_intake_invoice(
     db.commit()
     db.refresh(row)
     return _to_response(row)
+
+
+@router.post("/api/v1/intake-invoices/client/{client_id}/lines/{line_local_id}/image")
+async def upload_intake_line_image(
+    client_id: str,
+    line_local_id: str,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    user: models.User = Depends(require_manager_or_admin),
+):
+    """Фото позиции накладной на сервере — видно на сайте до «В склад»."""
+    cid = client_id.strip()
+    lid = line_local_id.strip()
+    if not cid or not lid:
+        raise HTTPException(status_code=400, detail="client_id and line_local_id required")
+
+    row = (
+        db.query(models.IntakeInvoice)
+        .filter(
+            models.IntakeInvoice.user_id == user.id,
+            models.IntakeInvoice.client_id == cid,
+        )
+        .first()
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="Invoice not found — save invoice first")
+
+    lines = list(row.lines) if isinstance(row.lines, list) else []
+    idx = _find_line_index(lines, lid)
+    if idx < 0:
+        raise HTTPException(status_code=404, detail="Line not found in invoice")
+
+    line = dict(lines[idx]) if isinstance(lines[idx], dict) else {}
+    cur = _line_image_urls(line)
+    if len(cur) >= MAX_INTAKE_LINE_IMAGES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Не больше {MAX_INTAKE_LINE_IMAGES} фото на позицию",
+        )
+
+    data = await file.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="Файл пустой")
+    if len(data) > MAX_IMAGE_SIZE_BYTES:
+        raise HTTPException(status_code=400, detail="Файл слишком большой (макс. 5 МБ)")
+
+    content_type = (file.content_type or "").lower()
+    if content_type and not content_type.startswith("image/") and content_type != "application/octet-stream":
+        raise HTTPException(status_code=400, detail="Ожидается изображение")
+
+    try:
+        new_url = save_intake_line_image(
+            user_id=user.id,
+            client_id=cid,
+            line_local_id=lid,
+            data=data,
+        )
+    except UnidentifiedImageError as e:
+        logging.getLogger(__name__).error("intake image decode failed: %s", e)
+        raise HTTPException(status_code=400, detail="Неподдерживаемый формат изображения") from e
+    except Exception as e:
+        logging.getLogger(__name__).error("intake image save failed: %s", e, exc_info=True)
+        raise HTTPException(status_code=400, detail="Не удалось обработать изображение") from e
+
+    gallery = cur + [new_url]
+    line["warehouse_image_urls"] = gallery
+    line.pop("local_photo_paths", None)
+    line.pop("local_photo_path", None)
+    line.pop("intake_photo_data", None)
+    lines[idx] = line
+    row.lines = lines
+    db.commit()
+    db.refresh(row)
+    return {
+        "ok": True,
+        "image_url": gallery[0] if gallery else None,
+        "image_urls": gallery,
+    }
 
 
 @router.delete("/api/v1/intake-invoices/client/{client_id}", status_code=status.HTTP_204_NO_CONTENT)

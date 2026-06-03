@@ -338,6 +338,22 @@ _PRODUCT_IMG_DIR = (Path(os.getenv("UPLOAD_DIR", "uploads")).resolve() / "produc
 _SAFE_PRODUCT_IMG = re.compile(r"^\d+_[0-9a-f]{32}\.webp$", re.IGNORECASE)
 
 
+from services.intake_images import resolve_intake_image_path  # noqa: E402
+
+
+@app.get("/api/v1/media/intake-images/{file_name}", include_in_schema=False)
+def serve_intake_image_public(file_name: str):
+    """Фото позиций накладной (мобильное → сайт)."""
+    path = resolve_intake_image_path(file_name)
+    if path is None:
+        raise StarletteHTTPException(status_code=404, detail="Not found")
+    return FileResponse(
+        path,
+        media_type="image/webp",
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
+
+
 @app.get("/api/v1/media/product-images/{file_name}", include_in_schema=False)
 def serve_product_image_public(file_name: str):
     """WebP-файлы из uploads/products. Без авторизации (и витрина, и склад)."""

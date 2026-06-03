@@ -506,7 +506,7 @@ export default function IntakeLineModal({
                 Отмена
               </Button>
               <Button variant="primary" icon={FiCheckCircle} onClick={handleSave}>
-                {line ? 'Сохранить' : 'Добавить'}
+                {line ? 'Сохранить' : 'Добавить в накладную'}
               </Button>
             </>
           )
@@ -830,13 +830,6 @@ export default function IntakeLineModal({
             </IntakeFormCard>
           )}
 
-          {!readonly && (
-            <div className="intake-form-footer-save">
-              <Button variant="primary" icon={FiCheckCircle} onClick={handleSave} className="intake-form-save-btn">
-                {line ? 'Сохранить' : 'Добавить в накладную'}
-              </Button>
-            </div>
-          )}
         </div>
       </Modal>
 
