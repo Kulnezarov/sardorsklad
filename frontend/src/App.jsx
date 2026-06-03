@@ -14,6 +14,7 @@ import Reserve from './pages/Reserve';
 import History from './pages/History';
 import Settings from './pages/Settings';
 import Orders from './pages/Orders';
+import Intake from './pages/Intake';
 import NotFoundPage from './pages/NotFoundPage';
 import OnlineOverlay from './components/OnlineOverlay';
 
@@ -61,6 +62,8 @@ function AppShell() {
               <Route path="/sales/found" element={<ProductFound />} />
               <Route path="/reserve" element={<Reserve />} />
               <Route path="/orders" element={<Orders />} />
+              <Route path="/intake" element={<Intake />} />
+              <Route path="/intake/:clientId" element={<Intake />} />
               <Route path="/categories" element={<Navigate to="/products" replace />} />
               <Route path="/history" element={<History />} />
               <Route path="/astra" element={<Navigate to="/dashboard" replace />} />

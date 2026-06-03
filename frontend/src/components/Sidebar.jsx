@@ -7,6 +7,7 @@ import {
   FiClock,
   FiSettings,
   FiList,
+  FiFileText,
 } from 'react-icons/fi';
 
 const Sidebar = ({ isOpen, onClose }) => {
@@ -15,6 +16,7 @@ const Sidebar = ({ isOpen, onClose }) => {
   const navItems = [
     { path: '/dashboard', label: 'Главная', Icon: FiHome },
     { path: '/products', label: 'Склад', Icon: FiPackage },
+    { path: '/intake', label: 'Накладные', Icon: FiFileText },
     { path: '/reserve', label: 'Резерв', Icon: FiShoppingCart },
     { path: '/orders', label: 'Заказы', Icon: FiList },
     { path: '/history', label: 'История', Icon: FiClock },
@@ -43,7 +45,7 @@ const Sidebar = ({ isOpen, onClose }) => {
             <Link
               key={path}
               to={path}
-              className={`nav-item ${location.pathname === path ? 'active' : ''}`}
+              className={`nav-item ${location.pathname === path || (path === '/intake' && location.pathname.startsWith('/intake')) ? 'active' : ''}`}
               onClick={onClose}
             >
               <span className="nav-icon">
