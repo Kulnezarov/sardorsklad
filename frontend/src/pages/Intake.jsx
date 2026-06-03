@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
@@ -7,24 +7,273 @@ import {
   FiTrash2,
   FiUpload,
   FiChevronLeft,
+  FiChevronRight,
   FiTag,
   FiCopy,
   FiSearch,
   FiFileText,
+  FiList,
+  FiGrid,
+  FiPackage,
+  FiCheckCircle,
+  FiClock,
+  FiAlertCircle,
 } from 'react-icons/fi';
 import { Button, LoadingSpinner } from '../components/ui';
 import IntakeLineModal from '../components/IntakeLineModal';
 import { intakeApi } from '../api/intake';
 import { settingsApi } from '../api/settings';
-import { getApiErrorMessage } from '../api/client';
+import { getApiErrorMessage, resolveUploadedAssetUrl } from '../api/client';
 import {
   computeInvoiceSummary,
   copyIntakeLine,
   invoiceDateLabel,
+  isLineWarehouseReady,
   newClientId,
   num,
   uploadInvoiceLinesToWarehouse,
 } from '../utils/intakeHelpers';
+
+const INTAKE_VIEW_KEY = 'skladpro_intake_view';
+
+function readViewMode() {
+  try {
+    const v = localStorage.getItem(INTAKE_VIEW_KEY);
+    return v === 'grid' ? 'grid' : 'list';
+  } catch {
+    return 'list';
+  }
+}
+
+function formatKzt(value) {
+  return `${num(value).toLocaleString('ru-RU')} ₸`;
+}
+
+function getLineThumbUrl(line) {
+  const urls = Array.isArray(line?.warehouse_image_urls) ? line.warehouse_image_urls : [];
+  const first = urls.map((u) => String(u || '').trim()).find(Boolean);
+  return first ? resolveUploadedAssetUrl(first) : '';
+}
+
+function IntakeEmpty({ icon: Icon, title, hint }) {
+  return (
+    <div className="intake-empty">
+      <div className="intake-empty-icon">
+        <Icon size={28} />
+      </div>
+      <div className="intake-empty-title">{title}</div>
+      {hint ? <div className="intake-empty-hint">{hint}</div> : null}
+    </div>
+  );
+}
+
+function IntakeLineThumb({ line }) {
+  const src = getLineThumbUrl(line);
+  return (
+    <div className="intake-line-thumb">
+      {src ? (
+        <img src={src} alt="" loading="lazy" />
+      ) : (
+        <FiPackage size={22} />
+      )}
+    </div>
+  );
+}
+
+function IntakeLineChips({ line }) {
+  const chips = [];
+  if (line.barcode) chips.push({ key: 'bc', label: line.barcode });
+  if (line.sku) chips.push({ key: 'sku', label: `SKU ${line.sku}` });
+  const brandModel = [line.brand, line.model].filter(Boolean).join(' ');
+  if (brandModel) chips.push({ key: 'bm', label: brandModel });
+  if (!chips.length) return <span className="intake-line-meta-muted">Нет штрих-кода</span>;
+  return (
+    <div className="intake-line-chips">
+      {chips.map((c) => (
+        <span key={c.key} className="intake-chip">
+          {c.label}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function IntakeLineActions({ isUploaded, onPrint, onCopy, onDelete }) {
+  return (
+    <div className="intake-line-actions" onClick={(e) => e.stopPropagation()}>
+      <button type="button" className="intake-icon-btn" title="Печать этикетки" onClick={onPrint}>
+        <FiTag size={14} />
+      </button>
+      {!isUploaded && (
+        <>
+          <button type="button" className="intake-icon-btn" title="Копия" onClick={onCopy}>
+            <FiCopy size={14} />
+          </button>
+          <button
+            type="button"
+            className="intake-icon-btn intake-icon-btn-danger"
+            title="Удалить"
+            onClick={onDelete}
+          >
+            <FiTrash2 size={14} />
+          </button>
+        </>
+      )}
+    </div>
+  );
+}
+
+function IntakeLineRow({ line, isUploaded, showWarn, onOpen, onPrint, onCopy, onDelete }) {
+  const qty = parseInt(line.quantity, 10) || 0;
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      className={`intake-line-row${showWarn ? ' intake-line-row-warn' : ''}`}
+      onClick={onOpen}
+      onKeyDown={(e) => e.key === 'Enter' && onOpen()}
+    >
+      <IntakeLineThumb line={line} />
+      <div className="intake-line-row-main">
+        <div className="intake-line-title-row">
+          <div className="intake-line-title">{line.name || 'Без названия'}</div>
+          {showWarn && (
+            <span className="intake-line-badge">
+              <FiAlertCircle size={12} />
+              Не готово
+            </span>
+          )}
+        </div>
+        <IntakeLineChips line={line} />
+        <div className="intake-line-prices intake-line-prices--mobile">
+          <span className="intake-price-pill intake-price-pill--muted">Закуп {formatKzt(line.purchase_kzt)}</span>
+          <span className="intake-price-pill intake-price-pill--sale">Продажа {formatKzt(line.sale_price)}</span>
+        </div>
+      </div>
+      <div className="intake-line-col intake-line-col-qty">
+        <span className="intake-col-label">Кол-во</span>
+        <span className="intake-col-value">{qty > 0 ? `${qty} шт` : '—'}</span>
+      </div>
+      <div className="intake-line-col intake-line-col-purchase">
+        <span className="intake-col-label">Закуп</span>
+        <span className="intake-col-value">{formatKzt(line.purchase_kzt)}</span>
+      </div>
+      <div className="intake-line-col intake-line-col-sale">
+        <span className="intake-col-label">Продажа</span>
+        <span className="intake-col-value intake-col-value--primary">{formatKzt(line.sale_price)}</span>
+      </div>
+      <IntakeLineActions isUploaded={isUploaded} onPrint={onPrint} onCopy={onCopy} onDelete={onDelete} />
+    </div>
+  );
+}
+
+function IntakeLineGridCard({ line, isUploaded, showWarn, onOpen, onPrint, onCopy, onDelete }) {
+  const qty = parseInt(line.quantity, 10) || 0;
+  const thumb = getLineThumbUrl(line);
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      className={`intake-line-card${showWarn ? ' intake-line-card-warn' : ''}`}
+      onClick={onOpen}
+      onKeyDown={(e) => e.key === 'Enter' && onOpen()}
+    >
+      <div className="intake-line-card-media">
+        {thumb ? <img src={thumb} alt="" loading="lazy" /> : <FiPackage size={32} />}
+        {qty > 0 && <span className="intake-line-card-qty">{qty} шт</span>}
+        {showWarn && (
+          <span className="intake-line-card-warn-flag">
+            <FiAlertCircle size={12} />
+          </span>
+        )}
+      </div>
+      <div className="intake-line-card-body">
+        <div className="intake-line-title">{line.name || 'Без названия'}</div>
+        <IntakeLineChips line={line} />
+      </div>
+      <div className="intake-line-card-foot">
+        <div className="intake-line-card-price-box">
+          <span className="intake-line-card-price-label">Закуп</span>
+          <span className="intake-line-card-price-val">{formatKzt(line.purchase_kzt)}</span>
+        </div>
+        <div className="intake-line-card-price-box intake-line-card-price-box--sale">
+          <span className="intake-line-card-price-label">Продажа</span>
+          <span className="intake-line-card-price-val">{formatKzt(line.sale_price)}</span>
+        </div>
+        <IntakeLineActions isUploaded={isUploaded} onPrint={onPrint} onCopy={onCopy} onDelete={onDelete} />
+      </div>
+    </div>
+  );
+}
+
+function IntakeInvoiceCard({ inv, uploaded, lines, summary, onOpen, onDelete }) {
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      className="intake-invoice-card"
+      onClick={onOpen}
+      onKeyDown={(e) => e.key === 'Enter' && onOpen()}
+    >
+      <div className={`intake-invoice-badge${uploaded ? ' intake-invoice-badge-done' : ''}`}>
+        {uploaded ? <FiCheckCircle size={22} /> : `#${inv.number}`}
+      </div>
+      <div className="intake-invoice-body">
+        <div className="intake-invoice-top">
+          <div className="intake-invoice-title">Накладная №{inv.number}</div>
+          <span className={`intake-status-pill${uploaded ? ' intake-status-pill--done' : ''}`}>
+            {uploaded ? 'На складе' : 'В работе'}
+          </span>
+        </div>
+        <div className="intake-invoice-meta">
+          <span>{inv.date}</span>
+          <span className="intake-invoice-dot">·</span>
+          <span>{lines.length} поз.</span>
+          {lines.length > 0 && (
+            <>
+              <span className="intake-invoice-dot">·</span>
+              <span>Продажа {formatKzt(summary.saleKzt)}</span>
+            </>
+          )}
+        </div>
+      </div>
+      <button
+        type="button"
+        className="intake-icon-btn intake-icon-btn-danger"
+        onClick={onDelete}
+        title="Удалить"
+      >
+        <FiTrash2 size={16} />
+      </button>
+      <FiChevronRight className="intake-invoice-chevron" size={20} />
+    </div>
+  );
+}
+
+function IntakeViewToggle({ viewMode, onChange }) {
+  return (
+    <div className="intake-view-toggle" role="group" aria-label="Вид карточек">
+      <button
+        type="button"
+        className={`intake-view-btn${viewMode === 'list' ? ' intake-view-btn-active' : ''}`}
+        onClick={() => onChange('list')}
+        title="Строки"
+      >
+        <FiList size={16} />
+        <span>Строки</span>
+      </button>
+      <button
+        type="button"
+        className={`intake-view-btn${viewMode === 'grid' ? ' intake-view-btn-active' : ''}`}
+        onClick={() => onChange('grid')}
+        title="Сетка"
+      >
+        <FiGrid size={16} />
+        <span>Сетка</span>
+      </button>
+    </div>
+  );
+}
 
 function IntakeList() {
   const navigate = useNavigate();
@@ -38,6 +287,14 @@ function IntakeList() {
       return Array.isArray(r.data) ? r.data : [];
     },
   });
+
+  const stats = useMemo(() => {
+    let onWarehouse = 0;
+    for (const inv of invoices) {
+      if (inv.uploaded === true) onWarehouse += 1;
+    }
+    return { total: invoices.length, onWarehouse, draft: invoices.length - onWarehouse };
+  }, [invoices]);
 
   const createMutation = useMutation({
     mutationFn: async () => {
@@ -90,23 +347,46 @@ function IntakeList() {
   }, [invoices, search]);
 
   return (
-    <div className="page-stack">
-      <div className="section-header">
-        <div>
-          <h1 className="page-title">Накладные</h1>
-          <p className="page-subtitle">Поступление товара · печать этикеток · загрузка на склад</p>
+    <div className="page-stack intake-page">
+      <div className="intake-hero">
+        <div className="intake-hero-content">
+          <div className="intake-hero-icon-wrap">
+            <FiFileText size={26} />
+          </div>
+          <div>
+            <h1 className="intake-hero-title">Накладные</h1>
+            <p className="intake-hero-sub">
+              Поступление товара, печать этикеток на принтере и загрузка позиций на склад.
+            </p>
+          </div>
         </div>
         <Button icon={FiPlus} onClick={() => createMutation.mutate()} loading={createMutation.isPending}>
           Новая накладная
         </Button>
       </div>
 
-      <div style={{ marginBottom: 16, maxWidth: 420 }}>
-        <div style={{ position: 'relative' }}>
-          <FiSearch size={18} style={{ position: 'absolute', left: 12, top: 12, color: 'var(--text-muted)' }} />
+      {invoices.length > 0 && (
+        <div className="intake-stats">
+          <span className="intake-stat-pill">
+            <FiFileText size={14} />
+            <strong>{stats.total}</strong> всего
+          </span>
+          <span className="intake-stat-pill intake-stat-pill--draft">
+            <FiClock size={14} />
+            <strong>{stats.draft}</strong> в работе
+          </span>
+          <span className="intake-stat-pill intake-stat-pill--done">
+            <FiCheckCircle size={14} />
+            <strong>{stats.onWarehouse}</strong> на складе
+          </span>
+        </div>
+      )}
+
+      <div className="intake-toolbar">
+        <div className="intake-toolbar-grow">
+          <FiSearch size={18} className="intake-toolbar-icon" />
           <input
             className="ios-input"
-            style={{ paddingLeft: 40 }}
             placeholder="Поиск: №, дата, штрих-код, артикул, название"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
@@ -117,82 +397,32 @@ function IntakeList() {
       {isLoading ? (
         <LoadingSpinner />
       ) : filtered.length === 0 ? (
-        <div className="empty-grid-state">
-          {invoices.length === 0 ? 'Создайте первую накладную' : 'Ничего не найдено'}
-        </div>
+        <IntakeEmpty
+          icon={FiFileText}
+          title={invoices.length === 0 ? 'Пока нет накладных' : 'Ничего не найдено'}
+          hint={invoices.length === 0 ? 'Создайте накладную и добавьте товары для печати этикеток' : 'Попробуйте другой запрос'}
+        />
       ) : (
-        <div style={{ display: 'grid', gap: 10 }}>
+        <div className="intake-invoices-list">
           {filtered.map((inv) => {
             const lines = Array.isArray(inv.lines) ? inv.lines : [];
             const uploaded = inv.uploaded === true;
+            const summary = computeInvoiceSummary(lines);
             return (
-              <div
+              <IntakeInvoiceCard
                 key={inv.id}
-                role="button"
-                tabIndex={0}
-                onClick={() => navigate(`/intake/${inv.id}`)}
-                onKeyDown={(e) => e.key === 'Enter' && navigate(`/intake/${inv.id}`)}
-                style={{
-                  textAlign: 'left',
-                  padding: '16px 18px',
-                  borderRadius: 16,
-                  border: '1px solid var(--border)',
-                  background: 'var(--surface)',
-                  cursor: 'pointer',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 14,
+                inv={inv}
+                uploaded={uploaded}
+                lines={lines}
+                summary={summary}
+                onOpen={() => navigate(`/intake/${inv.id}`)}
+                onDelete={(e) => {
+                  e.stopPropagation();
+                  if (window.confirm(`Удалить накладную №${inv.number}?`)) {
+                    deleteMutation.mutate(inv.id);
+                  }
                 }}
-              >
-                <div
-                  style={{
-                    width: 48,
-                    height: 48,
-                    borderRadius: 12,
-                    background: 'var(--primary-light)',
-                    color: 'var(--primary)',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    fontWeight: 800,
-                    fontSize: 14,
-                    flexShrink: 0,
-                  }}
-                >
-                  #{inv.number}
-                </div>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontWeight: 800, fontSize: 15 }}>Накладная №{inv.number}</div>
-                  <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>
-                    {inv.date} · {lines.length} поз.
-                    {uploaded ? ' · на складе' : ''}
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    if (window.confirm(`Удалить накладную №${inv.number}?`)) {
-                      deleteMutation.mutate(inv.id);
-                    }
-                  }}
-                  style={{
-                    width: 36,
-                    height: 36,
-                    borderRadius: 10,
-                    border: '1px solid var(--border)',
-                    background: 'var(--surface)',
-                    color: 'var(--danger)',
-                    cursor: 'pointer',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                  }}
-                  title="Удалить"
-                >
-                  <FiTrash2 size={16} />
-                </button>
-              </div>
+              />
             );
           })}
         </div>
@@ -208,6 +438,15 @@ function IntakeDetail() {
   const [search, setSearch] = useState('');
   const [lineModal, setLineModal] = useState(null);
   const [lineReadonly, setLineReadonly] = useState(false);
+  const [viewMode, setViewMode] = useState(readViewMode);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(INTAKE_VIEW_KEY, viewMode);
+    } catch {
+      /* ignore */
+    }
+  }, [viewMode]);
 
   const { data: settingsRow } = useQuery({
     queryKey: ['settings'],
@@ -332,10 +571,45 @@ function IntakeDetail() {
     toast.success('Позиция удалена');
   };
 
+  const renderLine = ({ line: l, index }) => {
+    const showWarn = !isUploaded && !isLineWarehouseReady(l);
+    const handlers = {
+      onOpen: () => openLine(index, isUploaded),
+      onPrint: (e) => {
+        e?.stopPropagation?.();
+        setLineReadonly(isUploaded);
+        setLineModal(index);
+      },
+      onCopy: (e) => {
+        e?.stopPropagation?.();
+        handleCopyLine(index);
+      },
+      onDelete: (e) => {
+        e?.stopPropagation?.();
+        handleDeleteLine(index);
+      },
+    };
+
+    const props = {
+      line: l,
+      isUploaded,
+      showWarn,
+      onOpen: handlers.onOpen,
+      onPrint: () => handlers.onPrint(),
+      onCopy: () => handlers.onCopy(),
+      onDelete: () => handlers.onDelete(),
+    };
+
+    if (viewMode === 'grid') {
+      return <IntakeLineGridCard key={l.local_id || index} {...props} />;
+    }
+    return <IntakeLineRow key={l.local_id || index} {...props} />;
+  };
+
   if (isLoading) return <LoadingSpinner />;
   if (!invoice) {
     return (
-      <div className="page-stack">
+      <div className="page-stack intake-page">
         <Button variant="secondary" icon={FiChevronLeft} onClick={() => navigate('/intake')}>
           К списку
         </Button>
@@ -344,215 +618,139 @@ function IntakeDetail() {
     );
   }
 
+  const searchActive = search.trim().length > 0;
+
   return (
-    <div className="page-stack">
-      <div className="section-header">
-        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
-          <button
-            type="button"
-            onClick={() => navigate('/intake')}
-            style={{
-              width: 40,
-              height: 40,
-              borderRadius: 12,
-              border: '1px solid var(--border)',
-              background: 'var(--surface)',
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-            }}
-          >
+    <div className="page-stack intake-page">
+      <div className="intake-detail-hero">
+        <div className="intake-detail-hero-left">
+          <button type="button" className="intake-back-btn" onClick={() => navigate('/intake')} aria-label="Назад">
             <FiChevronLeft size={20} />
           </button>
           <div>
-            <h1 className="page-title">Накладная №{invoice.number}</h1>
-            <p className="page-subtitle">
+            <div className="intake-detail-hero-kicker">Накладная</div>
+            <h1 className="intake-detail-hero-title">№{invoice.number}</h1>
+            <p className="intake-detail-hero-sub">
               {invoice.date}
-              {isUploaded ? ' · на складе (только просмотр)' : ' · редактирование'}
+              {invoice.uploaded_at && isUploaded ? ` · загружена ${invoice.uploaded_at}` : ''}
             </p>
           </div>
         </div>
-        {!isUploaded && lines.length > 0 && (
-          <Button
-            icon={FiUpload}
-            onClick={() => uploadMutation.mutate()}
-            loading={uploadMutation.isPending}
-          >
-            В склад
-          </Button>
-        )}
+        <div className="intake-detail-hero-right">
+          <span className={`intake-status-pill intake-status-pill--lg${isUploaded ? ' intake-status-pill--done' : ''}`}>
+            {isUploaded ? (
+              <>
+                <FiCheckCircle size={14} />
+                На складе
+              </>
+            ) : (
+              <>
+                <FiClock size={14} />
+                В работе
+              </>
+            )}
+          </span>
+          {!isUploaded && lines.length > 0 && (
+            <Button
+              icon={FiUpload}
+              onClick={() => uploadMutation.mutate()}
+              loading={uploadMutation.isPending}
+            >
+              В склад
+            </Button>
+          )}
+        </div>
       </div>
 
       {isUploaded && (
-        <div
-          style={{
-            padding: '12px 16px',
-            borderRadius: 14,
-            background: 'rgba(16,185,129,0.1)',
-            border: '1px solid rgba(16,185,129,0.25)',
-            fontSize: 13,
-            fontWeight: 600,
-            color: 'var(--success)',
-          }}
-        >
-          Накладная загружена на склад. Изменения и добавление отключены. Позиции можно открыть для просмотра и печати этикеток.
+        <div className="intake-alert intake-alert-success">
+          <FiCheckCircle size={18} className="intake-alert-icon" />
+          <span>
+            Накладная на складе — только просмотр и печать этикеток. Редактирование и добавление
+            отключены.
+          </span>
         </div>
       )}
 
       {lines.length > 0 && (
-        <div
-          style={{
-            padding: '14px 16px',
-            borderRadius: 14,
-            border: '1px solid var(--border)',
-            background: 'var(--surface)',
-            display: 'flex',
-            flexWrap: 'wrap',
-            gap: 16,
-            fontSize: 13,
-            fontWeight: 600,
-          }}
-        >
-          <span>{summary.positions} поз.</span>
-          <span>Закуп: {summary.purchaseKzt.toLocaleString('ru-RU')} ₸</span>
-          <span style={{ color: 'var(--primary)' }}>
-            Продажа: {summary.saleKzt.toLocaleString('ru-RU')} ₸
-          </span>
+        <div className="intake-summary-bar">
+          <div className="intake-summary-item intake-summary-item--accent">
+            <div className="intake-summary-label">Позиций</div>
+            <div className="intake-summary-value">{summary.positions}</div>
+          </div>
+          <div className="intake-summary-item">
+            <div className="intake-summary-label">Сумма закупа</div>
+            <div className="intake-summary-value">{formatKzt(summary.purchaseKzt)}</div>
+          </div>
+          <div className="intake-summary-item intake-summary-item--primary">
+            <div className="intake-summary-label">Сумма продажи</div>
+            <div className="intake-summary-value intake-summary-value-primary">
+              {formatKzt(summary.saleKzt)}
+            </div>
+          </div>
           {summary.notReadyCount > 0 && !isUploaded && (
-            <span style={{ color: 'var(--warning)' }}>
-              Не готово к складу: {summary.notReadyCount}
-            </span>
+            <div className="intake-summary-item intake-summary-item--warn">
+              <div className="intake-summary-label">Не готово к складу</div>
+              <div className="intake-summary-value intake-summary-value-warn">{summary.notReadyCount}</div>
+            </div>
           )}
         </div>
       )}
 
-      {!isUploaded && (
-        <div style={{ display: 'flex', gap: 10 }}>
-          <Button icon={FiPlus} onClick={() => { setLineReadonly(false); setLineModal(-1); }}>
-            Добавить товар
-          </Button>
+      <div className="intake-toolbar-panel">
+        <div className="intake-toolbar">
+          {!isUploaded && (
+            <Button icon={FiPlus} onClick={() => { setLineReadonly(false); setLineModal(-1); }}>
+              Добавить товар
+            </Button>
+          )}
+          {lines.length > 0 && (
+            <>
+              <div className="intake-toolbar-grow">
+                <FiSearch size={18} className="intake-toolbar-icon" />
+                <input
+                  className="ios-input"
+                  placeholder="Поиск по названию, штрих-коду, артикулу"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                />
+              </div>
+              <IntakeViewToggle viewMode={viewMode} onChange={setViewMode} />
+            </>
+          )}
         </div>
-      )}
+        {lines.length > 0 && (
+          <div className="intake-results-meta">
+            {searchActive
+              ? `Найдено ${visibleLines.length} из ${lines.length}`
+              : `${lines.length} позиций`}
+          </div>
+        )}
+      </div>
 
-      {lines.length > 0 && (
-        <div style={{ maxWidth: 480, marginBottom: 8 }}>
-          <input
-            className="ios-input"
-            placeholder="Поиск по названию, штрих-коду, артикулу"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-          />
+      {lines.length > 0 && viewMode === 'list' && (
+        <div className="intake-lines-list-head" aria-hidden="true">
+          <span />
+          <span>Товар</span>
+          <span>Кол-во</span>
+          <span>Закуп</span>
+          <span>Продажа</span>
+          <span />
         </div>
       )}
 
       {lines.length === 0 ? (
-        <div className="empty-grid-state">
-          <FiFileText size={32} style={{ marginBottom: 8, opacity: 0.4 }} />
-          <div>Добавьте первую позицию</div>
-        </div>
+        <IntakeEmpty
+          icon={FiPackage}
+          title="Позиций пока нет"
+          hint="Добавьте товар, заполните цены и количество — затем загрузите на склад"
+        />
+      ) : visibleLines.length === 0 ? (
+        <IntakeEmpty icon={FiSearch} title="Ничего не найдено" hint="Измените запрос в поиске" />
+      ) : viewMode === 'grid' ? (
+        <div className="intake-lines-grid">{visibleLines.map(renderLine)}</div>
       ) : (
-        <div style={{ display: 'grid', gap: 8 }}>
-          {visibleLines.map(({ line: l, index }) => (
-            <div
-              key={l.local_id || index}
-              role="button"
-              tabIndex={0}
-              onClick={() => openLine(index, isUploaded)}
-              onKeyDown={(e) => e.key === 'Enter' && openLine(index, isUploaded)}
-              style={{
-                padding: '14px 16px',
-                borderRadius: 16,
-                border: '1px solid var(--border)',
-                background: 'var(--surface)',
-                cursor: 'pointer',
-              }}
-            >
-              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
-                <div style={{ fontWeight: 800, fontSize: 15 }}>{l.name}</div>
-                <div style={{ display: 'flex', gap: 6 }}>
-                  <button
-                    type="button"
-                    title="Печать этикетки"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setLineReadonly(isUploaded);
-                      setLineModal(index);
-                    }}
-                    style={{
-                      width: 32,
-                      height: 32,
-                      borderRadius: 10,
-                      border: '1px solid var(--border)',
-                      background: 'var(--surface)',
-                      cursor: 'pointer',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                    }}
-                  >
-                    <FiTag size={14} />
-                  </button>
-                  {!isUploaded && (
-                    <>
-                      <button
-                        type="button"
-                        title="Копия"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleCopyLine(index);
-                        }}
-                        style={{
-                          width: 32,
-                          height: 32,
-                          borderRadius: 10,
-                          border: '1px solid var(--border)',
-                          background: 'var(--surface)',
-                          cursor: 'pointer',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                        }}
-                      >
-                        <FiCopy size={14} />
-                      </button>
-                      <button
-                        type="button"
-                        title="Удалить"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleDeleteLine(index);
-                        }}
-                        style={{
-                          width: 32,
-                          height: 32,
-                          borderRadius: 10,
-                          border: '1px solid var(--border)',
-                          background: 'var(--surface)',
-                          color: 'var(--danger)',
-                          cursor: 'pointer',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                        }}
-                      >
-                        <FiTrash2 size={14} />
-                      </button>
-                    </>
-                  )}
-                </div>
-              </div>
-              <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>
-                {l.barcode || '—'} · {l.brand || ''} {l.model || ''}
-              </div>
-              <div style={{ fontSize: 12, marginTop: 4 }}>
-                Закуп: {num(l.purchase_kzt).toLocaleString('ru-RU')} ₸ · Прод:{' '}
-                {num(l.sale_price).toLocaleString('ru-RU')} ₸
-                {l.quantity ? ` · ${l.quantity} шт` : ''}
-              </div>
-            </div>
-          ))}
-        </div>
+        <div className="intake-lines-list">{visibleLines.map(renderLine)}</div>
       )}
 
       <IntakeLineModal

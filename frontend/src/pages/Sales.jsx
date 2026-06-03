@@ -4,13 +4,14 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 import {
   FiSearch, FiGrid, FiShoppingCart, FiX, FiPlus, FiMinus,
-  FiZap, FiCamera,
+  FiZap, FiCamera, FiCreditCard, FiClock, FiArrowRight,
 } from 'react-icons/fi';
 import { saleApi, debtApi, fetchAllProducts, productApi, getApiErrorMessage } from '../api/client';
 import CameraBarcodeScanner from '../components/CameraBarcodeScanner';
 import DebtCustomerPickModal from '../components/DebtCustomerPickModal';
 import DebtReceiptModal from '../components/DebtReceiptModal';
 import SaleDiscountBar from '../components/SaleDiscountBar';
+import HiddenDiscountReveal from '../components/HiddenDiscountReveal';
 
 /* ── helpers ── */
 const num = (v) => { const n = parseFloat(String(v || 0).replace(',', '.')); return Number.isFinite(n) ? n : 0; };
@@ -21,7 +22,7 @@ const formatMoney = (v) => Number(v || 0).toLocaleString('ru-RU');
 const normalizeScanCode = (s) => String(s ?? '').replaceAll('\u0000', '').replace(/[\s\r\n\t]+/g, '').trim();
 
 /* ── POS component ── */
-const Sales = ({ mode = 'cash', onOpenClients }) => {
+const Sales = ({ mode = 'cash', onOpenClients, onSwitchToDebtTab }) => {
   const isDebt = mode === 'debt';
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -607,25 +608,14 @@ const Sales = ({ mode = 'cash', onOpenClients }) => {
           </div>
 
           {/* Cart footer */}
-          <div style={{ borderTop: '2px solid var(--border)', padding: '14px 16px', background: 'var(--surface)' }}>
+          <div className="pos-cart-footer">
             {isDebt && (
               <button
                 type="button"
+                className={`pos-debt-customer-btn${debtCustomer ? ' pos-debt-customer-btn--selected' : ''}`}
                 onClick={() => setShowDebtPick(true)}
-                style={{
-                  width: '100%',
-                  marginBottom: 12,
-                  padding: '12px 14px',
-                  borderRadius: 14,
-                  border: debtCustomer ? '2px solid #d97706' : '1px dashed var(--border)',
-                  background: debtCustomer ? '#fff7ed' : 'var(--ios-grouped-bg)',
-                  cursor: 'pointer',
-                  textAlign: 'left',
-                }}
               >
-                <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4 }}>
-                  Клиент
-                </div>
+                <div className="pos-debt-customer-label">Клиент</div>
                 {debtCustomer ? (
                   <>
                     <div style={{ fontWeight: 800, fontSize: 15 }}>{debtCustomer.name}</div>
@@ -636,31 +626,48 @@ const Sales = ({ mode = 'cash', onOpenClients }) => {
                 )}
               </button>
             )}
-            {cart.length > 0 && (
-              <SaleDiscountBar
-                subtotal={subtotal}
-                discountPercent={discountPercent}
-                onChange={setDiscountPercent}
-                accentDebt={isDebt}
-              />
-            )}
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
-              <span style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-                {discountPercent > 0 ? 'К ОПЛАТЕ' : 'ИТОГО'}
-              </span>
-              <div style={{ textAlign: 'right' }}>
-                {discountPercent > 0 && (
-                  <div style={{ fontSize: 12, color: 'var(--text-muted)', textDecoration: 'line-through' }}>
-                    {formatMoney(subtotal)} ₸
-                  </div>
-                )}
-                <span style={{ fontSize: 22, fontWeight: 800, color: 'var(--text)', letterSpacing: '-0.04em' }}>{formatMoney(total)} ₸</span>
-              </div>
-            </div>
 
-            {/* Sell button */}
+            <HiddenDiscountReveal
+              enabled={cart.length > 0}
+              discountPanel={(
+                <SaleDiscountBar
+                  subtotal={subtotal}
+                  discountPercent={discountPercent}
+                  onChange={setDiscountPercent}
+                  accentDebt={isDebt}
+                />
+              )}
+            >
+              {({ discountVisible, onTotalPointerDown, onTotalPointerUp }) => (
+                <>
+                  <div
+                    className="pos-total-row"
+                    onPointerDown={onTotalPointerDown}
+                    onPointerUp={onTotalPointerUp}
+                    onPointerLeave={onTotalPointerUp}
+                    onContextMenu={(e) => e.preventDefault()}
+                    title={cart.length > 0 ? 'Долгое нажатие — показать скидку' : undefined}
+                  >
+                    <span className="pos-total-label">
+                      {discountPercent > 0 || discountVisible ? 'К оплате' : 'Итого'}
+                    </span>
+                    <div className="pos-total-values">
+                      {(discountPercent > 0 || (discountVisible && discountAmount > 0)) && (
+                        <div className="pos-total-strike">{formatMoney(subtotal)} ₸</div>
+                      )}
+                      <span className="pos-total-amount">{formatMoney(total)} ₸</span>
+                    </div>
+                  </div>
+                  {cart.length > 0 && !discountVisible && discountPercent === 0 && (
+                    <div className="pos-discount-hint">Наведите курсор или удерживайте сумму — скидка</div>
+                  )}
+                </>
+              )}
+            </HiddenDiscountReveal>
+
             <button
               type="button"
+              className={`pos-checkout-btn${isDebt ? ' pos-checkout-btn--debt' : ''}`}
               disabled={cart.length === 0 || saleMutation.isPending || debtSaleMutation.isPending}
               onClick={() => {
                 if (isDebt) {
@@ -670,30 +677,24 @@ const Sales = ({ mode = 'cash', onOpenClients }) => {
                   setShowPayModal(true);
                 }
               }}
-              style={{
-                width: '100%',
-                height: 56,
-                borderRadius: 18,
-                border: cart.length === 0 ? '1px solid var(--border)' : isDebt ? '1px solid #d97706' : '1px solid #4f46e5',
-                background: cart.length === 0 ? 'var(--bg-secondary)' : isDebt ? 'linear-gradient(135deg, #f59e0b, #d97706)' : 'linear-gradient(135deg, #6366f1, #7c3aed)',
-                color: cart.length === 0 ? 'var(--text-muted)' : '#fff',
-                fontWeight: 800,
-                fontSize: 17,
-                letterSpacing: '-0.02em',
-                cursor: cart.length === 0 ? 'not-allowed' : 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: 10,
-                marginBottom: 10,
-              }}
             >
               <FiZap size={20} strokeWidth={2.5} />
-              {saleMutation.isPending || debtSaleMutation.isPending ? 'Оформляем…' : isDebt ? 'В ДОЛГ' : 'ПРОДАТЬ'}
+              {saleMutation.isPending || debtSaleMutation.isPending ? 'Оформляем…' : isDebt ? 'В долг' : 'Продать'}
             </button>
 
             {cart.length > 0 && (
-              <button type="button" onClick={() => { if (window.confirm('Очистить чек?')) { setCart([]); setDiscountPercent(0); localStorage.removeItem(CART_STORAGE_KEY); } }} style={{ width: '100%', background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, color: 'var(--text-muted)', fontWeight: 600, padding: '6px', textAlign: 'center' }}>
+              <button
+                type="button"
+                className="pos-clear-cart-btn"
+                onClick={() => {
+                  if (window.confirm('Очистить чек?')) {
+                    setCart([]);
+                    setDiscountPercent(0);
+                    setDebtCustomer(null);
+                    localStorage.removeItem(CART_STORAGE_KEY);
+                  }
+                }}
+              >
                 Очистить чек
               </button>
             )}
@@ -720,30 +721,62 @@ const Sales = ({ mode = 'cash', onOpenClients }) => {
 
       {showPayModal && (
         <div
-          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 600, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}
+          className="sales-pay-overlay"
           onClick={() => setShowPayModal(false)}
           role="presentation"
         >
-          <div
-            style={{ width: '100%', maxWidth: 360, background: 'var(--surface)', borderRadius: 24, padding: '22px 20px' }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div style={{ fontSize: 20, fontWeight: 800, marginBottom: 6, textAlign: 'center' }}>Способ оплаты</div>
-            <div style={{ fontSize: 24, fontWeight: 800, color: 'var(--primary)', textAlign: 'center', marginBottom: 16 }}>{formatMoney(total)} ₸</div>
+          <div className="sales-pay-modal" onClick={(e) => e.stopPropagation()}>
+            <h3 className="sales-pay-title">Способ оплаты</h3>
+            {discountPercent > 0 && subtotal > total && (
+              <div className="sales-pay-strike">{formatMoney(subtotal)} ₸</div>
+            )}
+            <div className="sales-pay-total">{formatMoney(total)} ₸</div>
+
             <button
               type="button"
+              className="sales-pay-option"
               onClick={() => { setShowPayModal(false); saleMutation.mutate(); }}
-              style={{ width: '100%', padding: 14, borderRadius: 14, border: '1px solid var(--border)', background: 'var(--ios-grouped-bg)', fontWeight: 700, marginBottom: 8, cursor: 'pointer' }}
             >
-              Наличные / сразу
+              <span className="sales-pay-option-icon sales-pay-option-icon--cash">💵</span>
+              <span className="sales-pay-option-text">
+                <strong>Наличные</strong>
+                <small>Оплата сразу</small>
+              </span>
+              <FiArrowRight />
             </button>
-            {!isDebt && (
+
+            <button
+              type="button"
+              className="sales-pay-option"
+              onClick={() => {
+                setShowPayModal(false);
+                setShowDebtPick(true);
+              }}
+            >
+              <span className="sales-pay-option-icon sales-pay-option-icon--debt"><FiClock size={20} /></span>
+              <span className="sales-pay-option-text">
+                <strong>В долг сейчас</strong>
+                <small>Выбрать клиента и оформить</small>
+              </span>
+              <FiArrowRight />
+            </button>
+
+            {onSwitchToDebtTab && (
               <button
                 type="button"
-                onClick={() => { setShowPayModal(false); setShowDebtPick(true); }}
-                style={{ width: '100%', padding: 14, borderRadius: 14, border: 'none', background: 'linear-gradient(135deg, #f59e0b, #d97706)', color: '#fff', fontWeight: 700, cursor: 'pointer' }}
+                className="sales-pay-option"
+                onClick={() => {
+                  setShowPayModal(false);
+                  onSwitchToDebtTab();
+                  toast.success('Чек сохранён — выберите клиента и нажмите «В долг»');
+                }}
               >
-                В долг
+                <span className="sales-pay-option-icon sales-pay-option-icon--switch"><FiCreditCard size={20} /></span>
+                <span className="sales-pay-option-text">
+                  <strong>Вкладка «В долг»</strong>
+                  <small>Оформить с этим чеком на отдельной вкладке</small>
+                </span>
+                <FiArrowRight />
               </button>
             )}
           </div>
@@ -754,9 +787,9 @@ const Sales = ({ mode = 'cash', onOpenClients }) => {
         isOpen={showDebtPick}
         onClose={() => setShowDebtPick(false)}
         onSelect={(c) => {
+          setShowDebtPick(false);
           if (isDebt) {
             setDebtCustomer(c);
-            setShowDebtPick(false);
           } else {
             debtSaleMutation.mutate(c);
           }

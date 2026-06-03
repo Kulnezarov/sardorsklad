@@ -1,67 +1,57 @@
 import React, { useState } from 'react';
+import { FiUsers } from 'react-icons/fi';
 import Sales from './Sales';
 import Debt from './Debt';
 
 /**
- * Продажа: касса, касса «В долг» (со сканером) и управление клиентами.
+ * Продажа: одна касса на обе вкладки (чек не сбрасывается), «В долг» и клиенты.
  */
 export default function SalesHub() {
   const [tab, setTab] = useState('pos');
 
+  if (tab === 'clients') {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100%' }}>
+        <Debt onBack={() => setTab('debt')} />
+      </div>
+    );
+  }
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100%' }}>
-      <div
-        style={{
-          display: 'flex',
-          gap: 8,
-          padding: '12px 16px 0',
-          maxWidth: 1200,
-          margin: '0 auto',
-          width: '100%',
-        }}
-      >
+      <div className="sales-hub-tabs">
         <button
           type="button"
+          className={`sales-hub-tab${tab === 'pos' ? ' sales-hub-tab-active' : ''}`}
           onClick={() => setTab('pos')}
-          style={{
-            flex: 1,
-            padding: '10px 16px',
-            borderRadius: 12,
-            border: tab === 'pos' ? '2px solid var(--primary)' : '1px solid var(--border)',
-            background: tab === 'pos' ? 'var(--primary-light)' : 'var(--surface)',
-            fontWeight: 700,
-            cursor: 'pointer',
-          }}
         >
           Продажа
         </button>
         <button
           type="button"
+          className={`sales-hub-tab sales-hub-tab-debt${tab === 'debt' ? ' sales-hub-tab-active' : ''}`}
           onClick={() => setTab('debt')}
-          style={{
-            flex: 1,
-            padding: '10px 16px',
-            borderRadius: 12,
-            border: tab === 'debt' ? '2px solid #d97706' : '1px solid var(--border)',
-            background: tab === 'debt' ? '#fff7ed' : 'var(--surface)',
-            fontWeight: 700,
-            cursor: 'pointer',
-            color: tab === 'debt' ? '#b45309' : 'inherit',
-          }}
         >
           В долг
         </button>
+        {tab === 'debt' && (
+          <button
+            type="button"
+            className="sales-hub-tab-clients"
+            onClick={() => setTab('clients')}
+            title="Клиенты и история"
+          >
+            <FiUsers size={16} />
+            <span>Клиенты</span>
+          </button>
+        )}
       </div>
       <div style={{ flex: 1 }}>
-        {tab === 'pos' && <Sales />}
-        {tab === 'debt' && (
-          <Sales mode="debt" onOpenClients={() => setTab('clients')} />
-        )}
-        {tab === 'clients' && (
-          <Debt
-            onBack={() => setTab('debt')}
-          />
-        )}
+        <Sales
+          mode={tab === 'debt' ? 'debt' : 'cash'}
+          onOpenClients={() => setTab('clients')}
+          onSwitchToDebtTab={() => setTab('debt')}
+        />
       </div>
     </div>
   );

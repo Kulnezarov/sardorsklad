@@ -36,6 +36,13 @@ export function computeLinePurchase(cny, deliveryKzt, cnyRate) {
   return roundMoney2(c * num(cnyRate) + d);
 }
 
+export function isLineWarehouseReady(line) {
+  const name = (line.name || '').trim();
+  const qty = parseInt(line.quantity, 10) || 0;
+  const sale = num(line.sale_price);
+  return Boolean(name && qty > 0 && sale > 0);
+}
+
 export function computeInvoiceSummary(lines) {
   let purchaseKzt = 0;
   let saleKzt = 0;
