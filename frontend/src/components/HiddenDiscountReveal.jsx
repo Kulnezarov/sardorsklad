@@ -1,9 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 
-/**
- * Скидка скрыта от покупателя: показ при наведении на панель или долгом нажатии на «К оплате» (~0,8 с).
- * Как в мобильном приложении.
- */
+/** Скрытая панель скидки для кассира (не показывать покупателю). */
 export default function HiddenDiscountReveal({
   discountPanel,
   children,

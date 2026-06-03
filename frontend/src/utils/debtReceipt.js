@@ -40,9 +40,6 @@ export function buildDebtReceiptText(sale) {
   const receipt = debtReceiptLabel(sale);
   const name = capitalizeWords(sale.customer_name || '');
   const phone = formatPhoneDisplay(sale.customer_phone || '');
-  const subtotal = num(sale.subtotal_amount ?? sale.total_amount);
-  const discPct = num(sale.discount_percent);
-  const discAmt = discPct > 0 ? subtotal - num(sale.total_amount) : 0;
   const total = num(sale.total_amount);
   const paid = num(sale.paid_amount);
   const balance = num(sale.balance);
@@ -60,9 +57,6 @@ export function buildDebtReceiptText(sale) {
     `Клиент: ${name}`,
     `Телефон: ${phone}`,
     lines.length ? `\nТовары:\n${lines.join('\n')}` : '',
-    discPct > 0 && discAmt > 0
-      ? `\nСумма: ${formatMoney(subtotal)} ₸\nСкидка ${discPct}%: −${formatMoney(discAmt)} ₸`
-      : '',
     `\nИтого: ${formatMoney(total)} ₸`,
     `Оплачено: ${formatMoney(paid)} ₸`,
     `Остаток: ${formatMoney(balance)} ₸`,

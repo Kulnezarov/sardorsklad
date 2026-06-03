@@ -646,7 +646,6 @@ const Sales = ({ mode = 'cash', onOpenClients, onSwitchToDebtTab }) => {
                     onPointerUp={onTotalPointerUp}
                     onPointerLeave={onTotalPointerUp}
                     onContextMenu={(e) => e.preventDefault()}
-                    title={cart.length > 0 ? 'Долгое нажатие — показать скидку' : undefined}
                   >
                     <span className="pos-total-label">
                       {discountPercent > 0 || discountVisible ? 'К оплате' : 'Итого'}
@@ -658,9 +657,6 @@ const Sales = ({ mode = 'cash', onOpenClients, onSwitchToDebtTab }) => {
                       <span className="pos-total-amount">{formatMoney(total)} ₸</span>
                     </div>
                   </div>
-                  {cart.length > 0 && !discountVisible && discountPercent === 0 && (
-                    <div className="pos-discount-hint">Наведите курсор или удерживайте сумму — скидка</div>
-                  )}
                 </>
               )}
             </HiddenDiscountReveal>

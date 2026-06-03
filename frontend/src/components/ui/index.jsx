@@ -483,7 +483,15 @@ export const Modal = ({
 }) => {
   if (!isOpen) return null;
   const width =
-    size === 'xl' ? 'min(540px, 100vw - 32px)' : size === 'lg' ? '900px' : size === 'sm' ? '480px' : '640px';
+    size === 'intake'
+      ? 'min(720px, 100vw - 32px)'
+      : size === 'xl'
+        ? 'min(540px, 100vw - 32px)'
+        : size === 'lg'
+          ? '900px'
+          : size === 'sm'
+            ? '480px'
+            : '640px';
 
   return createPortal(
     <div

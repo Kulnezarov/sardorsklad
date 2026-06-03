@@ -38,9 +38,6 @@ export default function SaleDiscountBar({ subtotal, discountPercent, onChange, a
 
   return (
     <div style={{ marginBottom: 12 }}>
-      <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', marginBottom: 6, textTransform: 'uppercase' }}>
-        Скидка от суммы
-      </div>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
         {chip('Нет', !discountPercent, () => onChange(0))}
         {PRESETS.map((p) => chip(`${p}%`, discountPercent === p, () => onChange(p)))}
@@ -76,7 +73,7 @@ export default function SaleDiscountBar({ subtotal, discountPercent, onChange, a
       )}
       {discAmt > 0 && (
         <div style={{ marginTop: 8, fontSize: 13, display: 'flex', justifyContent: 'space-between' }}>
-          <span style={{ color: 'var(--text-muted)' }}>Скидка {discountPercent}%</span>
+          <span style={{ color: 'var(--text-muted)' }}>{discountPercent}%</span>
           <span style={{ fontWeight: 700, color: accent }}>−{formatMoney(discAmt)} ₸</span>
         </div>
       )}

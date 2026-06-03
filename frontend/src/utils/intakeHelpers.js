@@ -1,5 +1,8 @@
-import apiClient, { productApi, getApiErrorMessage } from '../api/client';
+import apiClient, { productApi, getApiErrorMessage, resolveUploadedAssetUrl } from '../api/client';
 import { generateEAN13 } from './barcodeGen';
+import { productGalleryFromApi, uploadPendingPhotosForLine, MAX_INTAKE_PHOTOS } from './intakePhotoUtils';
+
+export { MAX_INTAKE_PHOTOS, productGalleryFromApi };
 
 export const num = (v) => {
   const n = parseFloat(String(v ?? '').replace(',', '.'));
@@ -72,6 +75,56 @@ export function lineToProductForPrint(line) {
   };
 }
 
+/** Источники превью: сохранённые URL, data URL с сайта, подгрузка со склада. */
+export function getLineImageSources(line, productUrls) {
+  if (productUrls?.length) return productUrls;
+  const wh = Array.isArray(line?.warehouse_image_urls)
+    ? line.warehouse_image_urls.map((u) => String(u || '').trim()).filter(Boolean)
+    : [];
+  if (wh.length) return wh;
+  const pending = Array.isArray(line?.intake_photo_data)
+    ? line.intake_photo_data.filter((u) => String(u || '').startsWith('data:'))
+    : [];
+  if (pending.length) return pending;
+  return [];
+}
+
+export function getLineThumbSrc(line, productUrls) {
+  const first = getLineImageSources(line, productUrls)[0];
+  if (!first) return '';
+  if (String(first).startsWith('data:')) return first;
+  return resolveUploadedAssetUrl(first);
+}
+
+/** Подтянуть фото со склада для строк без превью (накладная с телефона). */
+export async function fetchLinePhotoUrlsByBarcode(lines) {
+  const map = {};
+  const cache = {};
+  for (const line of lines) {
+    if (getLineImageSources(line).length) continue;
+    const bc = String(line.barcode || '').trim();
+    if (bc.length < 4) continue;
+    const key = line.local_id || bc;
+    if (cache[bc]) {
+      map[key] = cache[bc];
+      continue;
+    }
+    try {
+      const res = await productApi.getByBarcode(bc, { allow404: true });
+      if (res.status === 200 && res.data) {
+        const urls = productGalleryFromApi(res.data);
+        if (urls.length) {
+          cache[bc] = urls;
+          map[key] = urls;
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+  return map;
+}
+
 export async function fetchCnyHistory(barcode) {
   const code = String(barcode || '').trim();
   if (code.length < 4) return [];
@@ -96,12 +149,14 @@ export async function addCnyHistory({ barcode, cny, deliveryKzt, productId }) {
 
 /** Загрузка позиций накладной на склад (как в мобильном приложении). */
 export async function uploadInvoiceLinesToWarehouse(lines, cnyRate) {
-  const report = { created: 0, updated: 0, errors: [] };
+  const report = { created: 0, updated: 0, photosUploaded: 0, errors: [] };
+  const updatedLines = [];
   for (const raw of lines) {
     const l = raw;
     const name = (l.name || '').trim();
     if (!name) {
       report.errors.push('Пустое название позиции');
+      updatedLines.push(l);
       continue;
     }
     try {
@@ -155,11 +210,35 @@ export async function uploadInvoiceLinesToWarehouse(lines, cnyRate) {
           productId: product?.id,
         });
       }
+
+      let nextLine = { ...l };
+      const productId = product?.id;
+      if (productId) {
+        try {
+          const photoResult = await uploadPendingPhotosForLine(l, productId);
+          if (photoResult.error) {
+            report.errors.push(`${name}: ${photoResult.error}`);
+          } else if (photoResult.uploaded > 0) {
+            report.photosUploaded += photoResult.uploaded;
+            nextLine = {
+              ...nextLine,
+              warehouse_image_urls: photoResult.urls,
+            };
+            delete nextLine.intake_photo_data;
+          } else if (photoResult.urls?.length && !nextLine.warehouse_image_urls?.length) {
+            nextLine = { ...nextLine, warehouse_image_urls: photoResult.urls };
+          }
+        } catch (e) {
+          report.errors.push(`${name} (фото): ${getApiErrorMessage(e)}`);
+        }
+      }
+      updatedLines.push(nextLine);
     } catch (e) {
       report.errors.push(`${name}: ${getApiErrorMessage(e)}`);
+      updatedLines.push(l);
     }
   }
-  return report;
+  return { ...report, lines: updatedLines };
 }
 
 export function copyIntakeLine(src) {
@@ -169,5 +248,6 @@ export function copyIntakeLine(src) {
   copy.sku = null;
   delete copy.local_photo_paths;
   delete copy.warehouse_image_urls;
+  delete copy.intake_photo_data;
   return copy;
 }

@@ -23,10 +23,12 @@ import { Button, LoadingSpinner } from '../components/ui';
 import IntakeLineModal from '../components/IntakeLineModal';
 import { intakeApi } from '../api/intake';
 import { settingsApi } from '../api/settings';
-import { getApiErrorMessage, resolveUploadedAssetUrl } from '../api/client';
+import { getApiErrorMessage } from '../api/client';
 import {
   computeInvoiceSummary,
   copyIntakeLine,
+  fetchLinePhotoUrlsByBarcode,
+  getLineThumbSrc,
   invoiceDateLabel,
   isLineWarehouseReady,
   newClientId,
@@ -49,10 +51,8 @@ function formatKzt(value) {
   return `${num(value).toLocaleString('ru-RU')} ₸`;
 }
 
-function getLineThumbUrl(line) {
-  const urls = Array.isArray(line?.warehouse_image_urls) ? line.warehouse_image_urls : [];
-  const first = urls.map((u) => String(u || '').trim()).find(Boolean);
-  return first ? resolveUploadedAssetUrl(first) : '';
+function linePhotoKey(line) {
+  return line?.local_id || line?.barcode || '';
 }
 
 function IntakeEmpty({ icon: Icon, title, hint }) {
@@ -67,8 +67,8 @@ function IntakeEmpty({ icon: Icon, title, hint }) {
   );
 }
 
-function IntakeLineThumb({ line }) {
-  const src = getLineThumbUrl(line);
+function IntakeLineThumb({ line, photoUrls }) {
+  const src = getLineThumbSrc(line, photoUrls);
   return (
     <div className="intake-line-thumb">
       {src ? (
@@ -123,7 +123,7 @@ function IntakeLineActions({ isUploaded, onPrint, onCopy, onDelete }) {
   );
 }
 
-function IntakeLineRow({ line, isUploaded, showWarn, onOpen, onPrint, onCopy, onDelete }) {
+function IntakeLineRow({ line, photoUrls, isUploaded, showWarn, onOpen, onPrint, onCopy, onDelete }) {
   const qty = parseInt(line.quantity, 10) || 0;
   return (
     <div
@@ -133,7 +133,7 @@ function IntakeLineRow({ line, isUploaded, showWarn, onOpen, onPrint, onCopy, on
       onClick={onOpen}
       onKeyDown={(e) => e.key === 'Enter' && onOpen()}
     >
-      <IntakeLineThumb line={line} />
+      <IntakeLineThumb line={line} photoUrls={photoUrls} />
       <div className="intake-line-row-main">
         <div className="intake-line-title-row">
           <div className="intake-line-title">{line.name || 'Без названия'}</div>
@@ -167,9 +167,9 @@ function IntakeLineRow({ line, isUploaded, showWarn, onOpen, onPrint, onCopy, on
   );
 }
 
-function IntakeLineGridCard({ line, isUploaded, showWarn, onOpen, onPrint, onCopy, onDelete }) {
+function IntakeLineGridCard({ line, photoUrls, isUploaded, showWarn, onOpen, onPrint, onCopy, onDelete }) {
   const qty = parseInt(line.quantity, 10) || 0;
-  const thumb = getLineThumbUrl(line);
+  const thumb = getLineThumbSrc(line, photoUrls);
   return (
     <div
       role="button"
@@ -439,6 +439,7 @@ function IntakeDetail() {
   const [lineModal, setLineModal] = useState(null);
   const [lineReadonly, setLineReadonly] = useState(false);
   const [viewMode, setViewMode] = useState(readViewMode);
+  const [linePhotoUrls, setLinePhotoUrls] = useState({});
 
   useEffect(() => {
     try {
@@ -447,6 +448,16 @@ function IntakeDetail() {
       /* ignore */
     }
   }, [viewMode]);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchLinePhotoUrlsByBarcode(lines).then((map) => {
+      if (!cancelled) setLinePhotoUrls(map);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [lines]);
 
   const { data: settingsRow } = useQuery({
     queryKey: ['settings'],
@@ -498,7 +509,7 @@ function IntakeDetail() {
   const uploadMutation = useMutation({
     mutationFn: async () => {
       if (!invoice || lines.length === 0) throw new Error('Накладная пуста');
-      const report = await uploadInvoiceLinesToWarehouse(lines, cnyRate);
+      const { lines: nextLines, ...report } = await uploadInvoiceLinesToWarehouse(lines, cnyRate);
       if (report.errors.length && report.created === 0 && report.updated === 0) {
         throw new Error(report.errors[0]);
       }
@@ -508,7 +519,7 @@ function IntakeDetail() {
         id: invoice.id,
         number: invoice.number,
         date: invoice.date,
-        lines,
+        lines: nextLines,
         uploaded: true,
         pending_warehouse_upload: false,
         uploaded_at: uploadedAt,
@@ -517,7 +528,8 @@ function IntakeDetail() {
     },
     onSuccess: (report) => {
       queryClient.invalidateQueries({ queryKey: ['intake-invoices'] });
-      toast.success(`На склад: создано ${report.created}, обновлено ${report.updated}`);
+      const photoMsg = report.photosUploaded > 0 ? `, фото ${report.photosUploaded}` : '';
+      toast.success(`На склад: создано ${report.created}, обновлено ${report.updated}${photoMsg}`);
       if (report.errors.length) toast.error(report.errors.join('; '));
     },
     onError: (e) => toast.error(getApiErrorMessage(e, String(e.message || e))),
@@ -592,6 +604,7 @@ function IntakeDetail() {
 
     const props = {
       line: l,
+      photoUrls: linePhotoUrls[linePhotoKey(l)],
       isUploaded,
       showWarn,
       onOpen: handlers.onOpen,
