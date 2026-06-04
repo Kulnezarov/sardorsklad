@@ -112,6 +112,7 @@ class ProductCreate(ProductBase):
 
 class ProductUpdate(BaseModel):
     allow_duplicate_sku: bool = False
+    show_on_storefront: Optional[bool] = None
     name: Optional[str] = Field(None, min_length=1, max_length=255)
     sku: Optional[str] = Field(None, max_length=100)
     barcode: Optional[str] = Field(None, max_length=50)
@@ -328,6 +329,7 @@ class EngineCodeResponse(BaseModel):
 class ProductResponse(ProductBase):
     id: int
     is_active: bool
+    show_on_storefront: bool = True
     created_at: datetime
     updated_at: Optional[datetime]
     last_sale_date: Optional[datetime]
@@ -365,6 +367,15 @@ class ImportExcelSkipItem(BaseModel):
 class ImportExcelResponse(BaseModel):
     created: int
     skipped: List[ImportExcelSkipItem]
+
+
+class StorefrontBulkUpdate(BaseModel):
+    product_ids: List[int] = Field(default_factory=list)
+    show_on_storefront: bool = True
+
+
+class StorefrontBulkResponse(BaseModel):
+    updated: int
 
 
 class SaleItemCreate(BaseModel):

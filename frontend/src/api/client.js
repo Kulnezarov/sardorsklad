@@ -213,6 +213,12 @@ export const productApi = {
   },
   create: (data) => apiClient.post('/api/v1/products', data),
   update: (id, data) => apiClient.put(`/api/v1/products/${id}`, data),
+  setStorefrontBulk: (productIds, showOnStorefront) =>
+    apiClient.post('/api/v1/products/storefront/bulk', {
+      product_ids: productIds,
+      show_on_storefront: showOnStorefront,
+    }),
+  publishAllToStorefront: () => apiClient.post('/api/v1/products/storefront/publish-all'),
   delete: (id) => apiClient.delete(`/api/v1/products/${id}`),
   applyDiscount: (id, discountPercent) =>
     apiClient.post(`/api/v1/products/${id}/discount?discount_percent=${discountPercent}`),

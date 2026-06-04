@@ -27,6 +27,7 @@ from services.audit import write_audit_log
 from services.excel_products import export_products_xlsx, import_products_from_xlsx
 from services.cny_price_history import record_cny_price_history
 from services.product_compatibility import apply_product_compatibility, build_compatibility_out
+from services.product_search import search_products
 from services.product_sku import find_product_by_sku, normalize_sku, sku_conflict_detail
 
 router = APIRouter(
@@ -214,6 +215,7 @@ def list_products(
     search: Optional[str] = Query(None),
     category: Optional[str] = Query(None),
     is_active: Optional[bool] = Query(True),
+    show_on_storefront: Optional[bool] = Query(None, description="Фильтр витрины CHPARTS"),
     low_stock: bool = Query(False),
 ):
     query = db.query(models.Product)
@@ -221,30 +223,50 @@ def list_products(
     if is_active is not None:
         query = query.filter(models.Product.is_active == is_active)
 
+    if show_on_storefront is not None:
+        query = query.filter(models.Product.show_on_storefront == show_on_storefront)
+
     if category:
         query = query.filter(models.Product.category == category)
-
-    if search:
-        terms = [term.strip() for term in search.split() if term.strip()]
-        for term in terms:
-            query = query.filter(
-                or_(
-                    models.Product.name.ilike(f"%{term}%"),
-                    models.Product.sku.ilike(f"%{term}%"),
-                    models.Product.barcode.ilike(f"%{term}%"),
-                    models.Product.brand.ilike(f"%{term}%"),
-                    models.Product.model.ilike(f"%{term}%"),
-                    models.Product.category.ilike(f"%{term}%"),
-                )
-            )
 
     if low_stock:
         settings = db.query(models.Settings).first()
         threshold = settings.low_stock_threshold if settings else 5
         query = query.filter(models.Product.quantity <= threshold)
 
-    rows = query.order_by(models.Product.created_at.desc()).offset(skip).limit(limit).all()
+    if search and str(search).strip():
+        rows = search_products(query, str(search).strip(), limit=limit, skip=skip)
+    else:
+        rows = query.order_by(models.Product.created_at.desc()).offset(skip).limit(limit).all()
     return [_product_to_response_lite(p) for p in rows]
+
+
+@router.post("/storefront/bulk", response_model=schemas.StorefrontBulkResponse)
+def bulk_update_storefront(
+    body: schemas.StorefrontBulkUpdate,
+    db: Session = Depends(get_db),
+):
+    """Включить/скрыть выбранные товары на клиентской витрине."""
+    ids = [int(x) for x in (body.product_ids or []) if int(x) > 0]
+    if not ids:
+        return schemas.StorefrontBulkResponse(updated=0)
+    rows = db.query(models.Product).filter(models.Product.id.in_(ids)).all()
+    for p in rows:
+        p.show_on_storefront = bool(body.show_on_storefront)
+    db.commit()
+    return schemas.StorefrontBulkResponse(updated=len(rows))
+
+
+@router.post("/storefront/publish-all", response_model=schemas.StorefrontBulkResponse)
+def publish_all_products_to_storefront(db: Session = Depends(get_db)):
+    """Все активные товары снова видны на витрине (по умолчанию так и задумано)."""
+    n = (
+        db.query(models.Product)
+        .filter(models.Product.is_active.is_(True))
+        .update({models.Product.show_on_storefront: True}, synchronize_session=False)
+    )
+    db.commit()
+    return schemas.StorefrontBulkResponse(updated=int(n or 0))
 
 
 @router.get("/barcode/{barcode}", response_model=schemas.ProductResponse)

@@ -290,6 +290,8 @@ export function warehouseProductToIntakeLine(p) {
   };
 }
 
+export { intakeLineMatchesSearch, productMatchesSearch, matchesSmartSearch } from './smartSearch';
+
 export function copyIntakeLine(src) {
   const copy = { ...src };
   copy.local_id = `line_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;

@@ -66,6 +66,7 @@ class FakeDB:
                 image_url="https://img/1.jpg",
                 image_urls=None,
                 is_active=True,
+                show_on_storefront=True,
                 category_rel=None,
                 brand_rel=None,
             )

@@ -307,6 +307,22 @@ def ensure_schema_updates():
         "products.profit_percent",
     )
 
+    _exec_schema_sql(
+        """
+        DO $$
+        BEGIN
+          IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'public' AND table_name = 'products' AND column_name = 'show_on_storefront'
+          ) THEN
+            ALTER TABLE products ADD COLUMN show_on_storefront BOOLEAN NOT NULL DEFAULT TRUE;
+          END IF;
+        END $$;
+        UPDATE products SET show_on_storefront = TRUE WHERE show_on_storefront IS NULL;
+        """,
+        "products.show_on_storefront",
+    )
+
     # history — только если таблица есть (в старой схеме мог быть product_history вместо history)
     _exec_schema_sql(
         """

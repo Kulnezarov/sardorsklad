@@ -5,13 +5,14 @@ import toast from 'react-hot-toast';
 import {
   FiPlus, FiEdit2, FiTrash2, FiSearch, FiAlertTriangle,
   FiImage, FiGrid, FiShoppingCart, FiLock, FiUnlock, FiRefreshCw, FiMaximize2,
-  FiTag, FiUpload, FiDownload, FiX, FiLoader, FiClock, FiPackage,
+  FiTag, FiUpload, FiDownload, FiX, FiLoader, FiClock, FiPackage, FiGlobe,
 } from 'react-icons/fi';
 import { Button, Modal, Input, TextArea, LoadingSpinner, Alert } from '../components/ui';
 import { productApi, resolveUploadedAssetUrl, compatibilityApi, getApiErrorMessage } from '../api/client';
 import { importExcelStream } from '../api/importExcelStream';
 import { settingsApi } from '../api/settings';
 import { generateEAN13 } from '../utils/barcodeGen';
+import { productMatchesSearch } from '../utils/smartSearch';
 import LabelPrint from '../components/LabelPrint';
 import SkuConflictModal from '../components/SkuConflictModal';
 import { QRCodeSVG } from 'qrcode.react';
@@ -131,6 +132,7 @@ const emptyForm = () => ({
   purchase_price: 0, sale_price: 0, cny_price: '', delivery_cost_kzt: '', delivery_weight_kg: '',
   quantity: 0, min_quantity: 0, description: '', supplier: '', storage_location: '',
   image_url: '',
+  show_on_storefront: true,
   engine_code_id: null,
   compatibility_vehicle_model_ids: [],
   compatibility_engine_family_ids: [],
@@ -189,6 +191,7 @@ function buildPayload(formData, cnyRate = 65) {
     delivery_weight_kg: optionalNum(formData.delivery_weight_kg),
     quantity: parseInt(formData.quantity, 10) || 0,
     min_quantity: parseInt(formData.min_quantity, 10) || 0,
+    show_on_storefront: formData.show_on_storefront !== false,
     ...(formData.id
       ? { compatibility_engine_family_ids: efs, compatibility_vehicle_model_ids: vms }
       : {
@@ -229,6 +232,8 @@ const Products = () => {
   const [search, setSearch] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('');
   const [showStale, setShowStale] = useState(false);
+  /** '' = все, 'on' = на витрине, 'off' = скрыто с сайта */
+  const [storefrontFilter, setStorefrontFilter] = useState('');
 
   const [showForm, setShowForm] = useState(false);
   const [forceCreateMode, setForceCreateMode] = useState(false);
@@ -487,13 +492,15 @@ const Products = () => {
     isFetchingNextPage,
     isFetching,
   } = useInfiniteQuery({
-    queryKey: ['products', search, selectedCategory],
+    queryKey: ['products', search, selectedCategory, storefrontFilter],
     placeholderData: keepPreviousData,
     queryFn: async ({ pageParam = 0 }) => {
       try {
         const r = await productApi.getAll({
           search: search || undefined,
           category: selectedCategory || undefined,
+          show_on_storefront:
+            storefrontFilter === 'on' ? true : storefrontFilter === 'off' ? false : undefined,
           skip: pageParam,
           limit: PRODUCTS_PAGE_SIZE,
         });
@@ -521,27 +528,20 @@ const Products = () => {
 
   // Search autocomplete suggestions (max 6); must be after `products` is defined
   const searchSuggestions = useMemo(() => {
-    const q = searchInput.trim().toLowerCase();
+    const q = searchInput.trim();
     if (!q) return [];
     const seen = new Set();
     const results = [];
     const allProducts = productsRef.current.length ? productsRef.current : products;
     for (const p of allProducts) {
       if (results.length >= 6) break;
-      const entries = [
-        { val: p.name, type: 'Товар' },
-        { val: p.brand, type: 'Марка' },
-        { val: p.model, type: 'Модель' },
-        { val: p.category, type: 'Категория' },
-      ];
-      for (const { val, type } of entries) {
-        if (!val) continue;
-        const key = val.toLowerCase();
-        if (key.includes(q) && !seen.has(key)) {
-          seen.add(key);
-          results.push({ label: val, type });
-          if (results.length >= 6) break;
-        }
+      if (!productMatchesSearch(p, q)) continue;
+      const label = p.name || p.brand || p.model;
+      if (!label) continue;
+      const key = String(label).toLowerCase();
+      if (!seen.has(key)) {
+        seen.add(key);
+        results.push({ label, type: 'Товар' });
       }
     }
     return results;
@@ -597,6 +597,40 @@ const Products = () => {
     return products;
   }, [products, showStale]);
 
+  const storefrontOnCount = useMemo(
+    () => products.filter((p) => p.show_on_storefront !== false).length,
+    [products],
+  );
+
+  const toggleStorefrontMutation = useMutation({
+    mutationFn: ({ id, value }) => productApi.update(id, { show_on_storefront: value }),
+    onSuccess: (_res, vars) => {
+      queryClient.invalidateQueries({ queryKey: ['products'] });
+      toast.success(vars.value ? 'Товар на витрине' : 'Скрыто с сайта');
+    },
+    onError: (err) => toast.error(getApiErrorMessage(err, 'Не удалось обновить витрину')),
+  });
+
+  const bulkStorefrontMutation = useMutation({
+    mutationFn: ({ ids, value }) => productApi.setStorefrontBulk(ids, value),
+    onSuccess: (_res, vars) => {
+      queryClient.invalidateQueries({ queryKey: ['products'] });
+      setSelectedIds([]);
+      toast.success(vars.value ? 'Выбранные на витрине' : 'Выбранные скрыты с сайта');
+    },
+    onError: (err) => toast.error(getApiErrorMessage(err, 'Массовое обновление не удалось')),
+  });
+
+  const publishAllStorefrontMutation = useMutation({
+    mutationFn: () => productApi.publishAllToStorefront(),
+    onSuccess: (res) => {
+      queryClient.invalidateQueries({ queryKey: ['products'] });
+      const n = res?.data?.updated ?? 0;
+      toast.success(`На сайте: все активные (${n})`);
+    },
+    onError: (err) => toast.error(getApiErrorMessage(err, 'Не удалось включить все товары')),
+  });
+
   const catalogVirtual = useMemo(() => {
     const rows = displayProducts;
     const n = rows.length;
@@ -629,7 +663,7 @@ const Products = () => {
     const el = tableScrollRef.current;
     if (el) el.scrollTop = 0;
     setTableScrollTop(0);
-  }, [showStale, selectedCategory, search]);
+  }, [showStale, selectedCategory, search, storefrontFilter]);
 
   /* mutations */
   const saveMutation = useMutation({
@@ -989,6 +1023,7 @@ const Products = () => {
       compatibility_engine_family_ids: (p.compatibility?.engine_families || []).map((x) => x.id),
       compatibility_vehicle_model_ids: (p.compatibility?.vehicle_models || []).map((x) => x.id),
       engine_code_id: p.engine_code?.id || null,
+      show_on_storefront: p.show_on_storefront !== false,
     });
     setGalleryFocusIdx(0);
     setImageBlobUrl((prev) => {
@@ -1374,6 +1409,7 @@ const Products = () => {
           <h1 className="ios-mega-title">Каталог</h1>
           <p style={{ margin: '5px 0 0', fontSize: 13, color: 'var(--text-muted)', fontWeight: 500 }}>
             {products.length} из {totalCatalog != null ? totalCatalog : '…'} в каталоге
+            {storefrontFilter ? ` · фильтр витрины` : ` · на сайте ${storefrontOnCount}`}
             {showStale && displayProducts.length !== products.length ? ` · показано ${displayProducts.length}` : ''}
             {' · '}
             {Math.round(totalPurchaseValue).toLocaleString('ru-RU')} ₸
@@ -1381,19 +1417,37 @@ const Products = () => {
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
           {selectedIds.length > 0 && (
-            <button
-              type="button"
-              onClick={() => {
-                if (!canBulkEdit) {
-                  toast.error('Для массового редактирования выберите товары одной категории');
-                  return;
-                }
-                setBulkEditOpen(true);
-              }}
-              style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '9px 14px', borderRadius: 12, border: '1px solid var(--border)', background: 'var(--surface)', fontWeight: 600, fontSize: 13 }}
-            >
-              Массово ({selectedIds.length})
-            </button>
+            <>
+              <button
+                type="button"
+                onClick={() => bulkStorefrontMutation.mutate({ ids: selectedIds, value: true })}
+                disabled={bulkStorefrontMutation.isPending}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '9px 14px', borderRadius: 12, border: '1px solid rgba(16, 185, 129, 0.35)', background: 'rgba(16, 185, 129, 0.08)', fontWeight: 600, fontSize: 13, color: 'var(--success)' }}
+              >
+                <FiGlobe size={14} /> На сайт ({selectedIds.length})
+              </button>
+              <button
+                type="button"
+                onClick={() => bulkStorefrontMutation.mutate({ ids: selectedIds, value: false })}
+                disabled={bulkStorefrontMutation.isPending}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '9px 14px', borderRadius: 12, border: '1px solid var(--border)', background: 'var(--surface)', fontWeight: 600, fontSize: 13 }}
+              >
+                Скрыть с сайта
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (!canBulkEdit) {
+                    toast.error('Для массового редактирования выберите товары одной категории');
+                    return;
+                  }
+                  setBulkEditOpen(true);
+                }}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '9px 14px', borderRadius: 12, border: '1px solid var(--border)', background: 'var(--surface)', fontWeight: 600, fontSize: 13 }}
+              >
+                Массово ({selectedIds.length})
+              </button>
+            </>
           )}
           <button
             type="button"
@@ -1411,6 +1465,15 @@ const Products = () => {
           </button>
           <button type="button" onClick={handleExportExcel} style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '9px 14px', borderRadius: 12, border: '1px solid var(--border)', background: 'var(--surface)', fontWeight: 600, fontSize: 13, cursor: 'pointer', color: 'var(--text)', transition: 'var(--transition)' }}>
             <FiDownload size={15} /> Экспорт
+          </button>
+          <button
+            type="button"
+            title="Все активные товары снова на витрине CHPARTS"
+            disabled={publishAllStorefrontMutation.isPending}
+            onClick={() => publishAllStorefrontMutation.mutate()}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '9px 14px', borderRadius: 12, border: '1px solid rgba(16, 185, 129, 0.35)', background: 'rgba(16, 185, 129, 0.08)', fontWeight: 600, fontSize: 13, cursor: 'pointer', color: 'var(--success)' }}
+          >
+            <FiGlobe size={15} /> Все на сайт
           </button>
           <input ref={importFileRef} type="file" accept=".xlsx,.xlsm,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" style={{ display: 'none' }} onChange={(e) => { const f = e.target.files?.[0]; if (f) importMutation.mutate(f); e.target.value = ''; }} />
           <button type="button" onClick={openNew} style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '9px 16px', borderRadius: 12, border: '1px solid #4f46e5', background: 'linear-gradient(135deg, #6366f1, #7c3aed)', color: '#fff', fontWeight: 600, fontSize: 13, cursor: 'pointer', boxShadow: 'none', willChange: 'transform' }}>
@@ -1461,9 +1524,13 @@ const Products = () => {
           )}
         </div>
         <div className="catalog-chips-scroll">
-          <button type="button" className={`catalog-chip ${selectedCategory === '' && !showStale ? 'catalog-chip-active' : ''}`} onClick={() => { setSelectedCategory(''); setShowStale(false); }}>Все</button>
+          <button type="button" className={`catalog-chip ${selectedCategory === '' && !showStale && !storefrontFilter ? 'catalog-chip-active' : ''}`} onClick={() => { setSelectedCategory(''); setShowStale(false); setStorefrontFilter(''); }}>Все</button>
+          <button type="button" className={`catalog-chip ${storefrontFilter === 'on' ? 'catalog-chip-active' : ''}`} onClick={() => { setStorefrontFilter('on'); setShowStale(false); }}>
+            <FiGlobe size={13} style={{ marginRight: 5 }} />На сайте
+          </button>
+          <button type="button" className={`catalog-chip ${storefrontFilter === 'off' ? 'catalog-chip-active' : ''}`} onClick={() => { setStorefrontFilter('off'); setShowStale(false); }}>Скрыто с сайта</button>
           {safeCategories.map((cat) => (
-            <button key={cat} type="button" className={`catalog-chip ${selectedCategory === cat && !showStale ? 'catalog-chip-active' : ''}`} onClick={() => { setSelectedCategory(cat); setShowStale(false); }}>{cat}</button>
+            <button key={cat} type="button" className={`catalog-chip ${selectedCategory === cat && !showStale && !storefrontFilter ? 'catalog-chip-active' : ''}`} onClick={() => { setSelectedCategory(cat); setShowStale(false); setStorefrontFilter(''); }}>{cat}</button>
           ))}
           <button type="button" className={`catalog-chip ${showStale ? 'catalog-chip-stale' : 'catalog-chip-stale-off'}`} onClick={() => { setShowStale((s) => !s); setSelectedCategory(''); }}>
             <FiClock size={13} style={{ marginRight: 5 }} />Залежалось {staleCount > 0 && <span style={{ marginLeft: 4, background: showStale ? '#fbbf24' : '#fde047', border: '1px solid', borderColor: showStale ? '#d97706' : '#f59e0b', borderRadius: 8, padding: '1px 6px', fontSize: 11 }}>{staleCount}</span>}
@@ -1487,7 +1554,7 @@ const Products = () => {
                 type="button"
                 className="btn-ios-secondary"
                 style={{ marginTop: 12 }}
-                onClick={() => { setSearchInput(''); setSelectedCategory(''); setShowStale(false); }}
+                onClick={() => { setSearchInput(''); setSelectedCategory(''); setShowStale(false); setStorefrontFilter(''); }}
               >
                 Сбросить фильтры
               </button>
@@ -1497,7 +1564,7 @@ const Products = () => {
           <table className="products-catalog-table">
             <thead className="products-catalog-thead">
               <tr>
-                {['✓', 'Штрих-код', 'Название', 'Марка', 'Модель', 'Категория', 'Закуп', 'Продажа', 'Прибыль', 'Место', 'Остаток', ''].map((h) => (
+                {['✓', 'Штрих-код', 'Название', 'Марка', 'Модель', 'Категория', 'Закуп', 'Продажа', 'Прибыль', 'Место', 'Остаток', 'Сайт', ''].map((h) => (
                   <th key={h}>{h}</th>
                 ))}
               </tr>
@@ -1505,7 +1572,7 @@ const Products = () => {
             <tbody>
               {catalogVirtual.padTop > 0 && (
                 <tr aria-hidden="true" style={{ height: catalogVirtual.padTop, pointerEvents: 'none' }}>
-                  <td colSpan={12} style={{ padding: 0, border: 'none', height: catalogVirtual.padTop, lineHeight: 0 }} />
+                  <td colSpan={13} style={{ padding: 0, border: 'none', height: catalogVirtual.padTop, lineHeight: 0 }} />
                 </tr>
               )}
               {catalogVirtual.slice.map((row) => {
@@ -1553,6 +1620,36 @@ const Products = () => {
                     </td>
                     <td style={{ padding: '12px 14px', fontFamily: 'ui-monospace,monospace', fontWeight: 600, fontSize: 12, color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>{row.location_zone || '—'}</td>
                     <td style={{ padding: '12px 14px', fontWeight: 700, color: qty === 0 ? 'var(--danger)' : qty <= 5 ? '#d97706' : 'var(--success)', whiteSpace: 'nowrap' }}>{qty} шт</td>
+                    <td style={{ padding: '12px 10px', textAlign: 'center' }}>
+                      <button
+                        type="button"
+                        title={row.show_on_storefront !== false ? 'На витрине — нажмите, чтобы скрыть' : 'Скрыто с сайта — нажмите, чтобы показать'}
+                        disabled={toggleStorefrontMutation.isPending}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          toggleStorefrontMutation.mutate({
+                            id: row.id,
+                            value: row.show_on_storefront === false,
+                          });
+                        }}
+                        style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: 5,
+                          padding: '5px 10px',
+                          borderRadius: 999,
+                          border: row.show_on_storefront !== false ? '1px solid rgba(16, 185, 129, 0.35)' : '1px solid var(--border)',
+                          background: row.show_on_storefront !== false ? 'rgba(16, 185, 129, 0.1)' : 'var(--ios-grouped-bg)',
+                          color: row.show_on_storefront !== false ? 'var(--success)' : 'var(--text-muted)',
+                          fontSize: 11,
+                          fontWeight: 700,
+                          cursor: 'pointer',
+                        }}
+                      >
+                        <FiGlobe size={12} />
+                        {row.show_on_storefront !== false ? 'Да' : 'Нет'}
+                      </button>
+                    </td>
                     <td style={{ padding: '12px 10px', textAlign: 'right' }}>
                       <div className="products-catalog-row-actions">
                         <button type="button" onClick={(e) => { e.stopPropagation(); handleEdit(row); }} title="Редактировать" style={{ width: 32, height: 32, borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--primary)', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}><FiEdit2 size={14} /></button>
@@ -1565,7 +1662,7 @@ const Products = () => {
               })}
               {catalogVirtual.padBottom > 0 && (
                 <tr aria-hidden="true" style={{ height: catalogVirtual.padBottom, pointerEvents: 'none' }}>
-                  <td colSpan={12} style={{ padding: 0, border: 'none', height: catalogVirtual.padBottom, lineHeight: 0 }} />
+                  <td colSpan={13} style={{ padding: 0, border: 'none', height: catalogVirtual.padBottom, lineHeight: 0 }} />
                 </tr>
               )}
             </tbody>
@@ -1995,6 +2092,34 @@ const Products = () => {
               Учётный код для поиска и витрины; штрих-код выше — для сканера и этикетки.
             </div>
           </div>
+
+          <label
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 12,
+              padding: '12px 14px',
+              borderRadius: 14,
+              border: '1px solid var(--border)',
+              background: formData.show_on_storefront !== false ? 'rgba(16, 185, 129, 0.06)' : 'var(--ios-grouped-bg)',
+              cursor: 'pointer',
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={formData.show_on_storefront !== false}
+              onChange={(e) => setFormData({ ...formData, show_on_storefront: e.target.checked })}
+            />
+            <span>
+              <span style={{ display: 'block', fontSize: 14, fontWeight: 700, color: 'var(--text)' }}>
+                <FiGlobe size={14} style={{ verticalAlign: -2, marginRight: 6 }} />
+                Показывать на сайте (CHPARTS)
+              </span>
+              <span style={{ fontSize: 12, color: 'var(--text-muted)', fontWeight: 500 }}>
+                Скрытые позиции не видны клиентам в каталоге
+              </span>
+            </span>
+          </label>
 
           <div style={{ display: 'grid', gap: 10 }}>
             <Input

@@ -494,6 +494,7 @@ def list_public_products(
             .outerjoin(models.Category, models.Product.category_id == models.Category.id)
             .outerjoin(models.Brand, models.Product.brand_id == models.Brand.id)
             .filter(models.Product.is_active.is_(True))
+            .filter(models.Product.show_on_storefront.is_(True))
         )
         return _apply_product_filters(
             q0,
@@ -538,7 +539,11 @@ def get_public_product(product_id: int, db: Session = Depends(get_db)):
             joinedload(models.Product.category_rel),
             joinedload(models.Product.brand_rel),
         )
-        .filter(models.Product.id == product_id, models.Product.is_active.is_(True))
+        .filter(
+            models.Product.id == product_id,
+            models.Product.is_active.is_(True),
+            models.Product.show_on_storefront.is_(True),
+        )
         .first()
     )
     if not p:
@@ -658,6 +663,9 @@ def create_public_order(
     missing = [pid for pid in product_ids if pid not in by_id]
     if missing:
         raise HTTPException(status_code=404, detail=f"product not found: {missing[0]}")
+    not_on_site = [pid for pid in product_ids if not getattr(by_id[pid], "show_on_storefront", True)]
+    if not_on_site:
+        raise HTTPException(status_code=404, detail=f"product not available on storefront: {not_on_site[0]}")
 
     total = Decimal("0")
     for item in payload.items:

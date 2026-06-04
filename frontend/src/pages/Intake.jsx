@@ -22,6 +22,7 @@ import {
 import { Button, LoadingSpinner, Modal } from '../components/ui';
 import IntakeAddFab from '../components/IntakeAddFab';
 import IntakeLineModal from '../components/IntakeLineModal';
+import SmartSearchField from '../components/SmartSearchField';
 import { intakeApi } from '../api/intake';
 import { settingsApi } from '../api/settings';
 import { getApiErrorMessage, productApi } from '../api/client';
@@ -36,6 +37,8 @@ import {
   isLineWarehouseReady,
   lineMoneyTotals,
   newClientId,
+  intakeLineMatchesSearch,
+  matchesSmartSearch,
   newIntakeLineId,
   num,
   uploadInvoiceLinesToWarehouse,
@@ -372,19 +375,14 @@ function IntakeList() {
   });
 
   const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
+    const q = search.trim();
     if (!q) return invoices;
     return invoices.filter((inv) => {
       const n = String(inv.number ?? '');
-      const d = String(inv.date ?? '').toLowerCase();
-      if (n.includes(q) || d.includes(q)) return true;
+      const d = String(inv.date ?? '');
+      if (matchesSmartSearch(`${n} ${d}`, q)) return true;
       const lines = Array.isArray(inv.lines) ? inv.lines : [];
-      return lines.some((l) => {
-        const name = (l.name || '').toLowerCase();
-        const bc = (l.barcode || '').toLowerCase();
-        const sku = (l.sku || '').toLowerCase();
-        return name.includes(q) || bc.includes(q) || sku.includes(q);
-      });
+      return lines.some((l) => intakeLineMatchesSearch(l, q));
     });
   }, [invoices, search]);
 
@@ -424,16 +422,14 @@ function IntakeList() {
         </div>
       )}
 
-      <div className="intake-toolbar">
-        <div className="intake-toolbar-grow">
-          <FiSearch size={18} className="intake-toolbar-icon" />
-          <input
-            className="ios-input"
-            placeholder="Поиск: №, дата, штрих-код, артикул, название"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-          />
-        </div>
+      <div className="intake-toolbar intake-toolbar--stacked">
+        <SmartSearchField
+          className="intake-toolbar-search"
+          value={search}
+          onChange={setSearch}
+          placeholder="Накладные, штрих-код, название…"
+          enableVoice
+        />
       </div>
 
       {isLoading ? (
@@ -581,18 +577,13 @@ function IntakeDetail() {
   });
 
   const visibleLines = useMemo(() => {
-    const q = search.trim().toLowerCase();
+    const q = search.trim();
     let items = lines.map((l, i) => ({ line: l, index: i }));
     if (onlyNotReady && !isUploaded) {
       items = items.filter(({ line: l }) => !isLineWarehouseReady(l));
     }
     if (q) {
-      items = items.filter(({ line: l }) => {
-        const name = (l.name || '').toLowerCase();
-        const bc = (l.barcode || '').toLowerCase();
-        const sku = (l.sku || '').toLowerCase();
-        return name.includes(q) || bc.includes(q) || sku.includes(q);
-      });
+      items = items.filter(({ line: l }) => intakeLineMatchesSearch(l, q));
     }
     if (!isUploaded) {
       items = [...items].sort((a, b) => {
@@ -836,35 +827,32 @@ function IntakeDetail() {
         </div>
       )}
 
-      <div className="intake-toolbar-panel">
-        <div className="intake-toolbar">
-          {lines.length > 0 && (
-            <>
-              <div className="intake-toolbar-grow">
-                <FiSearch size={18} className="intake-toolbar-icon" />
-                <input
-                  className="ios-input"
-                  placeholder="Поиск по названию, штрих-коду, артикулу"
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                />
-              </div>
-              <div className="intake-toolbar-actions">
-                {!isUploaded && summary.notReadyCount > 0 && (
-                  <button
-                    type="button"
-                    className={`intake-filter-chip${onlyNotReady ? ' intake-filter-chip--active' : ''}`}
-                    onClick={() => setOnlyNotReady((v) => !v)}
-                  >
-                    Не готовые ({summary.notReadyCount})
-                  </button>
-                )}
-                <IntakeViewToggle viewMode={viewMode} onChange={setViewMode} />
-              </div>
-            </>
-          )}
+      {lines.length > 0 && (
+        <div className="intake-toolbar-panel">
+          <div className="intake-toolbar intake-toolbar--stacked">
+            <SmartSearchField
+              className="intake-toolbar-search"
+              value={search}
+              onChange={setSearch}
+              placeholder="Поиск по позициям: название, штрих-код, артикул…"
+              enableVoice
+            />
+            <div className="intake-toolbar-row">
+              {!isUploaded && summary.notReadyCount > 0 && (
+                <button
+                  type="button"
+                  className={`intake-filter-chip${onlyNotReady ? ' intake-filter-chip--active' : ''}`}
+                  onClick={() => setOnlyNotReady((v) => !v)}
+                >
+                  <FiAlertCircle size={14} />
+                  Не готовые · {summary.notReadyCount}
+                </button>
+              )}
+              <IntakeViewToggle viewMode={viewMode} onChange={setViewMode} />
+            </div>
+          </div>
         </div>
-      </div>
+      )}
 
       {lines.length === 0 ? (
         <IntakeEmpty

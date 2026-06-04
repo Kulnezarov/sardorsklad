@@ -12,6 +12,7 @@ import DebtCustomerPickModal from '../components/DebtCustomerPickModal';
 import DebtReceiptModal from '../components/DebtReceiptModal';
 import SaleDiscountBar from '../components/SaleDiscountBar';
 import HiddenDiscountReveal from '../components/HiddenDiscountReveal';
+import SmartSearchField from '../components/SmartSearchField';
 
 /* ── helpers ── */
 const num = (v) => { const n = parseFloat(String(v || 0).replace(',', '.')); return Number.isFinite(n) ? n : 0; };
@@ -86,25 +87,37 @@ const Sales = ({ mode = 'cash', onOpenClients, onSwitchToDebtTab }) => {
     if (cartDetailIdx != null && cartDetailIdx >= cart.length) setCartDetailIdx(null);
   }, [cart.length, cartDetailIdx]);
 
-  // Search with debounce
+  const [searchLoading, setSearchLoading] = useState(false);
+
+  // Умный поиск через API (синонимы и опечатки на сервере)
   useEffect(() => {
-    if (!searchInput.trim()) { setSearchResults([]); setShowDropdown(false); return; }
-    const t = setTimeout(() => {
-      const q = searchInput.toLowerCase();
-      const results = products.filter((p) =>
-        p.quantity > 0 && (
-          p.name?.toLowerCase().includes(q) ||
-          p.brand?.toLowerCase().includes(q) ||
-          p.model?.toLowerCase().includes(q) ||
-          p.barcode?.includes(q) ||
-          p.sku?.includes(q)
-        )
-      ).slice(0, 8);
-      setSearchResults(results);
-      setShowDropdown(results.length > 0);
-    }, 300);
+    if (!searchInput.trim()) {
+      setSearchResults([]);
+      setShowDropdown(false);
+      return undefined;
+    }
+    const t = setTimeout(async () => {
+      setSearchLoading(true);
+      try {
+        const r = await productApi.getAll({
+          search: searchInput.trim(),
+          skip: 0,
+          limit: 24,
+        });
+        const results = (Array.isArray(r.data) ? r.data : [])
+          .filter((p) => (parseInt(p.quantity, 10) || 0) > 0)
+          .slice(0, 8);
+        setSearchResults(results);
+        setShowDropdown(results.length > 0);
+      } catch {
+        setSearchResults([]);
+        setShowDropdown(false);
+      } finally {
+        setSearchLoading(false);
+      }
+    }, 420);
     return () => clearTimeout(t);
-  }, [searchInput, products]);
+  }, [searchInput]);
 
   // Close dropdown on outside click
   useEffect(() => {
@@ -484,24 +497,20 @@ const Sales = ({ mode = 'cash', onOpenClients, onSwitchToDebtTab }) => {
           </div>
 
           {/* Search */}
-          <div style={{ position: 'relative' }}>
-            <div style={{ position: 'relative' }}>
-              <FiSearch style={{ position: 'absolute', left: 14, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)', pointerEvents: 'none' }} size={17} />
-              <input
-                ref={searchRef}
-                className="catalog-search-input"
-                style={{ paddingLeft: 44, fontSize: 16 }}
-                placeholder="Найти товар по названию, марке, штрих-коду…"
-                value={searchInput}
-                onChange={(e) => setSearchInput(e.target.value)}
-                onFocus={() => searchResults.length > 0 && setShowDropdown(true)}
-              />
-              {searchInput && <button type="button" onClick={() => { setSearchInput(''); setShowDropdown(false); }} style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: 4 }}><FiX size={16} /></button>}
-            </div>
+          <div style={{ position: 'relative' }} ref={searchRef}>
+            <SmartSearchField
+              value={searchInput}
+              onChange={(v) => {
+                setSearchInput(v);
+                if (searchResults.length > 0) setShowDropdown(true);
+              }}
+              placeholder="Название, марка, штрих-код — можно голосом"
+              enableVoice
+              loading={searchLoading}
+            />
 
-            {/* Dropdown results */}
             {showDropdown && (
-              <div ref={dropdownRef} style={{ position: 'absolute', top: 'calc(100% + 6px)', left: 0, right: 0, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 18, boxShadow: 'none', zIndex: 50, overflow: 'hidden' }}>
+              <div ref={dropdownRef} className="sales-search-dropdown">
                 {searchResults.map((p) => (
                   <button key={p.id} type="button" onClick={() => addToCart(p)}
                     style={{ width: '100%', padding: '12px 16px', border: 'none', background: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, borderBottom: '1px solid var(--border-light)', textAlign: 'left', transition: 'background 0.12s' }}

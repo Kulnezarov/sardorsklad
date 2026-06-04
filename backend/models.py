@@ -240,6 +240,7 @@ class Product(Base):
 
     # Status flags
     is_active = Column(Boolean, default=True, nullable=False)
+    show_on_storefront = Column(Boolean, default=True, nullable=False, server_default="true")
     # Relationships
     category_rel = relationship("Category", back_populates="products")
     brand_rel = relationship("Brand", back_populates="products")
