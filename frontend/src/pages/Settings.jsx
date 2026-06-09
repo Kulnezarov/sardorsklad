@@ -10,7 +10,8 @@ import {
 import { getApiErrorMessage } from '../api/client';
 import { settingsApi } from '../api/settings';
 import { historyApi } from '../api/history';
-import SettingsCompatibilitySection from '../components/SettingsCompatibilitySection';
+import SettingsVehicleBrandsSection from '../components/SettingsVehicleBrandsSection';
+import SettingsCategoriesSection from '../components/SettingsCategoriesSection';
 import { useAuth } from '../auth/AuthContext';
 import { fetchCnyRate } from '../utils/cnyAutoRate';
 
@@ -394,7 +395,9 @@ const Settings = () => {
           </div>
         </div>
 
-        <SettingsCompatibilitySection />
+        <SettingsCategoriesSection />
+
+        <SettingsVehicleBrandsSection />
 
         {/* ── Section 4: Этикетки ── */}
         <div className="settings-section">

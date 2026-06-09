@@ -3,12 +3,25 @@ import os
 from datetime import UTC, datetime, timezone
 from urllib.parse import quote_plus
 from urllib.request import urlopen
+from zoneinfo import ZoneInfo
 
 import models
 from config.logger import setup_logger
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 logger = setup_logger("telegram_orders")
+
+
+def _report_tz() -> ZoneInfo:
+    name = os.getenv("TELEGRAM_REPORT_TZ", "Asia/Almaty").strip() or "Asia/Almaty"
+    return ZoneInfo(name)
+
+
+def _format_order_datetime(order: models.Reserve) -> str:
+    dt = order.created_at or datetime.now(timezone.utc)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(_report_tz()).strftime("%d.%m.%Y %H:%M")
 
 
 def _chat_ids() -> list[str]:
@@ -30,13 +43,16 @@ def _build_order_text(order: models.Reserve, admin_base_url: str) -> str:
     lines = [
         "🛒 Новый заказ",
         f"ID: #{order.id}",
-        f"Дата: {datetime.now(timezone.utc).astimezone().strftime('%Y-%m-%d %H:%M')}",
+        f"Дата: {_format_order_datetime(order)} (Алматы)",
         f"Клиент: {order.customer_name}",
         f"Телефон: {order.customer_phone or '-'}",
         "",
         "Позиции:",
     ]
     for item in order.items:
+        st = getattr(item, "line_status", None) or "pending"
+        if st == "cancelled":
+            continue
         unit = item.sale_price_snapshot or item.price_kzt or 0
         qty = item.quantity or item.quantity_ordered
         lines.append(f"- {item.product_name} × {qty} = {item.line_total or 0} ₸ (цена {unit} ₸)")
@@ -94,23 +110,62 @@ def send_new_order_notification(db: Session, order: models.Reserve) -> None:
     db.commit()
 
 
-def retry_failed_notifications(db: Session, limit: int = 20) -> int:
+def resend_order_notification(db: Session, order: models.Reserve) -> bool:
+    """Повторная отправка уведомления по одному заказу (с актуальным текстом)."""
+    token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+    chats = _chat_ids()
+    if not token or not chats:
+        return False
+
+    message = _build_order_text(order, os.getenv("ADMIN_BASE_URL", "https://sklad.kz"))
+    errors: list[str] = []
+    sent_any = False
+    for chat_id in chats:
+        try:
+            _send_message(token, chat_id, message)
+            sent_any = True
+        except Exception as exc:
+            errors.append(f"{chat_id}: {exc}")
+            logger.warning("Telegram resend to chat %s failed: %s", chat_id, exc)
+
+    notif = models.TelegramNotification(
+        reserve_id=order.id,
+        notification_type="new_order_resend",
+        payload_json={"text": message, "chat_ids": chats},
+        status="sent" if sent_any else "failed",
+        sent_at=datetime.now(UTC) if sent_any else None,
+        error_message="; ".join(errors)[:1000] if errors else None,
+        attempts=1,
+        last_attempt_at=datetime.now(UTC),
+    )
+    db.add(notif)
+    db.commit()
+    return sent_any
+
+
+def retry_failed_notifications(db: Session, limit: int = 20, reserve_id: int | None = None) -> int:
     token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
     chats = _chat_ids()
     if not token or not chats:
         return 0
 
-    rows = (
-        db.query(models.TelegramNotification)
-        .filter(models.TelegramNotification.status == "failed")
-        .order_by(models.TelegramNotification.created_at.asc())
-        .limit(limit)
-        .all()
-    )
+    q = db.query(models.TelegramNotification).filter(models.TelegramNotification.status == "failed")
+    if reserve_id is not None:
+        q = q.filter(models.TelegramNotification.reserve_id == reserve_id)
+    rows = q.order_by(models.TelegramNotification.created_at.asc()).limit(limit).all()
     sent = 0
     for row in rows:
         try:
             text = (row.payload_json or {}).get("text")
+            if not text and row.reserve_id:
+                order = (
+                    db.query(models.Reserve)
+                    .options(joinedload(models.Reserve.items))
+                    .filter(models.Reserve.id == row.reserve_id)
+                    .first()
+                )
+                if order:
+                    text = _build_order_text(order, os.getenv("ADMIN_BASE_URL", "https://sklad.kz"))
             if not text:
                 row.status = "failed"
                 row.error_message = "missing payload text"

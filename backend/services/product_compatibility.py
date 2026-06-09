@@ -137,13 +137,10 @@ def apply_product_compatibility(
 
 
 def refresh_product_model_field_cache(db: Session, product: models.Product) -> None:
-    """Кэширует краткое описание в product.model (до 120 симв.)."""
+    """Кэширует краткое описание в product.model и product.brand (первая марка/модель)."""
     p = (
         db.query(models.Product)
         .options(
-            joinedload(models.Product.compatibility_engine_families).joinedload(
-                models.ProductEngineFamilyLink.engine_family
-            ),
             joinedload(models.Product.compatibility_vehicle_models)
             .joinedload(models.ProductVehicleModelLink.vehicle_model)
             .joinedload(models.VehicleModel.vehicle_brand),
@@ -154,29 +151,33 @@ def refresh_product_model_field_cache(db: Session, product: models.Product) -> N
     if not p:
         return
 
-    codes: List[str] = []
-    for link in p.compatibility_engine_families or []:
-        if link.engine_family and link.engine_family.code:
-            codes.append(link.engine_family.code)
-    codes = sorted(set(codes), key=str.casefold)
-
     model_labels: List[str] = []
+    primary_brand: str | None = None
+    primary_model: str | None = None
     for link in p.compatibility_vehicle_models or []:
         vm = link.vehicle_model
         if not vm:
             continue
         bname = (vm.vehicle_brand.name if vm.vehicle_brand else "") or ""
-        model_labels.append(f"{bname} {vm.name}".strip())
-    model_labels = list(dict.fromkeys(model_labels))  # order-preserving unique
+        label = f"{bname} {vm.name}".strip() if bname else vm.name
+        if label and label not in model_labels:
+            model_labels.append(label)
+        if primary_brand is None and bname:
+            primary_brand = bname.strip()
+        if primary_model is None and vm.name:
+            primary_model = str(vm.name).strip()
 
-    parts: List[str] = []
-    if codes:
-        parts.append("Коды: " + ", ".join(codes[:12]))
     if model_labels:
-        parts.append("Совм.: " + ", ".join(model_labels[:8]))
-    summary = " · ".join(parts)[:120]
-    if summary:
+        summary = ", ".join(model_labels[:8])[:120]
         p.model = summary
+        if primary_brand:
+            p.brand = primary_brand
+        if product is not p:
+            product.model = p.model
+            if primary_brand:
+                product.brand = primary_brand
+        return
+
     if product is not p:
         product.model = p.model
 
@@ -262,6 +263,63 @@ def build_compatibility_map(db: Session, product_ids: List[int]) -> dict[int, sc
     return out
 
 
+def build_compatibility_brand_groups(
+    comp: schemas.ProductCompatibilityOut,
+) -> list[schemas.CompatibilityBrandGroup]:
+    """Группировка моделей по марке для витрины."""
+    order: list[int] = []
+    by_brand: dict[int, dict] = {}
+    for vm in comp.vehicle_models or []:
+        bid = int(vm.vehicle_brand_id)
+        if bid not in by_brand:
+            by_brand[bid] = {
+                "brand_id": bid,
+                "brand_name": (vm.brand_name or "").strip() or "—",
+                "models": [],
+            }
+            order.append(bid)
+        name = (vm.name or "").strip()
+        if name and name not in by_brand[bid]["models"]:
+            by_brand[bid]["models"].append(name)
+    out: list[schemas.CompatibilityBrandGroup] = []
+    for bid in order:
+        g = by_brand[bid]
+        out.append(
+            schemas.CompatibilityBrandGroup(
+                brand_id=g["brand_id"],
+                brand_name=g["brand_name"],
+                models=g["models"],
+            )
+        )
+    return out
+
+
+def compatibility_storefront_meta(
+    comp: schemas.ProductCompatibilityOut,
+) -> tuple[str | None, int, list[str], list[schemas.CompatibilityBrandGroup]]:
+    """
+    primary preview, extra brands count, flat labels, grouped by brand.
+    primary: «FAW Bestune X40»
+    more_brands: число доп. марок (не моделей)
+    """
+    groups = build_compatibility_brand_groups(comp)
+    labels: list[str] = []
+    for g in groups:
+        for mn in g.models:
+            s = f"{g.brand_name} {mn}".strip()
+            if s and s not in labels:
+                labels.append(s)
+    primary: str | None = None
+    if groups:
+        g0 = groups[0]
+        if g0.models:
+            primary = f"{g0.brand_name} {g0.models[0]}".strip()
+        else:
+            primary = g0.brand_name
+    more_brands = max(0, len(groups) - 1)
+    return primary, more_brands, labels, groups
+
+
 def build_compatibility_out(db: Session, product_id: int) -> schemas.ProductCompatibilityOut:
     p = (
         db.query(models.Product)
@@ -305,7 +363,6 @@ def build_compatibility_out(db: Session, product_id: int) -> schemas.ProductComp
                 brand_name=bname,
             )
         )
-    vms.sort(key=lambda x: (x.brand_name.casefold(), x.name.casefold(), x.id))
     ecs: List[schemas.EngineCompatibilityItem] = []
     if p.engine_code_id:
         rows = (

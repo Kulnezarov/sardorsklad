@@ -58,10 +58,16 @@ class Category(Base):
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(120), nullable=False, unique=True, index=True)
     slug = Column(String(140), nullable=False, unique=True, index=True)
+    parent_id = Column(Integer, ForeignKey("categories.id", ondelete="SET NULL"), nullable=True, index=True)
+    attribute_schema = Column(JSONB, nullable=True)
+    sort_order = Column(Integer, default=0, nullable=False, server_default="0")
+    icon = Column(String(20), nullable=True)
     is_active = Column(Boolean, default=True, nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
+    parent = relationship("Category", remote_side=[id], back_populates="children")
+    children = relationship("Category", back_populates="parent")
     products = relationship("Product", back_populates="category_rel")
 
 
@@ -203,6 +209,8 @@ class Product(Base):
     category = Column(String(100), nullable=True, index=True)
     brand = Column(String(100), nullable=True, index=True)
     model = Column(String(120), nullable=True, index=True)
+    attributes = Column(JSONB, nullable=True)
+    display_layout = Column(JSONB, nullable=True)  # порядок/состав полей для витрины
     engine_code_id = Column(Integer, ForeignKey("engine_codes.id", ondelete="SET NULL"), nullable=True, index=True)
     category_id = Column(Integer, ForeignKey("categories.id", ondelete="SET NULL"), nullable=True, index=True)
     brand_id = Column(Integer, ForeignKey("brands.id", ondelete="SET NULL"), nullable=True, index=True)
@@ -442,6 +450,7 @@ class ReserveItem(Base):
     price_kzt = Column(Numeric(10, 2), nullable=False)
     sale_price_snapshot = Column(Numeric(10, 2), nullable=True)
     line_total = Column(Numeric(12, 2), nullable=True)
+    line_status = Column(String(20), default="pending", nullable=False, index=True)
 
     # Relationships
     reserve = relationship("Reserve", back_populates="items")

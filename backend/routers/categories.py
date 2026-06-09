@@ -8,6 +8,7 @@ import schemas
 from database import get_db
 from dependencies import require_manager_or_admin, require_roles
 from services.audit import write_audit_log
+from services.form_layout import has_custom_form_layout, normalize_attribute_schema
 
 router = APIRouter(prefix="/api/v1/categories", tags=["categories"], dependencies=[Depends(require_manager_or_admin)])
 brands_router = APIRouter(prefix="/api/v1/brands", tags=["brands"], dependencies=[Depends(require_manager_or_admin)])
@@ -18,12 +19,77 @@ def slugify(value: str) -> str:
     return slug or "item"
 
 
+def _build_tree(db: Session, active_only: bool) -> list[schemas.CategoryTreeGroup]:
+    q = db.query(models.Category)
+    if active_only:
+        q = q.filter(models.Category.is_active.is_(True))
+    rows = q.order_by(models.Category.sort_order.asc(), models.Category.name.asc()).all()
+    groups = [c for c in rows if c.parent_id is None]
+    children_by_parent: dict[int, list[models.Category]] = {}
+    for c in rows:
+        if c.parent_id:
+            children_by_parent.setdefault(c.parent_id, []).append(c)
+    out: list[schemas.CategoryTreeGroup] = []
+    for g in groups:
+        kids = children_by_parent.get(g.id, [])
+        out.append(
+            schemas.CategoryTreeGroup(
+                id=g.id,
+                name=g.name,
+                slug=g.slug,
+                icon=g.icon,
+                sort_order=g.sort_order or 0,
+                is_active=bool(g.is_active),
+                children=[
+                    schemas.CategoryTreeChild(
+                        id=c.id,
+                        name=c.name,
+                        slug=c.slug,
+                        icon=c.icon,
+                        sort_order=c.sort_order or 0,
+                        attribute_schema=c.attribute_schema if isinstance(c.attribute_schema, dict) else None,
+                        has_form_layout=has_custom_form_layout(
+                            c.attribute_schema if isinstance(c.attribute_schema, dict) else None
+                        ),
+                        is_active=bool(c.is_active),
+                    )
+                    for c in sorted(kids, key=lambda x: (x.sort_order or 0, x.name))
+                ],
+            )
+        )
+    return out
+
+
+@router.get("/tree", response_model=list[schemas.CategoryTreeGroup])
+def category_tree(db: Session = Depends(get_db), active_only: bool = Query(True)):
+    return _build_tree(db, active_only)
+
+
+@router.post("/seed-defaults")
+def seed_categories_defaults(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_roles("admin")),
+):
+    from services.category_seed import seed_default_categories
+
+    count = seed_default_categories(db)
+    write_audit_log(
+        db,
+        user_id=current_user.id,
+        action="SEED_CATEGORIES",
+        entity_type="category",
+        entity_id=None,
+        payload={"groups": count},
+    )
+    return {"ok": True, "groups": count}
+
+
 @router.get("/", response_model=list[schemas.CategoryResponse])
 def list_categories(db: Session = Depends(get_db), active_only: bool = Query(False)):
     q = db.query(models.Category)
     if active_only:
         q = q.filter(models.Category.is_active.is_(True))
-    return q.order_by(models.Category.name.asc()).all()
+    return q.order_by(models.Category.sort_order.asc(), models.Category.name.asc()).all()
 
 
 @router.post("/", response_model=schemas.CategoryResponse, status_code=status.HTTP_201_CREATED)
@@ -33,12 +99,34 @@ def create_category(
     current_user: models.User = Depends(require_manager_or_admin),
 ):
     slug = payload.slug or slugify(payload.name)
+    if payload.parent_id:
+        slug = f"{payload.parent_id}-{slugify(payload.name)}"
     if db.query(models.Category).filter(models.Category.slug == slug).first():
         raise HTTPException(status_code=400, detail="Category slug already exists")
-    category = models.Category(name=payload.name.strip(), slug=slug, is_active=payload.is_active)
+    attr_schema = (
+        normalize_attribute_schema(payload.attribute_schema)
+        if payload.attribute_schema is not None
+        else None
+    )
+    category = models.Category(
+        name=payload.name.strip(),
+        slug=slug,
+        parent_id=payload.parent_id,
+        icon=payload.icon,
+        sort_order=payload.sort_order or 0,
+        attribute_schema=attr_schema,
+        is_active=payload.is_active,
+    )
     db.add(category)
     db.flush()
-    write_audit_log(db, user_id=current_user.id, action="CREATE_CATEGORY", entity_type="category", entity_id=category.id, payload={"name": category.name, "slug": category.slug})
+    write_audit_log(
+        db,
+        user_id=current_user.id,
+        action="CREATE_CATEGORY",
+        entity_type="category",
+        entity_id=category.id,
+        payload={"name": category.name, "slug": category.slug, "parent_id": category.parent_id},
+    )
     db.commit()
     db.refresh(category)
     return category
@@ -63,6 +151,14 @@ def update_category(
         if exists:
             raise HTTPException(status_code=400, detail="Category slug already exists")
         category.slug = slug
+    if "parent_id" in update:
+        category.parent_id = update["parent_id"]
+    if "icon" in update:
+        category.icon = update["icon"]
+    if "sort_order" in update and update["sort_order"] is not None:
+        category.sort_order = int(update["sort_order"])
+    if "attribute_schema" in update:
+        category.attribute_schema = normalize_attribute_schema(update["attribute_schema"])
     if "is_active" in update:
         category.is_active = bool(update["is_active"])
     write_audit_log(db, user_id=current_user.id, action="UPDATE_CATEGORY", entity_type="category", entity_id=category.id, payload=update)
@@ -80,6 +176,9 @@ def delete_category(
     category = db.query(models.Category).filter(models.Category.id == category_id).first()
     if not category:
         raise HTTPException(status_code=404, detail="Category not found")
+    child_count = db.query(models.Category).filter(models.Category.parent_id == category_id).count()
+    if child_count > 0:
+        raise HTTPException(status_code=400, detail="Нельзя удалить группу: есть подкатегории")
     linked = db.query(models.Product).filter(models.Product.category_id == category_id, models.Product.is_active.is_(True)).count()
     if linked > 0:
         raise HTTPException(status_code=400, detail="Нельзя удалить категорию: есть привязанные товары")

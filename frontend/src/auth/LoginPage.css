@@ -3,6 +3,33 @@
   width: 100%;
 }
 
+.login-password-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+.login-password-wrap .form-input {
+  width: 100%;
+  padding-right: 86px;
+}
+.login-password-toggle {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  border: none;
+  background: transparent;
+  color: #4c5b91;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 6px 8px;
+  border-radius: 8px;
+}
+.login-password-toggle:hover {
+  background: rgba(76, 91, 145, 0.1);
+}
+
 .login-card {
   position: relative;
   z-index: 1;

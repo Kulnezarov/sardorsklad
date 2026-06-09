@@ -161,11 +161,15 @@ def test_public_order_status_cancelled_payload():
         order_code="WEB-1",
         status="Отменен",
         created_at=datetime.now(timezone.utc),
+        cancellation_reason_code="out_of_stock",
+        cancellation_comment=None,
     )
     p = build_public_order_status_response(r)
     assert p.is_cancelled is True
     assert p.is_fulfilled is False
     assert "отмен" in p.status_title.lower()
+    assert p.cancellation_reason_code == "out_of_stock"
+    assert p.cancellation_reason_title == "нет в наличии"
 
 
 def test_public_reserve_detail_maps_lines():

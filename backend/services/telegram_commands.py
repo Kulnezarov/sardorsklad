@@ -18,6 +18,7 @@ import models
 from config.logger import setup_logger
 from database import SessionLocal
 from services.telegram_daily import build_daily_report_text, post_telegram_html_to_chat
+from services.telegram_orders import _format_order_datetime
 
 logger = setup_logger("skladpro")
 
@@ -139,7 +140,8 @@ def _handle_new_orders_list(db) -> str:
         total = _fmt_kzt(r.total_amount or r.total_amount_kzt)
         code = html.escape(str(r.order_code or r.id))
         src = "сайт" if r.source == "website" else "склад"
-        lines.append(f"• <code>#{r.id}</code> {code}\n  {nm} · {ph}\n  <b>{total}</b> ₸ · {src}")
+        when = html.escape(_format_order_datetime(r))
+        lines.append(f"• <code>#{r.id}</code> {code} · {when}\n  {nm} · {ph}\n  <b>{total}</b> ₸ · {src}")
     lines.append("\n<i>Полные детали и выдача — в разделе «Заказы» на сайте.</i>")
     return "\n".join(lines)
 

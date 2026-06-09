@@ -8,6 +8,7 @@ import './LoginPage.css';
 const LoginPage = () => {
   const [loginValue, setLoginValue] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const { login: signIn } = useAuth();
   const navigate = useNavigate();
@@ -65,15 +66,25 @@ const LoginPage = () => {
           
           <div className="form-group">
             <label className="form-label">Пароль</label>
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="Введите ваш пароль"
-              required
-              className="form-input"
-              autoComplete="current-password"
-            />
+            <div className="login-password-wrap">
+              <input
+                type={showPassword ? 'text' : 'password'}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="Введите ваш пароль"
+                required
+                className="form-input"
+                autoComplete="current-password"
+              />
+              <button
+                type="button"
+                className="login-password-toggle"
+                onClick={() => setShowPassword((v) => !v)}
+                aria-label={showPassword ? 'Скрыть пароль' : 'Показать пароль'}
+              >
+                {showPassword ? 'Скрыть' : 'Показать'}
+              </button>
+            </div>
           </div>
 
           <button

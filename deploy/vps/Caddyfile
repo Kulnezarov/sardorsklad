@@ -5,7 +5,10 @@
 	encode gzip zstd
 
 	handle /api* {
-		reverse_proxy backend:8000
+		reverse_proxy backend:8000 {
+			# Реальный IP клиента для rate-limit (бэкенд читает X-Real-IP, не доверяя X-Forwarded-For клиента)
+			header_up X-Real-IP {remote_host}
+		}
 	}
 
 	handle /health {

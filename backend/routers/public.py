@@ -13,14 +13,28 @@ from database import get_db
 from services.product_compatibility import (
     build_compatibility_map,
     build_compatibility_out,
+    compatibility_storefront_meta,
     vehicle_brand_to_response,
 )
-from services.public_rate_limit import check_public_order_rate_limit
+from services.category_attributes import attribute_labels_from_product
+from services.product_display import storefront_fields_from_product
+from services.public_rate_limit import check_public_order_rate_limit, check_rate_limit, client_ip
 from services.telegram_orders import send_new_order_notification
 
 router = APIRouter(prefix="/api/v1/public", tags=["public"])
 
 SITE_NEW_ORDER_STATUS = "Новый заказ"
+
+PUBLIC_CANCELLATION_REASON_TITLES: dict[str, str] = {
+    "wrong_product": "неверно указан товар",
+    "not_paid": "неоплата / неподтверждение оплаты",
+    "invalid_contact_data": "некорректные контакты",
+    "not_reachable": "не удалось связаться",
+    "out_of_stock": "нет в наличии",
+    "client_refused": "клиент отказался",
+    "duplicate": "дубль заказа",
+    "other": "другое",
+}
 
 # Синтетические id для категорий/брендов только из текстовых полей товара (без FK в справочники)
 LEGACY_CATEGORY_ID_BASE = 10_000_000
@@ -67,6 +81,18 @@ def _phones_match_order(stored: str | None, provided: str) -> bool:
     return False
 
 
+def _public_cancellation_fields(reserve: models.Reserve, cancelled: bool) -> tuple[str | None, str | None, str | None]:
+    if not cancelled:
+        return None, None, None
+    code = (reserve.cancellation_reason_code or "").strip() or None
+    title = PUBLIC_CANCELLATION_REASON_TITLES.get(code, code) if code else None
+    comment = None
+    cmt = (getattr(reserve, "cancellation_comment", None) or "").strip()
+    if cmt:
+        comment = cmt[:500]
+    return code, title, comment
+
+
 def build_public_order_status_response(reserve: models.Reserve) -> schemas.PublicOrderStatusResponse:
     st = (reserve.status or "").strip()
     cancelled = st == "Отменен"
@@ -79,6 +105,7 @@ def build_public_order_status_response(reserve: models.Reserve) -> schemas.Publi
         title = "Заказ принят, обрабатывается"
     else:
         title = st
+    reason_code, reason_title, reason_comment = _public_cancellation_fields(reserve, cancelled)
     return schemas.PublicOrderStatusResponse(
         reserve_id=reserve.id,
         order_code=reserve.order_code,
@@ -87,6 +114,9 @@ def build_public_order_status_response(reserve: models.Reserve) -> schemas.Publi
         is_cancelled=cancelled,
         is_fulfilled=fulfilled,
         created_at=reserve.created_at,
+        cancellation_reason_code=reason_code,
+        cancellation_reason_title=reason_title,
+        cancellation_comment=reason_comment,
     )
 
 
@@ -98,7 +128,7 @@ def _decimal_str(v) -> str:
 
 
 def _public_line_status_from_header(header: schemas.PublicOrderStatusResponse) -> tuple[str, str]:
-    """Код и подпись для позиций (в БД нет статуса по строке — наследуем от заказа)."""
+    """Код и подпись для позиций, если нет статуса по строке."""
     if header.is_fulfilled:
         return "fulfilled", "Выдано"
     if header.is_cancelled:
@@ -106,14 +136,40 @@ def _public_line_status_from_header(header: schemas.PublicOrderStatusResponse) -
     return "pending", "В обработке"
 
 
+def _public_line_status_for_item(
+    it: models.ReserveItem,
+    header: schemas.PublicOrderStatusResponse,
+) -> tuple[str, str]:
+    st = (getattr(it, "line_status", None) or "pending").strip() or "pending"
+    if st == "cancelled":
+        return "cancelled", "Отменено"
+    if st == "fulfilled":
+        return "fulfilled", "Выдано"
+    return _public_line_status_from_header(header)
+
+
+def _reserve_line_product_meta(it: models.ReserveItem) -> tuple[str | None, str | None, str | None, str | None]:
+    p = getattr(it, "product", None)
+    if p is None:
+        return None, None, None, None
+    barcode = _strip_or_none(getattr(p, "barcode", None))
+    sku = _strip_or_none(getattr(p, "sku", None))
+    br = getattr(p, "brand_rel", None)
+    cat = getattr(p, "category_rel", None)
+    brand_name = _strip_or_none(br.name if br else None) or _strip_or_none(getattr(p, "brand", None))
+    category_name = _strip_or_none(cat.name if cat else None) or _strip_or_none(getattr(p, "category", None))
+    return barcode, sku, brand_name, category_name
+
+
 def build_public_reserve_detail_response(reserve: models.Reserve) -> schemas.PublicReserveDetailResponse:
     header = build_public_order_status_response(reserve)
-    code, line_title = _public_line_status_from_header(header)
     rows = sorted(reserve.items or [], key=lambda x: x.id or 0)
     items_out: list[schemas.PublicReserveLineItem] = []
     for it in rows:
+        code, line_title = _public_line_status_for_item(it, header)
         qty = it.quantity if it.quantity is not None else it.quantity_ordered
         price = it.sale_price_snapshot if it.sale_price_snapshot is not None else it.price_kzt
+        barcode, sku, brand_name, category_name = _reserve_line_product_meta(it)
         items_out.append(
             schemas.PublicReserveLineItem(
                 id=it.id,
@@ -124,6 +180,10 @@ def build_public_reserve_detail_response(reserve: models.Reserve) -> schemas.Pub
                 line_total=_decimal_str(it.line_total) if it.line_total is not None else None,
                 line_status=code,
                 line_status_title=line_title,
+                barcode=barcode,
+                sku=sku,
+                brand_name=brand_name,
+                category_name=category_name,
             )
         )
     total = reserve.total_amount_kzt
@@ -138,6 +198,9 @@ def build_public_reserve_detail_response(reserve: models.Reserve) -> schemas.Pub
         is_fulfilled=header.is_fulfilled,
         created_at=header.created_at,
         total_amount=_decimal_str(total),
+        cancellation_reason_code=header.cancellation_reason_code,
+        cancellation_reason_title=header.cancellation_reason_title,
+        cancellation_comment=header.cancellation_comment,
         items=items_out,
     )
 
@@ -150,12 +213,7 @@ def _strip_or_none(val) -> str | None:
 
 
 def _client_ip(request: Request) -> str:
-    fwd = request.headers.get("x-forwarded-for") or request.headers.get("X-Forwarded-For")
-    if fwd:
-        return fwd.split(",")[0].strip()
-    if request.client:
-        return request.client.host
-    return "unknown"
+    return client_ip(request)
 
 
 def _storefront_compatibility(comp: schemas.ProductCompatibilityOut) -> schemas.ProductCompatibilityOut:
@@ -220,6 +278,30 @@ def product_to_public(
     comp = _storefront_compatibility(comp)
     model_public = _storefront_model_text(p, comp)
     gallery = _public_product_gallery(p)
+    compat_labels: list[str] = []
+    compat_primary: str | None = None
+    compat_more_brands = 0
+    compat_groups: list[schemas.CompatibilityBrandGroup] = []
+    if comp and comp.vehicle_models:
+        compat_primary, compat_more_brands, compat_labels, compat_groups = compatibility_storefront_meta(comp)
+    elif comp and comp.engine_code_compatibility:
+        for x in comp.engine_code_compatibility:
+            s = f"{x.brand} {x.model}".strip()
+            if s and s not in compat_labels:
+                compat_labels.append(s)
+        compat_primary = compat_labels[0] if compat_labels else None
+        compat_more_brands = max(0, len(compat_labels) - 1)
+    compat_text = ", ".join(compat_labels) if compat_labels else model_public
+    attr_labels = attribute_labels_from_product(db, p) if db is not None else []
+    storefront_fields = storefront_fields_from_product(db, p) if db is not None else []
+    if not storefront_fields and attr_labels:
+        for line in attr_labels:
+            if ": " in line:
+                lbl, val = line.split(": ", 1)
+                storefront_fields.append({"label": lbl, "value": val})
+            else:
+                storefront_fields.append({"label": line, "value": ""})
+    raw_attrs = p.attributes if isinstance(getattr(p, "attributes", None), dict) else None
     return schemas.PublicProductResponse(
         id=p.id,
         name=p.name,
@@ -234,7 +316,16 @@ def product_to_public(
         model=model_public,
         article=p.sku,
         oem=p.barcode,
+        attributes=raw_attrs,
+        attribute_labels=attr_labels,
+        storefront_fields=storefront_fields,
         compatibility=comp,
+        compatibility_text=compat_text,
+        compatibility_labels=compat_labels,
+        compatibility_primary=compat_primary,
+        compatibility_more_count=compat_more_brands,
+        compatibility_more_brands=compat_more_brands,
+        compatibility_groups=compat_groups,
     )
 
 
@@ -312,6 +403,23 @@ def _apply_product_filters(
         term = q.strip()
         if term:
             like = f"%{term}%"
+            compat_pid_q = (
+                db.query(models.ProductVehicleModelLink.product_id)
+                .join(
+                    models.VehicleModel,
+                    models.VehicleModel.id == models.ProductVehicleModelLink.vehicle_model_id,
+                )
+                .join(
+                    models.VehicleBrand,
+                    models.VehicleBrand.id == models.VehicleModel.vehicle_brand_id,
+                )
+                .filter(
+                    or_(
+                        models.VehicleBrand.name.ilike(like),
+                        models.VehicleModel.name.ilike(like),
+                    )
+                )
+            )
             query = query.filter(
                 or_(
                     models.Product.name.ilike(like),
@@ -323,6 +431,7 @@ def _apply_product_filters(
                     models.Category.name.ilike(like),
                     models.Brand.name.ilike(like),
                     models.Product.description.ilike(like),
+                    models.Product.id.in_(compat_pid_q),
                 )
             )
     if category_id is not None:
@@ -365,11 +474,29 @@ def _apply_product_filters(
             query = query.filter(models.Product.brand_id == brand_id)
     if model and model.strip():
         m = f"%{model.strip()}%"
+        compat_pid_m = (
+            db.query(models.ProductVehicleModelLink.product_id)
+            .join(
+                models.VehicleModel,
+                models.VehicleModel.id == models.ProductVehicleModelLink.vehicle_model_id,
+            )
+            .join(
+                models.VehicleBrand,
+                models.VehicleBrand.id == models.VehicleModel.vehicle_brand_id,
+            )
+            .filter(
+                or_(
+                    models.VehicleModel.name.ilike(m),
+                    models.VehicleBrand.name.ilike(m),
+                )
+            )
+        )
         query = query.filter(
             or_(
                 models.Product.model.ilike(m),
                 models.Product.name.ilike(m),
                 models.Product.description.ilike(m),
+                models.Product.id.in_(compat_pid_m),
             )
         )
     if year and str(year).strip():
@@ -736,9 +863,19 @@ def create_public_order(
     return schemas.PublicOrderCreateResponse(ok=True, reserve_id=reserve.id)
 
 
+_LOOKUP_RATE = int(os.getenv("PUBLIC_LOOKUP_RATE_LIMIT", "20"))
+_LOOKUP_WINDOW = int(os.getenv("PUBLIC_LOOKUP_RATE_WINDOW_SEC", "60"))
+
+
+def _guard_lookup_rate(request: Request) -> None:
+    if not check_rate_limit("order_lookup", _client_ip(request), _LOOKUP_RATE, _LOOKUP_WINDOW):
+        raise HTTPException(status_code=429, detail="Слишком много запросов, попробуйте позже")
+
+
 @router.get("/orders/{reserve_id}", response_model=schemas.PublicOrderStatusResponse)
 def get_public_order_status(
     reserve_id: int,
+    request: Request,
     phone: str = Query(
         ...,
         min_length=5,
@@ -751,6 +888,7 @@ def get_public_order_status(
     Статус заказа для клиента витрины. Телефон должен совпадать с заказом (защита от просмотра чужих заказов).
     После отмены в админке `is_cancelled=true`, `status_title` поясняет результат.
     """
+    _guard_lookup_rate(request)
     r = db.query(models.Reserve).filter(models.Reserve.id == reserve_id).first()
     if not r or (r.source or "") != "website":
         raise HTTPException(status_code=404, detail=_PUBLIC_ORDER_NOT_FOUND)
@@ -762,6 +900,7 @@ def get_public_order_status(
 @router.get("/reserves/{reserve_id}", response_model=schemas.PublicReserveDetailResponse)
 def get_public_reserve_detail(
     reserve_id: int,
+    request: Request,
     phone: str = Query(
         ...,
         min_length=5,
@@ -774,9 +913,17 @@ def get_public_reserve_detail(
     Позиции и статусы (по заказу) для «Мои заказы» на витрине.
     Тот же `phone`, что и у GET /public/orders/{id} — без просмотра чужих заказов.
     """
+    _guard_lookup_rate(request)
     r = (
         db.query(models.Reserve)
-        .options(joinedload(models.Reserve.items))
+        .options(
+            joinedload(models.Reserve.items)
+            .joinedload(models.ReserveItem.product)
+            .joinedload(models.Product.brand_rel),
+            joinedload(models.Reserve.items)
+            .joinedload(models.ReserveItem.product)
+            .joinedload(models.Product.category_rel),
+        )
         .filter(models.Reserve.id == reserve_id)
         .first()
     )

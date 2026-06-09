@@ -18,13 +18,23 @@ def ensure_default_admin() -> None:
         logger.info("SKIP_BOOTSTRAP_ADMIN: пропуск создания администратора")
         return
 
+    is_production = os.getenv("ENVIRONMENT", "development").strip().lower() == "production"
+
     db = SessionLocal()
     try:
         if db.query(models.User).first():
             return
 
         email = os.getenv("ADMIN_EMAIL", "sardor@gmail.com").strip().lower()
-        password = os.getenv("ADMIN_PASSWORD", "123401")
+        password = os.getenv("ADMIN_PASSWORD", "" if is_production else "123401")
+
+        # В проде не создаём админа с дефолтным/слабым паролем — требуем ADMIN_PASSWORD.
+        if is_production and (not password or len(password) < 8):
+            logger.error(
+                "Не создан администратор: в production задайте надёжный ADMIN_PASSWORD (>=8 символов) "
+                "в .env и перезапустите."
+            )
+            return
 
         user = models.User(
             email=email,

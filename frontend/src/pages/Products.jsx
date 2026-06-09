@@ -8,7 +8,12 @@ import {
   FiTag, FiUpload, FiDownload, FiX, FiLoader, FiClock, FiPackage, FiGlobe,
 } from 'react-icons/fi';
 import { Button, Modal, Input, TextArea, LoadingSpinner, Alert } from '../components/ui';
-import { productApi, resolveUploadedAssetUrl, compatibilityApi, getApiErrorMessage } from '../api/client';
+import { productApi, resolveUploadedAssetUrl, compatibilityApi, categoryApi, getApiErrorMessage } from '../api/client';
+import CategoryPicker, { findGroupIdForCategory, findCategoryInTree } from '../components/CategoryPicker';
+import ProductFormByLayout from '../components/ProductFormByLayout';
+import VehicleCompatibilityPicker from '../components/VehicleCompatibilityPicker';
+import { formatAttributePreview } from '../components/CategoryAttributeFields';
+import { syncPrimaryVehicleFromSelection } from '../utils/productDisplayUtils';
 import { importExcelStream } from '../api/importExcelStream';
 import { settingsApi } from '../api/settings';
 import { generateEAN13 } from '../utils/barcodeGen';
@@ -129,6 +134,7 @@ function getCatColor(cat) {
 
 const emptyForm = () => ({
   id: null, name: '', sku: '', barcode: '', brand: '', model: '', category: '',
+  category_id: null, category_group_id: null, attributes: {},
   purchase_price: 0, sale_price: 0, cny_price: '', delivery_cost_kzt: '', delivery_weight_kg: '',
   quantity: 0, min_quantity: 0, description: '', supplier: '', storage_location: '',
   image_url: '',
@@ -170,7 +176,6 @@ function buildPayload(formData, cnyRate = 65) {
   const skuTrim = formData.sku?.trim();
   const cny = optionalNum(formData.cny_price);
   const purchase = effectivePurchaseTenge(formData, cnyRate);
-  const efs = formData.compatibility_engine_family_ids || [];
   const vms = formData.compatibility_vehicle_model_ids || [];
   return {
     id: formData.id ?? null,
@@ -180,9 +185,11 @@ function buildPayload(formData, cnyRate = 65) {
     brand: normalizeVehicleField(formData.brand) || null,
     model: normalizeVehicleField(formData.model) || null,
     category: formData.category?.trim() || null,
+    category_id: formData.category_id || null,
+    attributes: Object.keys(formData.attributes || {}).length ? formData.attributes : null,
     description: formData.description?.trim() || null,
     supplier: formData.supplier?.trim() || null,
-    engine_code_id: formData.engine_code_id || null,
+    engine_code_id: null,
     location_zone: formData.storage_location?.trim() || null,
     purchase_price: purchase,
     sale_price: num(formData.sale_price),
@@ -193,9 +200,8 @@ function buildPayload(formData, cnyRate = 65) {
     min_quantity: parseInt(formData.min_quantity, 10) || 0,
     show_on_storefront: formData.show_on_storefront !== false,
     ...(formData.id
-      ? { compatibility_engine_family_ids: efs, compatibility_vehicle_model_ids: vms }
+      ? { compatibility_vehicle_model_ids: vms }
       : {
-          ...(efs.length ? { compatibility_engine_family_ids: efs } : {}),
           ...(vms.length ? { compatibility_vehicle_model_ids: vms } : {}),
         }),
   };
@@ -231,6 +237,8 @@ const Products = () => {
   const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('');
+  const [selectedCategoryId, setSelectedCategoryId] = useState(null);
+  const [legacyOnlyFilter, setLegacyOnlyFilter] = useState(false);
   const [showStale, setShowStale] = useState(false);
   /** '' = все, 'on' = на витрине, 'off' = скрыто с сайта */
   const [storefrontFilter, setStorefrontFilter] = useState('');
@@ -331,120 +339,46 @@ const Products = () => {
     return settingsDeliveryRate;
   }, [deliveryMode, customDeliveryRate, settingsDeliveryRate]);
 
-  const { data: compatEngineFamilies = [] } = useQuery({
-    queryKey: ['compatibility', 'engine-codes'],
-    queryFn: () => compatibilityApi.engineCodes().then((r) => r.data),
+  const { data: categoryTree = [] } = useQuery({
+    queryKey: ['categories', 'tree'],
+    queryFn: () => categoryApi.getTree({ active_only: true }).then((r) => r.data),
+    staleTime: 120000,
+  });
+
+  const selectedSubcategorySchema = useMemo(() => {
+    const cat = findCategoryInTree(categoryTree, formData.category_id);
+    return cat?.attribute_schema || null;
+  }, [categoryTree, formData.category_id]);
+
+  const showCompatibilityBlock = Boolean(selectedSubcategorySchema?.show_compatibility);
+
+  const { data: vehicleBrands = [] } = useQuery({
+    queryKey: ['compatibility', 'vehicle-brands'],
+    queryFn: () => compatibilityApi.vehicleBrands().then((r) => r.data),
     staleTime: 60000,
   });
-  const manualCompatOptions = useMemo(() => {
-    const map = new Map();
-    (compatEngineFamilies || []).forEach((code) => {
-      (code.compatibility || []).forEach((row) => {
-        const brand = normalizeVehicleField(row.brand || '');
-        const models = splitVehicleModels(row.model || '');
-        if (!brand || !models.length) return;
-        models.forEach((m) => {
-          const key = `${brand}::${m}`;
-          if (!map.has(key)) {
-            map.set(key, { id: key, brand: { name: brand }, name: m });
-          }
-        });
-      });
-    });
-    return Array.from(map.values()).sort((a, b) => `${a.brand.name} ${a.name}`.localeCompare(`${b.brand.name} ${b.name}`, 'ru'));
-  }, [compatEngineFamilies]);
 
-  const [compatVmFilter, setCompatVmFilter] = useState('');
-  const filteredCompatVehicles = useMemo(() => {
-    const q = compatVmFilter.trim().toLowerCase();
-    if (!q) return manualCompatOptions;
-    return manualCompatOptions.filter((vm) => {
-      const b = (vm.brand && vm.brand.name) || '';
-      return `${b} ${vm.name}`.toLowerCase().includes(q);
-    });
-  }, [manualCompatOptions, compatVmFilter]);
-
-  const hasEngineCodes = Boolean(formData.engine_code_id);
-  const { data: selectedEngineCode, isLoading: isEngineCodeLoading, isError: isEngineCodeError } = useQuery({
-    queryKey: ['compatibility', 'engine-code', formData.engine_code_id],
-    queryFn: () => compatibilityApi.getEngineCode(formData.engine_code_id).then((r) => r.data),
-    enabled: showForm && hasEngineCodes,
+  const { data: vehicleModels = [] } = useQuery({
+    queryKey: ['compatibility', 'vehicle-models'],
+    queryFn: () => compatibilityApi.vehicleModels().then((r) => r.data),
+    staleTime: 60000,
   });
 
-  const codeDerivedSync = useMemo(() => {
-    if (!hasEngineCodes) return { ready: true, noCodes: true, list: [], first: null };
-    if (!selectedEngineCode) return { ready: false, noCodes: false, list: [], first: null };
-    const rawList = selectedEngineCode.compatibility || [];
-    const expanded = [];
-    rawList.forEach((item) => {
-      const brand = normalizeVehicleField(item.brand || '');
-      const modelParts = splitVehicleModels(item.model || '');
-      if (!modelParts.length) {
-        expanded.push({ ...item, brand, model: normalizeVehicleField(item.model || '') });
-        return;
-      }
-      modelParts.forEach((part, idx) => {
-        expanded.push({
-          ...item,
-          id: `${item.id}-${idx}`,
-          brand,
-          model: part,
-        });
-      });
-    });
-    return { ready: true, noCodes: false, list: expanded, first: expanded[0] || null };
-  }, [hasEngineCodes, selectedEngineCode]);
-
-  const hadEngineCodeRef = useRef(false);
   useEffect(() => {
-    if (!showForm) {
-      hadEngineCodeRef.current = false;
-      return;
-    }
-    if (hadEngineCodeRef.current && !hasEngineCodes) {
-      setFormData((p) => ({ ...p, compatibility_vehicle_model_ids: [] }));
-    }
-    hadEngineCodeRef.current = hasEngineCodes;
-    if (!hasEngineCodes) return;
-    if (!codeDerivedSync.ready) return;
-    setFormData((p) => {
-      const first = codeDerivedSync.first;
-      if (!first) return p;
-      const nextBrand = pickPrimaryVehicleToken(first.brand);
-      const nextModel = pickPrimaryVehicleToken(first.model);
-      const same = p.brand === nextBrand && p.model === nextModel;
-      if (same) return p;
-      return {
-        ...p,
-        brand: nextBrand,
-        model: nextModel,
-      };
-    });
-  }, [showForm, hasEngineCodes, codeDerivedSync]);
+    if (!formData.category_id || formData.category_group_id || !categoryTree.length) return;
+    const gid = findGroupIdForCategory(categoryTree, formData.category_id);
+    if (gid) setFormData((prev) => ({ ...prev, category_group_id: gid }));
+  }, [categoryTree, formData.category_id, formData.category_group_id]);
 
-  const handleSelectEngineCode = useCallback((value) => {
-    const codeId = value ? Number(value) : null;
-    const selected = Number.isFinite(codeId)
-      ? compatEngineFamilies.find((x) => Number(x.id) === codeId)
-      : null;
-    const first = selected?.compatibility?.[0] || null;
-    setFormData((fd) => ({
-      ...fd,
-      engine_code_id: Number.isFinite(codeId) ? codeId : null,
-      compatibility_engine_family_ids: Number.isFinite(codeId) ? [codeId] : [],
-      brand: first ? pickPrimaryVehicleToken(first.brand || '') : fd.brand,
-      model: first ? pickPrimaryVehicleToken(first.model || '') : fd.model,
-    }));
-  }, [compatEngineFamilies]);
-
-  const handleToggleVehicleModel = useCallback((id) => {
-    setFormData((fd) => {
-      const s = new Set(fd.compatibility_vehicle_model_ids || []);
-      if (s.has(id)) s.delete(id);
-      else s.add(id);
-      return { ...fd, compatibility_vehicle_model_ids: [...s] };
-    });
-  }, []);
+  const handleCompatibilityChange = useCallback((ids) => {
+    const selected = (vehicleModels || []).filter((m) => (ids || []).includes(m.id));
+    setFormData((fd) =>
+      syncPrimaryVehicleFromSelection(
+        { ...fd, compatibility_vehicle_model_ids: ids || [] },
+        selected,
+      ),
+    );
+  }, [vehicleModels]);
 
   // openVoiceAdd: открыть форму нового товара (как «Добавить»)
   // openAdd + barcode: со страницы продаж
@@ -492,13 +426,15 @@ const Products = () => {
     isFetchingNextPage,
     isFetching,
   } = useInfiniteQuery({
-    queryKey: ['products', search, selectedCategory, storefrontFilter],
+    queryKey: ['products', search, selectedCategory, selectedCategoryId, legacyOnlyFilter, storefrontFilter],
     placeholderData: keepPreviousData,
     queryFn: async ({ pageParam = 0 }) => {
       try {
         const r = await productApi.getAll({
           search: search || undefined,
-          category: selectedCategory || undefined,
+          category: selectedCategoryId ? undefined : (selectedCategory || undefined),
+          category_id: selectedCategoryId || undefined,
+          legacy_only: legacyOnlyFilter ? true : undefined,
           show_on_storefront:
             storefrontFilter === 'on' ? true : storefrontFilter === 'off' ? false : undefined,
           skip: pageParam,
@@ -1024,6 +960,9 @@ const Products = () => {
       compatibility_vehicle_model_ids: (p.compatibility?.vehicle_models || []).map((x) => x.id),
       engine_code_id: p.engine_code?.id || null,
       show_on_storefront: p.show_on_storefront !== false,
+      category_id: p.category_id || null,
+      category_group_id: findGroupIdForCategory(categoryTree, p.category_id),
+      attributes: p.attributes && typeof p.attributes === 'object' ? { ...p.attributes } : {},
     });
     setGalleryFocusIdx(0);
     setImageBlobUrl((prev) => {
@@ -1041,6 +980,25 @@ const Products = () => {
     const body = { ...payload };
     if (opts.allowDuplicateSku) body.allow_duplicate_sku = true;
     saveMutation.mutate(forceCreateMode ? { ...body, id: null, _forceCreate: true } : body);
+  };
+
+  const handleCreateCopy = () => {
+    setFormData((prev) => ({
+      ...prev,
+      id: null,
+      sku: '',
+      barcode: generateEAN13(),
+      image_url: '',
+      image_urls: [],
+    }));
+    setBarcodeLocked(false);
+    setForceCreateMode(true);
+    toast.success('Копия: артикул пустой, новый штрих-код');
+  };
+
+  const handleMigrateProduct = (product) => {
+    handleEdit(product);
+    toast('Данные перенесены — выберите категорию и заполните характеристики', { icon: 'ℹ️' });
   };
 
   const handleSubmit = async (e) => {
@@ -1353,7 +1311,6 @@ const Products = () => {
     toast.success('Список обновлён');
   }, [queryClient]);
 
-  const listId = 'product-category-suggestions';
 
   /* Только первый холодный старт: иначе при смене search весь экран → Spinner и инпут размонтируется (потеря фокуса). */
   if (isPending && !productsPages) {
@@ -1524,7 +1481,15 @@ const Products = () => {
           )}
         </div>
         <div className="catalog-chips-scroll">
-          <button type="button" className={`catalog-chip ${selectedCategory === '' && !showStale && !storefrontFilter ? 'catalog-chip-active' : ''}`} onClick={() => { setSelectedCategory(''); setShowStale(false); setStorefrontFilter(''); }}>Все</button>
+          <button type="button" className={`catalog-chip ${selectedCategory === '' && !selectedCategoryId && !legacyOnlyFilter && !showStale && !storefrontFilter ? 'catalog-chip-active' : ''}`} onClick={() => { setSelectedCategory(''); setSelectedCategoryId(null); setLegacyOnlyFilter(false); setShowStale(false); setStorefrontFilter(''); }}>Все</button>
+          <button type="button" className={`catalog-chip ${legacyOnlyFilter ? 'catalog-chip-active' : ''}`} onClick={() => { setLegacyOnlyFilter((v) => !v); setSelectedCategory(''); setSelectedCategoryId(null); setShowStale(false); setStorefrontFilter(''); }}>
+            Не обновлённые
+          </button>
+          {(categoryTree || []).flatMap((g) => (g.children || []).map((c) => (
+            <button key={c.id} type="button" className={`catalog-chip ${selectedCategoryId === c.id && !legacyOnlyFilter ? 'catalog-chip-active' : ''}`} onClick={() => { setSelectedCategoryId(c.id); setSelectedCategory(''); setLegacyOnlyFilter(false); setShowStale(false); setStorefrontFilter(''); }}>
+              {c.icon ? `${c.icon} ` : ''}{c.name}
+            </button>
+          )))}
           <button type="button" className={`catalog-chip ${storefrontFilter === 'on' ? 'catalog-chip-active' : ''}`} onClick={() => { setStorefrontFilter('on'); setShowStale(false); }}>
             <FiGlobe size={13} style={{ marginRight: 5 }} />На сайте
           </button>
@@ -1607,9 +1572,14 @@ const Products = () => {
                     <td style={{ padding: '12px 14px', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>{row.brand || <span style={{ color: 'var(--text-muted)' }}>—</span>}</td>
                     <td style={{ padding: '12px 14px', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>{row.model || <span style={{ color: 'var(--text-muted)' }}>—</span>}</td>
                     <td style={{ padding: '12px 14px' }}>
-                      {row.category
-                        ? <span style={{ display: 'inline-flex', alignItems: 'center', borderRadius: 999, padding: '3px 10px', fontSize: 12, fontWeight: 600, background: catColor.bg, color: catColor.color, whiteSpace: 'nowrap', border: '1px solid var(--border-light)' }}>{row.category}</span>
-                        : <span style={{ color: 'var(--text-muted)' }}>—</span>}
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'flex-start' }}>
+                        {(row.is_legacy_category || row.needs_category_refresh) && (
+                          <span style={{ display: 'inline-flex', borderRadius: 999, padding: '2px 8px', fontSize: 10, fontWeight: 700, background: 'rgba(245,158,11,0.15)', color: '#b45309' }}>Обновить</span>
+                        )}
+                        {row.category
+                          ? <span style={{ display: 'inline-flex', alignItems: 'center', borderRadius: 999, padding: '3px 10px', fontSize: 12, fontWeight: 600, background: catColor.bg, color: catColor.color, whiteSpace: 'nowrap', border: '1px solid var(--border-light)' }}>{row.category}</span>
+                          : <span style={{ color: 'var(--text-muted)' }}>—</span>}
+                      </div>
                     </td>
                     <td style={{ padding: '12px 14px', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>{Number(row.purchase_price || 0).toLocaleString('ru-RU')} ₸</td>
                     <td style={{ padding: '12px 14px', fontWeight: 700, color: 'var(--text)', whiteSpace: 'nowrap' }}>{Number(row.sale_price || 0).toLocaleString('ru-RU')} ₸</td>
@@ -1748,6 +1718,9 @@ const Products = () => {
                 <div style={{ marginTop: 8, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
                   {sideProduct.brand && <span style={{ fontSize: 13, color: 'var(--text-secondary)', fontWeight: 600 }}>{sideProduct.brand}</span>}
                   {sideProduct.model && <span style={{ fontSize: 13, color: 'var(--primary)', fontWeight: 700 }}>Модель: {sideProduct.model}</span>}
+                  {(sideProduct.is_legacy_category || sideProduct.needs_category_refresh) && (
+                    <span style={{ padding: '2px 10px', borderRadius: 999, fontSize: 11, fontWeight: 700, background: 'rgba(245,158,11,0.15)', color: '#b45309' }}>Обновить</span>
+                  )}
                   {sideProduct.category && (() => { const cc = getCatColor(sideProduct.category); return <span style={{ padding: '2px 10px', borderRadius: 999, fontSize: 12, fontWeight: 600, background: cc.bg, color: cc.color }}>{sideProduct.category}</span>; })()}
                 </div>
               </div>
@@ -1780,10 +1753,21 @@ const Products = () => {
                 <div style={{ fontSize: 48, fontWeight: 800, letterSpacing: '-0.04em', color: Number(sideProduct.quantity) === 0 ? 'var(--danger)' : Number(sideProduct.quantity) <= 5 ? '#d97706' : 'var(--success)', lineHeight: 1 }}>{sideProduct.quantity ?? 0}</div>
                 <div style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 4, fontWeight: 600 }}>штук</div>
               </div>
+              {formatAttributePreview(findCategoryInTree(categoryTree, sideProduct.category_id)?.attribute_schema, sideProduct.attributes || {}).length > 0 && (
+                <div style={{ padding: '14px 16px', borderRadius: 16, background: 'var(--ios-grouped-bg)', border: '1px solid var(--border)', marginBottom: 18 }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8 }}>Характеристики</div>
+                  <div style={{ fontSize: 14, lineHeight: 1.5, color: 'var(--text)' }}>
+                    {formatAttributePreview(findCategoryInTree(categoryTree, sideProduct.category_id)?.attribute_schema, sideProduct.attributes || {}).join(' · ')}
+                  </div>
+                </div>
+              )}
               {sideProduct.description && <div style={{ padding: '14px 16px', borderRadius: 16, background: 'var(--ios-grouped-bg)', border: '1px solid var(--border)', fontSize: 14, lineHeight: 1.55, color: 'var(--text)', whiteSpace: 'pre-wrap', marginBottom: 18 }}>{sideProduct.description}</div>}
             </div>
             {/* Actions */}
-            <div style={{ padding: '14px 22px 22px', borderTop: '1px solid var(--border)', display: 'flex', gap: 10, background: 'var(--surface)', position: 'sticky', bottom: 0 }}>
+            <div style={{ padding: '14px 22px 22px', borderTop: '1px solid var(--border)', display: 'flex', gap: 10, background: 'var(--surface)', position: 'sticky', bottom: 0, flexWrap: 'wrap' }}>
+              {(sideProduct.is_legacy_category || sideProduct.needs_category_refresh) && (
+                <button type="button" onClick={() => handleMigrateProduct(sideProduct)} style={{ flex: '1 1 100%', padding: '12px', borderRadius: 14, border: '1px solid rgba(245,158,11,0.35)', background: 'rgba(245,158,11,0.1)', color: '#b45309', fontWeight: 700, fontSize: 14, cursor: 'pointer' }}>Обновить категорию</button>
+              )}
               <button type="button" onClick={() => handleEdit(sideProduct)} style={{ flex: 1, padding: '13px', borderRadius: 14, border: 'none', background: 'linear-gradient(135deg, #6366f1, #7c3aed)', color: '#fff', fontWeight: 700, fontSize: 14, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}><FiEdit2 size={16} />Редактировать</button>
               <button type="button" onClick={() => openPrintForRow(sideProduct)} style={{ padding: '13px 16px', borderRadius: 14, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-secondary)', fontWeight: 600, fontSize: 14, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8 }}><FiTag size={16} /></button>
               <button type="button" onClick={(e) => openDeleteConfirm(sideProduct, e)} style={{ padding: '13px 16px', borderRadius: 14, border: '1px solid #fecaca', background: '#fee2e2', color: 'var(--danger)', fontWeight: 600, fontSize: 14, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8 }}><FiTrash2 size={16} /></button>
@@ -1882,6 +1866,9 @@ const Products = () => {
       <Modal isOpen={showForm} title={formData.id ? 'Редактировать товар' : 'Новый товар'} onClose={resetForm} size="xl" icon={formData.id ? FiEdit2 : FiPlus}
         actions={<>
           <Button variant="secondary" onClick={resetForm}>Отмена</Button>
+          {(formData.id || formData.name || formData.barcode) && (
+            <Button variant="secondary" onClick={handleCreateCopy}>Копия</Button>
+          )}
           <Button variant="primary" icon={formData.id ? FiEdit2 : FiPlus} onClick={handleSubmit} loading={saveMutation.isPending}>{formData.id ? 'Сохранить изменения' : 'Сохранить товар'}</Button>
         </>}
       >
@@ -2054,6 +2041,70 @@ const Products = () => {
           </div>
 
         <form className="ios-form-stack" onSubmit={handleSubmit}>
+          <div style={{ padding: '14px 16px', borderRadius: 16, background: 'var(--ios-grouped-bg)', border: '1px solid var(--border)' }}>
+            <CategoryPicker
+              tree={categoryTree}
+              groupId={formData.category_group_id}
+              categoryId={formData.category_id}
+              legacyCategoryText={!formData.category_id ? (formData.category || '') : ''}
+              onChange={({ groupId, categoryId }) => {
+                const sub = findCategoryInTree(categoryTree, categoryId);
+                setFormData((prev) => {
+                  const catChanged = categoryId !== prev.category_id;
+                  return {
+                    ...prev,
+                    category_group_id: groupId,
+                    category_id: categoryId,
+                    category: sub?.name || prev.category,
+                    attributes: catChanged && prev.category_id ? {} : (prev.attributes || {}),
+                  };
+                });
+              }}
+            />
+          </div>
+
+          {!formData.category_id && (
+            <div className="product-form-category-gate">
+              Сначала выберите тип товара — остальные поля откроются после выбора подкатегории.
+            </div>
+          )}
+
+          {formData.id && !formData.category_id && (
+            <div className="product-form-legacy-banner">
+              Этот товар создан по старой схеме. Выберите категорию и при необходимости дополните характеристики. Базовые данные уже сохранены.
+            </div>
+          )}
+
+          {formData.category_id && selectedSubcategorySchema && (
+            <div style={{ padding: '14px 16px', borderRadius: 16, background: 'var(--ios-grouped-bg)', border: '1px solid var(--border)', opacity: formData.category_id ? 1 : 0.45 }}>
+              <ProductFormByLayout
+                schema={selectedSubcategorySchema}
+                formData={formData}
+                onFormDataChange={setFormData}
+                disabled={!formData.category_id}
+                compatibilitySlot={
+                  (showCompatibilityBlock || (formData.compatibility_vehicle_model_ids || []).length > 0) ? (
+                    <VehicleCompatibilityPicker
+                      brands={vehicleBrands}
+                      models={vehicleModels}
+                      selectedIds={formData.compatibility_vehicle_model_ids || []}
+                      onChange={handleCompatibilityChange}
+                    />
+                  ) : null
+                }
+              />
+            </div>
+          )}
+
+          <div style={{ opacity: formData.category_id ? 1 : 0.4, pointerEvents: formData.category_id ? 'auto' : 'none' }}>
+          <Input
+            label="Артикул"
+            placeholder="AUTO-000001 или свой"
+            value={formData.sku || ''}
+            onChange={(e) => setFormData({ ...formData, sku: e.target.value })}
+            style={formData.id ? { border: '1px solid var(--primary)' } : {}}
+          />
+
           <div>
             <span style={{ display: 'block', marginBottom: 8, fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>Штрих-код</span>
             <div style={{ display: 'flex', gap: 8, alignItems: 'stretch', flexWrap: 'wrap' }}>
@@ -2067,7 +2118,7 @@ const Products = () => {
                 autoCapitalize="characters"
                 autoCorrect="off"
                 spellCheck={false}
-                placeholder="Авто: 13 цифр EAN-13; вручную/сканер: цифры, латиница, дефис"
+                placeholder="Для сканера и этикетки (не показывается на витрине как поле)"
               />
               <button type="button" className="topbar-theme-toggle" title={barcodeLocked ? 'Разблокировать' : 'Замкнуть'} onClick={() => setBarcodeLocked((v) => !v)} style={{ padding: '0 12px', display: 'inline-flex', alignItems: 'center', gap: 6 }}>{barcodeLocked ? <FiUnlock size={17} /> : <FiLock size={17} />}<span style={{ fontSize: 12, fontWeight: 600 }}>{barcodeLocked ? 'Разблок.' : 'Замкнуть'}</span></button>
               <button type="button" className="topbar-theme-toggle" title="Новый EAN-13" disabled={barcodeLocked} onClick={() => setFormData({ ...formData, barcode: generateEAN13() })} style={{ padding: '0 10px', opacity: barcodeLocked ? 0.4 : 1 }}><FiRefreshCw size={17} /></button>
@@ -2075,22 +2126,6 @@ const Products = () => {
             </div>
             {formData.barcode && <div style={{ marginTop: 10, padding: 10, borderRadius: 'var(--radius-ios)', background: 'var(--ios-grouped-bg)', border: '1px solid var(--border)', overflow: 'auto' }}><canvas ref={barcodeCanvasRef} style={{ display: 'block', maxWidth: '100%', height: 'auto' }} /></div>}
             {showQrPanel && formData.barcode && <div style={{ marginTop: 10, display: 'flex', justifyContent: 'center', padding: 14, borderRadius: 'var(--radius-ios)', background: '#fff', border: '1px solid var(--border)' }}><QRCodeSVG value={String(formData.barcode)} size={156} level="M" /></div>}
-          </div>
-
-          <div style={{ marginTop: 4 }}>
-            <span style={{ display: 'block', marginBottom: 8, fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>Артикул (SKU)</span>
-            <input
-              className="ios-input"
-              placeholder="Внутренний артикул, OEM — отдельно от штрих-кода"
-              value={formData.sku || ''}
-              onChange={(e) => setFormData({ ...formData, sku: e.target.value })}
-              autoCapitalize="characters"
-              spellCheck={false}
-              style={{ width: '100%', border: formData.id ? '1px solid var(--primary)' : '1px solid var(--border)' }}
-            />
-            <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 6, lineHeight: 1.4 }}>
-              Учётный код для поиска и витрины; штрих-код выше — для сканера и этикетки.
-            </div>
           </div>
 
           <label
@@ -2120,167 +2155,6 @@ const Products = () => {
               </span>
             </span>
           </label>
-
-          <div style={{ display: 'grid', gap: 10 }}>
-            <Input
-              label="Название *"
-              placeholder="Например: Мотор"
-              value={formData.name}
-              onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-              style={formData.id ? { border: '1px solid var(--primary)' } : {}}
-            />
-            <Input
-              label="Марка авто"
-              placeholder="Например: FAW, Changan"
-              value={formData.brand || ''}
-              readOnly={hasEngineCodes}
-              onChange={(e) => {
-                if (hasEngineCodes) return;
-                setFormData({ ...formData, brand: e.target.value });
-              }}
-              style={formData.id ? { border: '1px solid var(--primary)' } : {}}
-            />
-            <Input
-              label="Модель авто"
-              placeholder="Например: Bestune T77"
-              value={formData.model || ''}
-              readOnly={hasEngineCodes}
-              onChange={(e) => {
-                if (hasEngineCodes) return;
-                setFormData({ ...formData, model: e.target.value });
-              }}
-              style={formData.id ? { border: '1px solid var(--primary)' } : {}}
-            />
-            {hasEngineCodes && (
-              <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0, lineHeight: 1.45 }}>
-                Марка и модель подставляются из выбранных кодов. Редактирование: «Настройки → Коды» или снимите коды.
-              </p>
-            )}
-            <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-muted)' }}>Мастер-код двигателя</div>
-            <select
-              className="ios-input"
-              value={formData.engine_code_id || ''}
-              onChange={(e) => handleSelectEngineCode(e.target.value)}
-            >
-              <option value="">Не выбран (универсальный товар)</option>
-              {compatEngineFamilies.map((ef) => (
-                <option key={ef.id} value={ef.id}>
-                  {ef.id}{ef.description ? ` — ${ef.description}` : ''}
-                </option>
-              ))}
-            </select>
-            {hasEngineCodes && isEngineCodeLoading && (
-              <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Загрузка данных кода…</div>
-            )}
-            {hasEngineCodes && isEngineCodeError && (
-              <div style={{ fontSize: 12, color: 'var(--danger)' }}>Не удалось загрузить справочник кода. Повторите позже.</div>
-            )}
-            {hasEngineCodes && codeDerivedSync.ready && codeDerivedSync.list && codeDerivedSync.list.length > 0 && (
-              <div
-                style={{
-                  border: '1px solid var(--border)',
-                  borderRadius: 'var(--radius-ios)',
-                  background: 'var(--ios-grouped-bg)',
-                  overflow: 'auto',
-                  maxHeight: 200,
-                }}
-              >
-                <table
-                  className="compat-code-preview-table"
-                  style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}
-                >
-                  <thead>
-                    <tr style={{ borderBottom: '1px solid var(--border)' }}>
-                      <th
-                        style={{
-                          textAlign: 'left',
-                          padding: '6px 10px',
-                          fontWeight: 600,
-                          color: 'var(--text-muted)',
-                        }}
-                      >
-                        Марка
-                      </th>
-                      <th
-                        style={{
-                          textAlign: 'left',
-                          padding: '6px 10px',
-                          fontWeight: 600,
-                          color: 'var(--text-muted)',
-                        }}
-                      >
-                        Модель
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {codeDerivedSync.list.map((m) => (
-                      <tr key={m.id} style={{ borderBottom: '1px solid var(--border)' }}>
-                        <td style={{ padding: '6px 10px' }}>{m.brand || '—'}</td>
-                        <td style={{ padding: '6px 10px' }}>{m.model || '—'}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-            {hasEngineCodes && codeDerivedSync.ready && (!codeDerivedSync.list || codeDerivedSync.list.length === 0) && (
-              <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: 0 }}>
-                К выбранным кодам пока не привязаны марки и модели в настройках.
-              </p>
-            )}
-            {!hasEngineCodes && (
-              <>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                  <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-muted)' }}>Авто из справочника (чипы)</span>
-                  <input
-                    className="ios-input"
-                    type="search"
-                    placeholder="Поиск: марка или модель"
-                    value={compatVmFilter}
-                    onChange={(e) => setCompatVmFilter(e.target.value)}
-                    style={{ flex: 1, minWidth: 140, maxWidth: 280, fontSize: 13, padding: '6px 10px' }}
-                    aria-label="Поиск авто в чипах"
-                  />
-                </div>
-                <div
-                  className="catalog-chips-scroll"
-                  style={{ display: 'flex', flexWrap: 'wrap', gap: 8, maxHeight: 160, overflowY: 'auto' }}
-                >
-                  {manualCompatOptions.length === 0 && (
-                    <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>—</span>
-                  )}
-                  {manualCompatOptions.length > 0 && filteredCompatVehicles.length === 0 && (
-                    <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Нет совпадений по поиску</span>
-                  )}
-                  {filteredCompatVehicles.map((vm) => {
-                    const on = (formData.compatibility_vehicle_model_ids || []).includes(vm.id);
-                    const b = (vm.brand && vm.brand.name) || '—';
-                    return (
-                      <button
-                        key={vm.id}
-                        type="button"
-                        className={`catalog-chip ${on ? 'catalog-chip-active' : ''}`}
-                        onClick={() => handleToggleVehicleModel(vm.id)}
-                        style={{ padding: '6px 12px', fontSize: 12 }}
-                      >
-                        {b} · {vm.name}
-                      </button>
-                    );
-                  })}
-                </div>
-              </>
-            )}
-          </div>
-
-          <div>
-            <span style={{ display: 'block', marginBottom: 8, fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>Категория</span>
-            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 8 }}>
-              {safeCategories.slice(0, 8).map((cat) => (<button key={cat} type="button" className={`catalog-chip ${formData.category === cat ? 'catalog-chip-active' : ''}`} style={{ padding: '7px 14px', fontSize: 13 }} onClick={() => setFormData({ ...formData, category: cat })}>{cat}</button>))}
-            </div>
-            <input className="ios-input" list={listId} placeholder="Введите или выберите" value={formData.category || ''} onChange={(e) => setFormData({ ...formData, category: e.target.value })} style={formData.id ? { border: '1px solid var(--primary)' } : {}} />
-            <datalist id={listId}>{safeCategories.map((c) => <option key={c} value={c} />)}</datalist>
-          </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
             <Input
@@ -2421,6 +2295,8 @@ const Products = () => {
           </div>
 
           <TextArea label="Доп. информация" placeholder="По желанию" value={formData.description || ''} onChange={(e) => setFormData({ ...formData, description: e.target.value })} />
+
+          </div>
 
           <div style={{ padding: '12px 14px', borderRadius: 'var(--radius-ios)', background: 'var(--ios-grouped-bg)', border: '1px solid var(--border)', fontSize: 14, fontWeight: 600, color: 'var(--text-secondary)' }}>
             Прибыль:{' '}

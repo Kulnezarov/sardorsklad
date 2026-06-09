@@ -314,7 +314,12 @@ export const orderApi = {
   getAll: (params = {}) => apiClient.get('/api/v1/orders', { params }),
   getById: (id) => apiClient.get(`/api/v1/orders/${id}`),
   updateStatus: (id, data) => apiClient.put(`/api/v1/orders/${id}/status`, data),
-  retryNotifications: () => apiClient.post('/api/v1/orders/notifications/retry'),
+  cancelItem: (orderId, itemId) => apiClient.post(`/api/v1/orders/${orderId}/items/${itemId}/cancel`),
+  retryNotification: (orderId) => apiClient.post(`/api/v1/orders/${orderId}/notifications/retry`),
+  retryNotifications: (reserveId) =>
+    apiClient.post('/api/v1/orders/notifications/retry', null, {
+      params: reserveId ? { reserve_id: reserveId } : undefined,
+    }),
 }
 
 // ============================================================================
@@ -351,10 +356,12 @@ export const compatibilityApi = {
 }
 
 export const categoryApi = {
-  getAll: () => apiClient.get('/api/v1/categories'),
+  getAll: (params = {}) => apiClient.get('/api/v1/categories', { params }),
+  getTree: (params = {}) => apiClient.get('/api/v1/categories/tree', { params }),
   create: (data) => apiClient.post('/api/v1/categories', data),
   update: (id, data) => apiClient.put(`/api/v1/categories/${id}`, data),
   delete: (id) => apiClient.delete(`/api/v1/categories/${id}`),
+  seedDefaults: () => apiClient.post('/api/v1/categories/seed-defaults'),
 }
 
 export const brandApi = {

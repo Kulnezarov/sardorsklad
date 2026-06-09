@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
@@ -14,16 +14,33 @@ import {
   FiX,
   FiCopy,
   FiMessageCircle,
+  FiArrowLeft,
+  FiSend,
 } from 'react-icons/fi';
 import { orderApi } from '../api/client';
 
 /** Фильтр по точному статусу в API (старые заказы могут иметь «Новый заказ с сайта») */
 const FILTER_STATUSES = ['', 'Новый заказ', 'Новый заказ с сайта', 'Выдано', 'Отменен'];
 
+const ALMATY_TZ = 'Asia/Almaty';
+
 const money = (v) => Number(v || 0).toLocaleString('ru-RU', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
 
 const fmtWhen = (d) =>
-  d ? new Date(d).toLocaleString('ru-RU', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—';
+  d
+    ? new Date(d).toLocaleString('ru-RU', {
+        timeZone: ALMATY_TZ,
+        day: '2-digit',
+        month: 'short',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+      })
+    : '—';
+
+const lineStatusOf = (it) => it?.line_status || 'pending';
+
+const isActiveLine = (it) => lineStatusOf(it) !== 'cancelled';
 
 const sourceLabel = (s) => {
   if (s === 'website') return 'Сайт';
@@ -67,7 +84,9 @@ function digitsForWhatsApp(raw) {
 }
 
 function buildItemsLines(order) {
-  return (order.items || []).map((it) => {
+  return (order.items || [])
+    .filter(isActiveLine)
+    .map((it) => {
     const n = it.product_name || it.name || 'Товар';
     const q = it.quantity ?? it.quantity_ordered ?? 0;
     const a = lineAmountItem(it);
@@ -126,6 +145,8 @@ export default function Orders() {
   const [source, setSource] = useState('');
   const [search, setSearch] = useState('');
   const [selected, setSelected] = useState(null);
+  const [selectedLine, setSelectedLine] = useState(null);
+  const [mobileDetail, setMobileDetail] = useState(false);
   const [cancelOpen, setCancelOpen] = useState(false);
   const [cancelReason, setCancelReason] = useState('out_of_stock');
   const [cancelComment, setCancelComment] = useState('');
@@ -154,6 +175,25 @@ export default function Orders() {
   });
 
   const selectedOrder = useMemo(() => orders.find((o) => o.id === selected) || null, [orders, selected]);
+
+  useEffect(() => {
+    setSelectedLine(null);
+  }, [selected]);
+
+  useEffect(() => {
+    const onResize = () => {
+      if (window.innerWidth > 900) setMobileDetail(false);
+    };
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+
+  const pickOrder = (id) => {
+    setSelected(id);
+    if (typeof window !== 'undefined' && window.innerWidth <= 900) setMobileDetail(true);
+  };
+
+  const backToList = () => setMobileDetail(false);
 
   const stats = useMemo(() => {
     const list = orders;
@@ -196,6 +236,8 @@ export default function Orders() {
       toast.success(
         vars.nextStatus === 'Выдано' ? 'Заказ выдан, товар списан со склада' : 'Заказ отменён',
       );
+      if (vars.nextStatus === 'Отменен') setCancelOpen(false);
+      setSelectedLine(null);
       queryClient.invalidateQueries({ queryKey: ['orders'] });
       queryClient.invalidateQueries({ queryKey: ['products'] });
       queryClient.invalidateQueries({ queryKey: ['products-stats'] });
@@ -203,12 +245,21 @@ export default function Orders() {
     onError: (err) => toast.error(errMessage(err)),
   });
 
-  const retryTelegram = () => {
-    orderApi
-      .retryNotifications()
-      .then(() => toast.success('Повторная отправка в Telegram запущена'))
-      .catch(() => toast.error('Не удалось запустить повтор'));
-  };
+  const cancelItemMut = useMutation({
+    mutationFn: ({ orderId, itemId }) => orderApi.cancelItem(orderId, itemId),
+    onSuccess: () => {
+      toast.success('Позиция отменена');
+      setSelectedLine(null);
+      queryClient.invalidateQueries({ queryKey: ['orders'] });
+    },
+    onError: (err) => toast.error(errMessage(err)),
+  });
+
+  const retryTelegramMut = useMutation({
+    mutationFn: (orderId) => orderApi.retryNotification(orderId),
+    onSuccess: () => toast.success('Уведомление отправлено в Telegram'),
+    onError: (err) => toast.error(errMessage(err)),
+  });
 
   const lineAmount = (it) => lineAmountItem(it);
 
@@ -236,7 +287,14 @@ export default function Orders() {
       cancellation_reason: cancelReason,
       cancellation_comment: cancelComment,
     });
-    setCancelOpen(false);
+  };
+
+  const handleCancelLine = () => {
+    if (!selectedOrder || !selectedLine) return;
+    const item = (selectedOrder.items || []).find((it) => it.id === selectedLine);
+    if (!item || !isActiveLine(item)) return;
+    if (!window.confirm(`Отменить позицию «${item.product_name}»?`)) return;
+    cancelItemMut.mutate({ orderId: selectedOrder.id, itemId: selectedLine });
   };
 
   const openWhatsApp = (order) => {
@@ -266,13 +324,9 @@ export default function Orders() {
             Заказы
           </h1>
           <p className="orders-subtitle">
-            Имя и сумма выделены. Телефон — кнопка «Скопировать». Готовый текст в WhatsApp — одна кнопка.
+            Выберите заказ слева. Позицию можно отменить отдельно — нажмите строку в таблице и «Отменить позицию».
           </p>
         </div>
-        <button type="button" className="orders-btn-ghost" onClick={retryTelegram}>
-          <FiRefreshCw size={16} aria-hidden />
-          Повторить Telegram
-        </button>
       </header>
 
       <div className="orders-stats">
@@ -338,8 +392,11 @@ export default function Orders() {
         </div>
       </div>
 
-      <div className="orders-layout">
-        <section className="ios-card orders-list-card" aria-label="Список заказов">
+      <div className={`orders-layout ${mobileDetail ? 'orders-layout--detail' : ''}`}>
+        <section
+          className={`ios-card orders-list-card ${mobileDetail ? 'orders-list-card--hidden' : ''}`}
+          aria-label="Список заказов"
+        >
           {isLoading && (
             <div className="orders-empty">
               <div className="ui-skeleton-line" style={{ height: 14, width: '70%', marginBottom: 8 }} />
@@ -360,7 +417,7 @@ export default function Orders() {
                 key={o.id}
                 type="button"
                 className={`orders-list-item ${selected === o.id ? 'orders-list-item--active' : ''}`}
-                onClick={() => setSelected(o.id)}
+                onClick={() => pickOrder(o.id)}
               >
                 <div className="orders-list-item-top">
                   <span className="orders-list-code">
@@ -381,7 +438,16 @@ export default function Orders() {
             ))}
         </section>
 
-        <section className="ios-card orders-detail" aria-label="Детали заказа">
+        <section
+          className={`ios-card orders-detail ${mobileDetail ? 'orders-detail--mobile' : ''}`}
+          aria-label="Детали заказа"
+        >
+          {mobileDetail && selectedOrder ? (
+            <button type="button" className="orders-back-btn" onClick={backToList}>
+              <FiArrowLeft size={18} aria-hidden />
+              К списку
+            </button>
+          ) : null}
           {!selectedOrder ? (
             <div className="orders-detail-placeholder">
               <FiShoppingBag size={40} strokeWidth={1.25} aria-hidden />
@@ -405,29 +471,6 @@ export default function Orders() {
                 </div>
               </div>
 
-              {isPendingOrder(selectedOrder) && (
-                <div className="orders-actions">
-                  <button
-                    type="button"
-                    className="orders-btn-issue"
-                    onClick={handleIssue}
-                    disabled={statusMut.isPending}
-                  >
-                    <FiCheck size={18} aria-hidden />
-                    Выдано
-                  </button>
-                  <button
-                    type="button"
-                    className="orders-btn-cancel"
-                    onClick={handleCancel}
-                    disabled={statusMut.isPending}
-                  >
-                    <FiX size={18} aria-hidden />
-                    Отменить
-                  </button>
-                </div>
-              )}
-
               <div className="orders-contact-btns">
                 <button
                   type="button"
@@ -435,7 +478,7 @@ export default function Orders() {
                   onClick={() => openWhatsApp(selectedOrder)}
                 >
                   <FiMessageCircle size={16} aria-hidden />
-                  Написать в WhatsApp
+                  WhatsApp
                 </button>
                 <button
                   type="button"
@@ -443,7 +486,20 @@ export default function Orders() {
                   onClick={() => copyText(buildManagerClipboardText(selectedOrder), 'Все реквизиты заказа скопированы')}
                 >
                   <FiCopy size={16} aria-hidden />
-                  Скопировать всё
+                  Скопировать
+                </button>
+                <button
+                  type="button"
+                  className="orders-btn-ghost"
+                  onClick={() => retryTelegramMut.mutate(selectedOrder.id)}
+                  disabled={retryTelegramMut.isPending}
+                >
+                  {retryTelegramMut.isPending ? (
+                    <FiRefreshCw size={16} className="orders-spin" aria-hidden />
+                  ) : (
+                    <FiSend size={16} aria-hidden />
+                  )}
+                  Telegram
                 </button>
               </div>
 
@@ -491,8 +547,26 @@ export default function Orders() {
               ) : null}
 
               <div className="orders-items-head">
-                <FiLayers size={16} aria-hidden />
-                Позиции
+                <div className="orders-items-head-row">
+                  <span>
+                    <FiLayers size={16} aria-hidden />
+                    Позиции
+                  </span>
+                  {isPendingOrder(selectedOrder) && selectedLine ? (
+                    <button
+                      type="button"
+                      className="orders-btn-line-cancel"
+                      onClick={handleCancelLine}
+                      disabled={cancelItemMut.isPending}
+                    >
+                      <FiX size={14} aria-hidden />
+                      Отменить позицию
+                    </button>
+                  ) : null}
+                </div>
+                {isPendingOrder(selectedOrder) ? (
+                  <p className="orders-items-hint">Нажмите строку, чтобы выбрать позицию для отмены</p>
+                ) : null}
               </div>
               <div className="orders-table-wrap">
                 <table className="orders-table">
@@ -505,21 +579,63 @@ export default function Orders() {
                     </tr>
                   </thead>
                   <tbody>
-                    {(selectedOrder.items || []).map((it) => (
-                      <tr key={it.id}>
-                        <td>
-                          <strong>{it.product_name}</strong>
-                        </td>
-                        <td className="orders-table-num">{it.quantity ?? it.quantity_ordered}</td>
-                        <td className="orders-table-num">{money(it.sale_price_snapshot ?? it.price_kzt)}</td>
-                        <td className="orders-table-num">
-                          <strong>{money(lineAmount(it))}</strong>
-                        </td>
-                      </tr>
-                    ))}
+                    {(selectedOrder.items || []).map((it) => {
+                      const cancelled = !isActiveLine(it);
+                      const fulfilled = lineStatusOf(it) === 'fulfilled';
+                      return (
+                        <tr
+                          key={it.id}
+                          className={[
+                            cancelled ? 'orders-table-row--cancelled' : '',
+                            selectedLine === it.id ? 'orders-table-row--selected' : '',
+                            isPendingOrder(selectedOrder) && !cancelled ? 'orders-table-row--pickable' : '',
+                          ]
+                            .filter(Boolean)
+                            .join(' ')}
+                          onClick={() => {
+                            if (!isPendingOrder(selectedOrder) || cancelled) return;
+                            setSelectedLine((prev) => (prev === it.id ? null : it.id));
+                          }}
+                        >
+                          <td>
+                            <strong>{it.product_name}</strong>
+                            {cancelled ? <span className="orders-line-badge orders-line-badge--cancel">Отменено</span> : null}
+                            {fulfilled ? <span className="orders-line-badge orders-line-badge--done">Выдано</span> : null}
+                          </td>
+                          <td className="orders-table-num">{it.quantity ?? it.quantity_ordered}</td>
+                          <td className="orders-table-num">{money(it.sale_price_snapshot ?? it.price_kzt)}</td>
+                          <td className="orders-table-num">
+                            <strong>{money(lineAmount(it))}</strong>
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
+
+              {isPendingOrder(selectedOrder) && (
+                <div className="orders-actions orders-actions--sticky">
+                  <button
+                    type="button"
+                    className="orders-btn-issue"
+                    onClick={handleIssue}
+                    disabled={statusMut.isPending || !(selectedOrder.items || []).some(isActiveLine)}
+                  >
+                    <FiCheck size={18} aria-hidden />
+                    Выдано
+                  </button>
+                  <button
+                    type="button"
+                    className="orders-btn-cancel-outline"
+                    onClick={handleCancel}
+                    disabled={statusMut.isPending}
+                  >
+                    <FiX size={18} aria-hidden />
+                    Отменить заказ
+                  </button>
+                </div>
+              )}
             </>
           )}
         </section>
@@ -571,7 +687,7 @@ export default function Orders() {
                   </button>
                   <button
                     type="button"
-                    className="orders-btn-cancel"
+                    className="orders-btn-confirm-cancel"
                     onClick={submitCancel}
                     disabled={statusMut.isPending}
                   >

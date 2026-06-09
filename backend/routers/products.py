@@ -29,6 +29,15 @@ from services.cny_price_history import record_cny_price_history
 from services.product_compatibility import apply_product_compatibility, build_compatibility_out
 from services.product_search import search_products
 from services.product_sku import find_product_by_sku, normalize_sku, sku_conflict_detail
+from services.category_attributes import (
+    get_category_schema,
+    needs_category_refresh,
+    normalize_attributes,
+    sync_category_text,
+    validate_attributes_for_category,
+)
+from services.form_layout import display_layout_from_form_layout, normalize_form_layout
+from services.product_display import sync_custom_fields_to_attributes
 
 router = APIRouter(
     prefix="/api/v1/products",
@@ -94,11 +103,48 @@ def _delete_old_product_image_file(old_url: str | None) -> None:
             pass
 
 
-def _product_to_response_lite(p: models.Product) -> schemas.ProductResponse:
+def _category_meta(db: Session, p: models.Product) -> dict:
+    is_legacy = p.category_id is None
+    group_name = None
+    if p.category_id:
+        cat = getattr(p, "category_rel", None) or db.query(models.Category).filter(models.Category.id == p.category_id).first()
+        if cat and cat.parent_id:
+            parent = db.query(models.Category).filter(models.Category.id == cat.parent_id).first()
+            group_name = parent.name if parent else None
+    return {
+        "is_legacy_category": is_legacy,
+        "category_group_name": group_name,
+        "needs_category_refresh": needs_category_refresh(db, p),
+    }
+
+
+def _apply_product_category_fields(db: Session, payload: dict, *, strict: bool = False) -> None:
+    payload.pop("display_layout", None)
+
+    has_attrs = "attributes" in payload
+    attrs = payload.get("attributes") if has_attrs else None
+    cid = payload.get("category_id")
+    if has_attrs or cid is not None:
+        validated = validate_attributes_for_category(db, cid, attrs, strict=strict)
+        if has_attrs or cid is not None:
+            payload["attributes"] = validated
+    sync_category_text(db, payload)
+
+    if cid:
+        schema = get_category_schema(db, cid) or {}
+        form_layout = normalize_form_layout(schema.get("form_layout"), schema)
+        payload["display_layout"] = display_layout_from_form_layout(form_layout, schema)
+        merged_attrs = sync_custom_fields_to_attributes(payload["display_layout"], payload.get("attributes"))
+        if merged_attrs is not None and has_attrs:
+            payload["attributes"] = validate_attributes_for_category(db, cid, merged_attrs, strict=False)
+
+
+def _product_to_response_lite(db: Session, p: models.Product) -> schemas.ProductResponse:
     """Список товаров: без N+1 по совместимости — смотрите product.model (кэш)."""
     r = schemas.ProductResponse.model_validate(p, from_attributes=True)
     r = _inject_product_gallery(r, p)
-    return r.model_copy(update={"compatibility": schemas.ProductCompatibilityOut()})
+    meta = _category_meta(db, p)
+    return r.model_copy(update={"compatibility": schemas.ProductCompatibilityOut(), **meta})
 
 
 def _product_to_response(db: Session, p: models.Product) -> schemas.ProductResponse:
@@ -110,10 +156,14 @@ def _product_to_response(db: Session, p: models.Product) -> schemas.ProductRespo
         ec = db.query(models.EngineCode).filter(models.EngineCode.id == p.engine_code_id).first()
         if ec:
             engine_code = schemas.EngineCodeBrief.model_validate(ec, from_attributes=True)
-    return r.model_copy(update={"compatibility": comp, "engine_code": engine_code})
+    meta = _category_meta(db, p)
+    return r.model_copy(update={"compatibility": comp, "engine_code": engine_code, **meta})
 
 
 def _apply_engine_code_defaults(db: Session, payload: dict) -> None:
+    """Legacy: подстановка марки/модели из кода двигателя (если ещё используется)."""
+    if payload.get("compatibility_vehicle_model_ids"):
+        return
     engine_code_id = payload.get("engine_code_id")
     if not engine_code_id:
         return
@@ -214,6 +264,8 @@ def list_products(
     limit: int = Query(50_000, ge=1, le=200_000),
     search: Optional[str] = Query(None),
     category: Optional[str] = Query(None),
+    category_id: Optional[int] = Query(None, ge=1),
+    legacy_only: Optional[bool] = Query(None, description="Только товары без новой категории"),
     is_active: Optional[bool] = Query(True),
     show_on_storefront: Optional[bool] = Query(None, description="Фильтр витрины CHPARTS"),
     low_stock: bool = Query(False),
@@ -226,8 +278,15 @@ def list_products(
     if show_on_storefront is not None:
         query = query.filter(models.Product.show_on_storefront == show_on_storefront)
 
-    if category:
+    if category_id is not None:
+        query = query.filter(models.Product.category_id == category_id)
+    elif category:
         query = query.filter(models.Product.category == category)
+
+    if legacy_only is True:
+        query = query.filter(models.Product.category_id.is_(None))
+    elif legacy_only is False:
+        query = query.filter(models.Product.category_id.isnot(None))
 
     if low_stock:
         settings = db.query(models.Settings).first()
@@ -238,7 +297,7 @@ def list_products(
         rows = search_products(query, str(search).strip(), limit=limit, skip=skip)
     else:
         rows = query.order_by(models.Product.created_at.desc()).offset(skip).limit(limit).all()
-    return [_product_to_response_lite(p) for p in rows]
+    return [_product_to_response_lite(db, p) for p in rows]
 
 
 @router.post("/storefront/bulk", response_model=schemas.StorefrontBulkResponse)
@@ -609,6 +668,7 @@ def create_product(
     payload.pop("profit_percent", None)
     v_ids = payload.pop("compatibility_vehicle_model_ids", None)
     e_ids = payload.pop("compatibility_engine_family_ids", None)
+    _apply_product_category_fields(db, payload, strict=False)
     payload["received_at"] = datetime.now(UTC)
     _apply_engine_code_defaults(db, payload)
 
@@ -704,6 +764,21 @@ def update_product(
     ekey = "compatibility_engine_family_ids" in update_data
     v_ids = update_data.pop("compatibility_vehicle_model_ids", None) if vkey else None
     e_ids = update_data.pop("compatibility_engine_family_ids", None) if ekey else None
+
+    if "category_id" in update_data or "attributes" in update_data:
+        merged = {
+            "category_id": update_data.get("category_id", db_product.category_id),
+            "attributes": update_data.get("attributes", db_product.attributes),
+        }
+        _apply_product_category_fields(db, merged, strict=False)
+        if "category_id" in update_data:
+            update_data["category_id"] = merged.get("category_id")
+        if "attributes" in update_data:
+            update_data["attributes"] = merged.get("attributes")
+        if merged.get("display_layout") is not None:
+            update_data["display_layout"] = merged["display_layout"]
+        if "category_id" in update_data:
+            sync_category_text(db, update_data)
 
     before = {
         "quantity": db_product.quantity,

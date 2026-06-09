@@ -1,6 +1,6 @@
 import os
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
 import models
@@ -8,10 +8,14 @@ import schemas
 from database import get_db
 from dependencies import get_current_user
 from security import create_access_token, hash_password, verify_password
+from services.public_rate_limit import check_rate_limit, client_ip
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 
 ALLOW_OPEN_REGISTRATION = os.getenv("ALLOW_OPEN_REGISTRATION", "false").lower() == "true"
+
+_LOGIN_RATE = int(os.getenv("LOGIN_RATE_LIMIT", "10"))
+_LOGIN_WINDOW = int(os.getenv("LOGIN_RATE_WINDOW_SEC", "300"))
 
 
 @router.post("/register", response_model=schemas.AuthTokenResponse)
@@ -43,7 +47,14 @@ def register(payload: schemas.UserRegister, db: Session = Depends(get_db)):
 
 
 @router.post("/login", response_model=schemas.AuthTokenResponse)
-def login(payload: schemas.UserLogin, db: Session = Depends(get_db)):
+def login(payload: schemas.UserLogin, request: Request, db: Session = Depends(get_db)):
+    # Лимит попыток по IP + email — защита от онлайн-перебора паролей.
+    ip = client_ip(request)
+    if not check_rate_limit("login", f"{ip}:{payload.email.lower()}", _LOGIN_RATE, _LOGIN_WINDOW):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Слишком много попыток входа. Попробуйте позже.",
+        )
     user = db.query(models.User).filter(models.User.email == payload.email.lower()).first()
     if not user or not verify_password(payload.password, user.hashed_password):
         raise HTTPException(

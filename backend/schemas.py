@@ -59,6 +59,8 @@ class ProductBase(BaseModel):
     category_id: Optional[int] = Field(None, ge=1)
     brand_id: Optional[int] = Field(None, ge=1)
     engine_code_id: Optional[int] = Field(None, ge=1)
+    attributes: Optional[dict[str, Any]] = None
+    display_layout: Optional[list[dict[str, Any]]] = None
     description: Optional[str] = None
     image_url: Optional[str] = None
     purchase_price: Money10_2
@@ -119,6 +121,9 @@ class ProductUpdate(BaseModel):
     brand: Optional[str] = Field(None, max_length=100)
     model: Optional[str] = Field(None, max_length=120)
     category: Optional[str] = Field(None, max_length=100)
+    category_id: Optional[int] = Field(None, ge=1)
+    attributes: Optional[dict[str, Any]] = None
+    display_layout: Optional[list[dict[str, Any]]] = None
     description: Optional[str] = None
     image_url: Optional[str] = None
     purchase_price: Optional[Money10_2] = None
@@ -259,6 +264,14 @@ class CompatibilityEngineFamilyBrief(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class CompatibilityBrandGroup(BaseModel):
+    brand_id: int
+    brand_name: str
+    models: List[str] = Field(default_factory=list)
+
+    model_config = {"from_attributes": True}
+
+
 class CompatibilityVehicleModelBrief(BaseModel):
     id: int
     name: str
@@ -330,6 +343,9 @@ class ProductResponse(ProductBase):
     id: int
     is_active: bool
     show_on_storefront: bool = True
+    is_legacy_category: bool = False
+    needs_category_refresh: bool = False
+    category_group_name: Optional[str] = None
     created_at: datetime
     updated_at: Optional[datetime]
     last_sale_date: Optional[datetime]
@@ -453,6 +469,7 @@ class ReserveItemResponse(ReserveItemCreate):
     reserve_id: int
     quantity_received: int = 0
     price_kzt: Decimal
+    line_status: str = "pending"
 
     model_config = {"from_attributes": True}
 
@@ -766,7 +783,7 @@ class ImportResult(BaseModel):
 # ============================================================================
 class UserRegister(BaseModel):
     email: EmailStr
-    password: str = Field(..., min_length=6, max_length=128)
+    password: str = Field(..., min_length=8, max_length=128)
     full_name: Optional[str] = Field(None, max_length=255)
 
 
@@ -790,9 +807,27 @@ class AuthTokenResponse(BaseModel):
     user: UserPublic
 
 
+class CategoryAttributeFieldSchema(BaseModel):
+    key: str
+    label: str
+    type: str = "text"
+    options: Optional[List[str]] = None
+    unit: Optional[str] = None
+    required: bool = False
+
+
+class CategoryAttributeSchema(BaseModel):
+    fields: List[CategoryAttributeFieldSchema] = Field(default_factory=list)
+    show_compatibility: bool = False
+
+
 class CategoryBase(BaseModel):
     name: str = Field(..., min_length=1, max_length=120)
     slug: Optional[str] = Field(None, min_length=1, max_length=140)
+    parent_id: Optional[int] = Field(None, ge=1)
+    icon: Optional[str] = Field(None, max_length=20)
+    sort_order: int = 0
+    attribute_schema: Optional[dict[str, Any]] = None
     is_active: bool = True
 
 
@@ -803,6 +838,10 @@ class CategoryCreate(CategoryBase):
 class CategoryUpdate(BaseModel):
     name: Optional[str] = Field(None, min_length=1, max_length=120)
     slug: Optional[str] = Field(None, min_length=1, max_length=140)
+    parent_id: Optional[int] = Field(None, ge=1)
+    icon: Optional[str] = Field(None, max_length=20)
+    sort_order: Optional[int] = None
+    attribute_schema: Optional[dict[str, Any]] = None
     is_active: Optional[bool] = None
 
 
@@ -810,11 +849,36 @@ class CategoryResponse(BaseModel):
     id: int
     name: str
     slug: str
+    parent_id: Optional[int] = None
+    icon: Optional[str] = None
+    sort_order: int = 0
+    attribute_schema: Optional[dict[str, Any]] = None
     is_active: bool
     created_at: datetime
     updated_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class CategoryTreeChild(BaseModel):
+    id: int
+    name: str
+    slug: str
+    icon: Optional[str] = None
+    sort_order: int = 0
+    attribute_schema: Optional[dict[str, Any]] = None
+    has_form_layout: bool = False
+    is_active: bool = True
+
+
+class CategoryTreeGroup(BaseModel):
+    id: int
+    name: str
+    slug: str
+    icon: Optional[str] = None
+    sort_order: int = 0
+    is_active: bool = True
+    children: List[CategoryTreeChild] = Field(default_factory=list)
 
 
 class BrandBase(BaseModel):
@@ -859,7 +923,16 @@ class PublicProductResponse(BaseModel):
     model: Optional[str] = None
     article: Optional[str] = None  # артикул (sku)
     oem: Optional[str] = None  # штрихкод / OEM при наличии
+    attributes: Optional[dict[str, Any]] = None
+    attribute_labels: List[str] = Field(default_factory=list)
+    storefront_fields: List[dict[str, str]] = Field(default_factory=list)
     compatibility: ProductCompatibilityOut = Field(default_factory=ProductCompatibilityOut)
+    compatibility_text: Optional[str] = None
+    compatibility_labels: List[str] = Field(default_factory=list)
+    compatibility_primary: Optional[str] = None
+    compatibility_more_count: int = 0
+    compatibility_more_brands: int = 0
+    compatibility_groups: List[CompatibilityBrandGroup] = Field(default_factory=list)
 
     model_config = {"from_attributes": True}
 
@@ -926,6 +999,9 @@ class PublicOrderStatusResponse(BaseModel):
     is_cancelled: bool
     is_fulfilled: bool
     created_at: datetime
+    cancellation_reason_code: Optional[str] = None
+    cancellation_reason_title: Optional[str] = None
+    cancellation_comment: Optional[str] = None
 
 
 class PublicReserveLineItem(BaseModel):
@@ -938,6 +1014,10 @@ class PublicReserveLineItem(BaseModel):
     line_total: Optional[str] = None
     line_status: str  # pending | fulfilled | cancelled
     line_status_title: str
+    barcode: Optional[str] = None
+    sku: Optional[str] = None
+    brand_name: Optional[str] = None
+    category_name: Optional[str] = None
 
 
 class PublicReserveDetailResponse(BaseModel):
@@ -950,6 +1030,9 @@ class PublicReserveDetailResponse(BaseModel):
     is_fulfilled: bool
     created_at: datetime
     total_amount: str
+    cancellation_reason_code: Optional[str] = None
+    cancellation_reason_title: Optional[str] = None
+    cancellation_comment: Optional[str] = None
     items: List[PublicReserveLineItem]
 
 

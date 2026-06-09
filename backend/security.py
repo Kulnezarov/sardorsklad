@@ -9,7 +9,17 @@ from passlib.context import CryptContext
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
-SECRET_KEY = os.getenv("SECRET_KEY", "change-me-in-production")
+_DEFAULT_SECRET = "change-me-in-production"
+SECRET_KEY = os.getenv("SECRET_KEY", _DEFAULT_SECRET)
+_ENVIRONMENT = os.getenv("ENVIRONMENT", "development").strip().lower()
+
+# В проде запрещаем дефолтный/слабый ключ — иначе можно подделать JWT и получить доступ админа.
+if _ENVIRONMENT == "production" and (SECRET_KEY == _DEFAULT_SECRET or len(SECRET_KEY) < 32):
+    raise RuntimeError(
+        "SECRET_KEY обязателен в production и должен быть длиной не менее 32 символов. "
+        "Сгенерируйте: python -c \"import secrets; print(secrets.token_urlsafe(48))\""
+    )
+
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("JWT_EXPIRE_MINUTES", str(60 * 24 * 7)))
 

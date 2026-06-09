@@ -185,6 +185,11 @@ export async function uploadInvoiceLinesToWarehouse(lines, cnyRate) {
         brand: l.brand || null,
         model: l.model || null,
         category: l.category || null,
+        category_id: l.category_id || null,
+        attributes: l.attributes && typeof l.attributes === 'object' ? l.attributes : null,
+        ...(Array.isArray(l.compatibility_vehicle_model_ids) && l.compatibility_vehicle_model_ids.length
+          ? { compatibility_vehicle_model_ids: l.compatibility_vehicle_model_ids }
+          : {}),
         supplier: l.manufacturer || null,
         description: l.extra_info || null,
         cny_price: num(l.cny_price) > 0 ? roundMoney2(num(l.cny_price)) : null,
@@ -278,6 +283,9 @@ export function warehouseProductToIntakeLine(p) {
     brand: p.brand ? String(p.brand).trim() : null,
     model: p.model ? String(p.model).trim() : null,
     category: p.category ? String(p.category).trim() : null,
+    category_id: p.category_id || null,
+    category_group_id: null,
+    attributes: p.attributes && typeof p.attributes === 'object' ? { ...p.attributes } : {},
     manufacturer: p.supplier ? String(p.supplier).trim() : null,
     extra_info: p.description ? String(p.description).trim() : null,
     cny_price: cny > 0 ? roundMoney2(cny) : null,
@@ -300,5 +308,6 @@ export function copyIntakeLine(src) {
   delete copy.local_photo_paths;
   delete copy.warehouse_image_urls;
   delete copy.intake_photo_data;
+  // category_id, attributes, category_group_id сохраняются — как в мобильном _copyLine
   return copy;
 }

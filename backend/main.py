@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from decimal import Decimal
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -169,13 +169,16 @@ class DecimalJSONResponse(JSONResponse):
         ).encode("utf-8")
 
 
+# В проде скрываем интерактивную документацию и схему API (не светим внутренние эндпоинты).
+_DOCS_ENABLED = os.getenv("ENVIRONMENT", "development").strip().lower() != "production"
+
 app = FastAPI(
     title="SkladPro API",
     description="Smart inventory management system for warehouse management",
     version="1.0.0",
-    docs_url="/api/docs",
-    redoc_url="/api/redoc",
-    openapi_url="/api/openapi.json",
+    docs_url="/api/docs" if _DOCS_ENABLED else None,
+    redoc_url="/api/redoc" if _DOCS_ENABLED else None,
+    openapi_url="/api/openapi.json" if _DOCS_ENABLED else None,
     lifespan=lifespan,
     default_response_class=DecimalJSONResponse,
 )
@@ -220,20 +223,24 @@ async def starlette_http_exception_handler(_request: Request, exc: StarletteHTTP
     return DecimalJSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
 
 
+_IS_PRODUCTION = os.getenv("ENVIRONMENT", "development").strip().lower() == "production"
+
+
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     """Handle unexpected errors."""
     logger.error(f"Unhandled exception: {str(exc)}", exc_info=True)
 
-    return DecimalJSONResponse(
-        status_code=500,
-        content={
-            "error": "Internal server error",
-            "detail": str(exc) if not isinstance(exc, str) else exc,
-            "timestamp": datetime.now(UTC).isoformat(),
-            "path": str(request.url),
-        },
-    )
+    # В проде не раскрываем текст ошибки/путь анонимным клиентам (утечка SQL, путей, стека).
+    content = {
+        "error": "Internal server error",
+        "timestamp": datetime.now(UTC).isoformat(),
+    }
+    if not _IS_PRODUCTION:
+        content["detail"] = str(exc) if not isinstance(exc, str) else exc
+        content["path"] = str(request.url)
+
+    return DecimalJSONResponse(status_code=500, content=content)
 
 
 # ============================================================================
@@ -321,14 +328,10 @@ def health_check():
 
 @app.get("/api/v1/info")
 def api_info():
-    """Get API information."""
+    """Минимальная публичная информация (без окружения и хоста БД)."""
     return {
         "app_name": "SkladPro API",
         "version": "1.0.0",
-        "environment": os.getenv("ENVIRONMENT", "development"),
-        "database_url": os.getenv("DATABASE_URL", "").split("@")[1] if "@" in os.getenv("DATABASE_URL", "") else "configured",
-        "cache_enabled": os.getenv("CACHE_ENABLED", "true").lower() == "true",
-        "notifications_enabled": os.getenv("NOTIFICATIONS_ENABLED", "true").lower() == "true",
     }
 
 
@@ -386,10 +389,13 @@ app.add_middleware(
     expose_headers=["*"],
 )
 
-# Локальное хранилище фото товаров (uploads/*).
+# Локальное хранилище фото товаров. Публично раздаём ТОЛЬКО uploads/products,
+# чтобы не открыть служебные фото накладных (uploads/intake/*) без авторизации.
 uploads_dir = os.getenv("UPLOAD_DIR", "uploads")
 os.makedirs(uploads_dir, exist_ok=True)
-app.mount("/uploads", StaticFiles(directory=uploads_dir), name="uploads")
+_products_uploads = os.path.join(uploads_dir, "products")
+os.makedirs(_products_uploads, exist_ok=True)
+app.mount("/uploads/products", StaticFiles(directory=_products_uploads), name="uploads-products")
 
 
 # ============================================================================

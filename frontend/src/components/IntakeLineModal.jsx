@@ -14,7 +14,11 @@ import {
 import { Button, Modal, TextArea } from './ui';
 import LabelPrint from './LabelPrint';
 import CameraBarcodeScanner from './CameraBarcodeScanner';
-import { productApi, resolveUploadedAssetUrl } from '../api/client';
+import { productApi, categoryApi, compatibilityApi, resolveUploadedAssetUrl } from '../api/client';
+import CategoryPicker, { findGroupIdForCategory, findCategoryInTree } from './CategoryPicker';
+import ProductFormByLayout from './ProductFormByLayout';
+import VehicleCompatibilityPicker from './VehicleCompatibilityPicker';
+import { syncPrimaryVehicleFromSelection } from '../utils/productDisplayUtils';
 import { generateEAN13 } from '../utils/barcodeGen';
 import {
   addCnyHistory,
@@ -54,6 +58,10 @@ function emptyForm() {
     brand: '',
     model: '',
     category: '',
+    category_id: null,
+    category_group_id: null,
+    attributes: {},
+    compatibility_vehicle_model_ids: [],
     manufacturer: '',
     extra_info: '',
     cny_price: '',
@@ -73,6 +81,12 @@ function lineToForm(line) {
     brand: line.brand || '',
     model: line.model || '',
     category: line.category || '',
+    category_id: line.category_id || null,
+    category_group_id: line.category_group_id || null,
+    attributes: line.attributes && typeof line.attributes === 'object' ? { ...line.attributes } : {},
+    compatibility_vehicle_model_ids: Array.isArray(line.compatibility_vehicle_model_ids)
+      ? [...line.compatibility_vehicle_model_ids]
+      : [],
     manufacturer: line.manufacturer || '',
     extra_info: line.extra_info || '',
     cny_price: num(line.cny_price) > 0 ? String(line.cny_price) : '',
@@ -133,16 +147,31 @@ export default function IntakeLineModal({
   const [photoBusy, setPhotoBusy] = useState(false);
   const [showScanner, setShowScanner] = useState(false);
 
-  const { data: categories = [] } = useQuery({
-    queryKey: ['categories'],
-    queryFn: async () => {
-      const r = await productApi.getCategories({ limit: 500 });
-      const data = r.data;
-      if (Array.isArray(data?.categories)) return data.categories;
-      if (Array.isArray(data)) return data;
-      return [];
-    },
+  const { data: categoryTree = [] } = useQuery({
+    queryKey: ['categories', 'tree'],
+    queryFn: () => categoryApi.getTree({ active_only: true }).then((r) => r.data),
+    staleTime: 120_000,
+  });
+
+  const selectedSubcategorySchema = useMemo(() => {
+    const cat = findCategoryInTree(categoryTree, form.category_id);
+    return cat?.attribute_schema || null;
+  }, [categoryTree, form.category_id]);
+
+  const showCompatibilityBlock = Boolean(selectedSubcategorySchema?.show_compatibility);
+
+  const { data: vehicleBrands = [] } = useQuery({
+    queryKey: ['compatibility', 'vehicle-brands'],
+    queryFn: () => compatibilityApi.vehicleBrands().then((r) => r.data),
     staleTime: 60_000,
+    enabled: isOpen && showCompatibilityBlock,
+  });
+
+  const { data: vehicleModels = [] } = useQuery({
+    queryKey: ['compatibility', 'vehicle-models'],
+    queryFn: () => compatibilityApi.vehicleModels().then((r) => r.data),
+    staleTime: 60_000,
+    enabled: isOpen && showCompatibilityBlock,
   });
 
   const localPhotoCount = photos.filter((p) => p.kind === 'pending').length;
@@ -206,7 +235,37 @@ export default function IntakeLineModal({
     else setCnyHistory([]);
   }, [isOpen, line, seedLine]);
 
+  useEffect(() => {
+    if (!isOpen || !form.category_id || form.category_group_id) return;
+    const gid = findGroupIdForCategory(categoryTree, form.category_id);
+    if (gid) setForm((f) => ({ ...f, category_group_id: gid }));
+  }, [isOpen, form.category_id, form.category_group_id, categoryTree]);
+
   const setField = (key, value) => setForm((f) => ({ ...f, [key]: value }));
+
+  const handleCompatibilityChange = useCallback((ids, selectedModels) => {
+    setForm((f) => syncPrimaryVehicleFromSelection(
+      { ...f, compatibility_vehicle_model_ids: ids || [] },
+      selectedModels,
+    ));
+  }, []);
+
+  const intakeFormData = useMemo(() => ({
+    name: form.name,
+    attributes: form.attributes || {},
+    brand: form.brand,
+    model: form.model,
+  }), [form.name, form.attributes, form.brand, form.model]);
+
+  const setIntakeFormData = useCallback((next) => {
+    setForm((f) => ({
+      ...f,
+      name: next.name ?? f.name,
+      attributes: next.attributes ?? f.attributes,
+      brand: next.brand ?? f.brand,
+      model: next.model ?? f.model,
+    }));
+  }, []);
 
   const capField = (key) => {
     setForm((f) => ({ ...f, [key]: capitalizeWords(f[key]) }));
@@ -293,6 +352,12 @@ export default function IntakeLineModal({
         fill('brand', capitalizeWords(p.brand || ''));
         fill('model', capitalizeWords(p.model || ''));
         fill('category', capitalizeWords(p.category || ''));
+        if (p.category_id) next.category_id = p.category_id;
+        if (p.attributes) next.attributes = { ...p.attributes };
+        if (p.compatibility?.vehicle_models?.length) {
+          next.compatibility_vehicle_model_ids = p.compatibility.vehicle_models.map((m) => m.id);
+        }
+        next.category_group_id = findGroupIdForCategory(categoryTree, p.category_id);
         fill('manufacturer', capitalizeWords(p.supplier || ''));
         fill('extra_info', p.description || '');
         if (force || !next.cny_price.trim()) {
@@ -507,6 +572,12 @@ export default function IntakeLineModal({
       brand: form.brand.trim() || null,
       model: form.model.trim() || null,
       category: form.category.trim() || null,
+      category_id: form.category_id || null,
+      category_group_id: form.category_group_id || null,
+      attributes: Object.keys(form.attributes || {}).length ? form.attributes : null,
+      compatibility_vehicle_model_ids: (form.compatibility_vehicle_model_ids || []).length
+        ? form.compatibility_vehicle_model_ids
+        : null,
       manufacturer: form.manufacturer.trim() || null,
       extra_info: form.extra_info.trim() || null,
       cny_price: cnyV > 0 ? cnyV : null,
@@ -674,6 +745,88 @@ export default function IntakeLineModal({
             )}
           </IntakeFormCard>
 
+          <IntakeFormCard title="Категория">
+            <CategoryPicker
+              tree={categoryTree}
+              groupId={form.category_group_id}
+              categoryId={form.category_id}
+              legacyCategoryText={!form.category_id ? (form.category || '') : ''}
+              disabled={readonly}
+              onChange={({ groupId, categoryId }) => {
+                const sub = findCategoryInTree(categoryTree, categoryId);
+                setForm((prev) => {
+                  const catChanged = categoryId !== prev.category_id;
+                  return {
+                    ...prev,
+                    category_group_id: groupId,
+                    category_id: categoryId,
+                    category: sub?.name || prev.category,
+                    attributes: catChanged && prev.category_id ? {} : (prev.attributes || {}),
+                  };
+                });
+              }}
+            />
+            {!form.category_id && !readonly && (
+              <p className="product-form-category-gate" style={{ marginTop: 12, marginBottom: 0 }}>
+                Выберите подкатегорию — поля заполнения появятся ниже.
+              </p>
+            )}
+          </IntakeFormCard>
+
+          {form.category_id && selectedSubcategorySchema && (
+            <IntakeFormCard title="Карточка товара">
+              <ProductFormByLayout
+                schema={selectedSubcategorySchema}
+                formData={intakeFormData}
+                onFormDataChange={setIntakeFormData}
+                disabled={readonly}
+                compatibilitySlot={
+                  (showCompatibilityBlock || (form.compatibility_vehicle_model_ids || []).length > 0) ? (
+                    <VehicleCompatibilityPicker
+                      brands={vehicleBrands}
+                      models={vehicleModels}
+                      selectedIds={form.compatibility_vehicle_model_ids || []}
+                      onChange={handleCompatibilityChange}
+                      disabled={readonly}
+                    />
+                  ) : null
+                }
+              />
+            </IntakeFormCard>
+          )}
+
+          {!showCompatibilityBlock && form.category_id && (
+            <div className="intake-form-row-2">
+              <IntakeFormCard title="Марка">
+                <input
+                  className="ios-input"
+                  value={form.brand}
+                  onChange={(e) => setField('brand', e.target.value)}
+                  onBlur={() => capField('brand')}
+                  placeholder="FAW, Changan…"
+                  readOnly={readonly}
+                />
+              </IntakeFormCard>
+              <IntakeFormCard title="Модель">
+                <input
+                  className="ios-input"
+                  value={form.model}
+                  onChange={(e) => setField('model', e.target.value)}
+                  onBlur={() => capField('model')}
+                  placeholder="Bestune T77…"
+                  readOnly={readonly}
+                />
+              </IntakeFormCard>
+            </div>
+          )}
+
+          <div
+            className="intake-form-category-fields"
+            style={{
+              opacity: form.category_id ? 1 : 0.45,
+              pointerEvents: form.category_id && !readonly ? 'auto' : readonly ? 'auto' : 'none',
+            }}
+          >
           <IntakeFormCard title="Артикул">
             <input
               className="ios-input"
@@ -683,57 +836,6 @@ export default function IntakeLineModal({
               placeholder="OEM / внутренний код — подставит данные со склада"
               readOnly={readonly}
             />
-          </IntakeFormCard>
-
-          <IntakeFormCard title="Название *">
-            <input
-              className="ios-input"
-              value={form.name}
-              onChange={(e) => setField('name', e.target.value)}
-              onBlur={() => capField('name')}
-              placeholder="Название товара"
-              readOnly={readonly}
-            />
-          </IntakeFormCard>
-
-          <div className="intake-form-row-2">
-            <IntakeFormCard title="Марка">
-              <input
-                className="ios-input"
-                value={form.brand}
-                onChange={(e) => setField('brand', e.target.value)}
-                onBlur={() => capField('brand')}
-                placeholder="FAW, Changan…"
-                readOnly={readonly}
-              />
-            </IntakeFormCard>
-            <IntakeFormCard title="Модель">
-              <input
-                className="ios-input"
-                value={form.model}
-                onChange={(e) => setField('model', e.target.value)}
-                onBlur={() => capField('model')}
-                placeholder="Bestune T77…"
-                readOnly={readonly}
-              />
-            </IntakeFormCard>
-          </div>
-
-          <IntakeFormCard title="Категория">
-            <input
-              className="ios-input"
-              list="intake-category-list"
-              value={form.category}
-              onChange={(e) => setField('category', e.target.value)}
-              onBlur={() => capField('category')}
-              placeholder="Выберите или введите"
-              readOnly={readonly}
-            />
-            <datalist id="intake-category-list">
-              {categories.map((c) => (
-                <option key={c} value={c} />
-              ))}
-            </datalist>
           </IntakeFormCard>
 
           <IntakeFormCard title="Закуп (¥)">
@@ -896,6 +998,7 @@ export default function IntakeLineModal({
               rows={3}
             />
           </IntakeFormCard>
+          </div>
 
           {!readonly && (
             <IntakeFormCard title="Печать этикетки">

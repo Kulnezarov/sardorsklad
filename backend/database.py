@@ -646,6 +646,51 @@ def ensure_compatibility_table_columns() -> None:
         "sales.discount_percent",
     )
 
+    category_alters = [
+        ("categories.parent_id", "ALTER TABLE categories ADD COLUMN IF NOT EXISTS parent_id INTEGER"),
+        ("categories.attribute_schema", "ALTER TABLE categories ADD COLUMN IF NOT EXISTS attribute_schema JSONB"),
+        ("categories.sort_order", "ALTER TABLE categories ADD COLUMN IF NOT EXISTS sort_order INTEGER DEFAULT 0 NOT NULL"),
+        ("categories.icon", "ALTER TABLE categories ADD COLUMN IF NOT EXISTS icon VARCHAR(20)"),
+        ("products.attributes", "ALTER TABLE products ADD COLUMN IF NOT EXISTS attributes JSONB"),
+        ("products.display_layout", "ALTER TABLE products ADD COLUMN IF NOT EXISTS display_layout JSONB"),
+    ]
+    for label, sql in category_alters:
+        _exec_schema_sql(sql, label)
+
+    _exec_schema_sql(
+        "CREATE INDEX IF NOT EXISTS idx_categories_parent_id ON categories(parent_id);",
+        "categories.idx_parent_id",
+    )
+
+    _exec_schema_sql(
+        """
+        DO $$
+        BEGIN
+          IF NOT EXISTS (
+            SELECT 1 FROM pg_constraint WHERE conname = 'fk_categories_parent_id'
+          ) THEN
+            ALTER TABLE categories
+            ADD CONSTRAINT fk_categories_parent_id
+            FOREIGN KEY (parent_id) REFERENCES categories(id) ON DELETE SET NULL;
+          END IF;
+        EXCEPTION WHEN undefined_table THEN
+          NULL;
+        END $$;
+        """,
+        "categories.fk_parent_id",
+    )
+
+    try:
+        from services.category_seed import seed_default_categories
+
+        with SessionLocal() as db:
+            existing = db.execute(text("SELECT COUNT(*) FROM categories WHERE parent_id IS NOT NULL")).scalar()
+            if not existing:
+                seed_default_categories(db)
+                logger.info("category_seed: default tree seeded")
+    except Exception as e:
+        logger.warning("category_seed: %s", e)
+
 
 def drop_tables():
     """Drop all tables (synchronous, for testing)."""
