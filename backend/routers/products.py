@@ -26,7 +26,12 @@ from dependencies import require_manager_or_admin
 from services.audit import write_audit_log
 from services.excel_products import export_products_xlsx, import_products_from_xlsx
 from services.cny_price_history import record_cny_price_history
-from services.product_compatibility import apply_product_compatibility, build_compatibility_out
+from services.product_compatibility import (
+    apply_product_compatibility,
+    build_car_compatibility_from_model_ids,
+    build_compatibility_out,
+    resolve_car_compatibility_to_model_ids,
+)
 from services.product_search import search_products
 from services.product_sku import find_product_by_sku, normalize_sku, sku_conflict_detail
 from services.category_attributes import (
@@ -856,6 +861,66 @@ def update_product(
     except Exception:
         db.rollback()
         raise HTTPException(status_code=500, detail="Не удалось обновить товар в базе")
+    db.refresh(db_product)
+    return _product_to_response(db, db_product)
+
+
+@router.patch("/{product_id}/update-category", response_model=schemas.ProductResponse)
+@router.patch("/{product_id}/update-category/", response_model=schemas.ProductResponse)
+def update_product_category(
+    product_id: int,
+    payload: schemas.ProductCategoryUpdate,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_manager_or_admin),
+):
+    """Обновить подкатегорию, attributes и совместимость без изменения цен/остатка."""
+    db_product = db.query(models.Product).filter(models.Product.id == product_id).first()
+    if not db_product:
+        raise HTTPException(status_code=404, detail="Product not found")
+
+    sub = db.query(models.Category).filter(models.Category.id == payload.subcategory_id).first()
+    if not sub or not sub.parent_id:
+        raise HTTPException(status_code=400, detail="Выберите подкатегорию, а не группу")
+
+    prev_cat = db_product.category_id
+    if payload.subcategory_id != prev_cat:
+        attrs = payload.attributes if payload.attributes is not None else {}
+    else:
+        attrs = payload.attributes if payload.attributes is not None else db_product.attributes
+
+    merged = {"category_id": payload.subcategory_id, "attributes": attrs}
+    _apply_product_category_fields(db, merged, strict=True)
+    db_product.category_id = merged.get("category_id")
+    db_product.attributes = merged.get("attributes")
+    if merged.get("display_layout") is not None:
+        db_product.display_layout = merged["display_layout"]
+    db_product.category = sub.name
+    db_product.needs_category_refresh = False
+
+    v_ids = payload.compatibility_vehicle_model_ids
+    if v_ids is None and payload.car_compatibility:
+        v_ids = resolve_car_compatibility_to_model_ids(db, payload.car_compatibility)
+    if payload.car_compatibility is not None:
+        db_product.car_compatibility = payload.car_compatibility
+    elif v_ids:
+        db_product.car_compatibility = build_car_compatibility_from_model_ids(db, v_ids)
+
+    if v_ids is not None:
+        apply_product_compatibility(db, db_product, vehicle_model_ids=v_ids, engine_family_ids=None)
+
+    write_audit_log(
+        db,
+        user_id=current_user.id,
+        action="UPDATE_PRODUCT_CATEGORY",
+        entity_type="product",
+        entity_id=product_id,
+        payload={"subcategory_id": payload.subcategory_id},
+    )
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="Не удалось обновить категорию товара")
     db.refresh(db_product)
     return _product_to_response(db, db_product)
 

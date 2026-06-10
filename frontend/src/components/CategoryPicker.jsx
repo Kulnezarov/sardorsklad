@@ -1,8 +1,9 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
+import { FiChevronLeft, FiChevronRight } from 'react-icons/fi';
 
 /**
- * Двухшаговый выбор: группа → подкатегория.
- * value: { groupId, categoryId }
+ * Drill-down выбор: список групп → внутрь группы → подкатегория.
+ * (стиль iOS Settings / Apple списки)
  */
 export default function CategoryPicker({
   tree = [],
@@ -17,83 +18,84 @@ export default function CategoryPicker({
   const children = selectedGroup?.children || [];
   const selectedChild = children.find((c) => c.id === categoryId) || null;
 
-  const setGroup = (gid) => {
+  const [drillGroupId, setDrillGroupId] = useState(null);
+  const drillGroup = drillGroupId != null ? groups.find((g) => g.id === drillGroupId) : null;
+
+  const openGroup = (gid) => {
+    if (disabled) return;
+    setDrillGroupId(gid);
     onChange?.({ groupId: gid, categoryId: null });
   };
 
-  const setCategory = (cid) => {
-    onChange?.({ groupId, categoryId: cid });
+  const pickSubcategory = (gid, cid) => {
+    if (disabled) return;
+    onChange?.({ groupId: gid, categoryId: cid });
+    setDrillGroupId(null);
   };
 
-  return (
-    <div style={{ display: 'grid', gap: 14 }}>
-      <div>
-        <span style={{ display: 'block', marginBottom: 8, fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>
-          Группа категории
-        </span>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: 8 }}>
-          {groups.map((g) => {
-            const on = groupId === g.id;
-            return (
-              <button
-                key={g.id}
-                type="button"
-                disabled={disabled}
-                className={`catalog-chip ${on ? 'catalog-chip-active' : ''}`}
-                onClick={() => setGroup(g.id)}
-                style={{
-                  padding: '12px 14px',
-                  textAlign: 'left',
-                  minHeight: 72,
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: 6,
-                  borderRadius: 16,
-                  background: on ? 'var(--primary-light)' : 'var(--ios-grouped-bg)',
-                }}
-              >
-                <span style={{ fontSize: 22, lineHeight: 1 }}>{g.icon || '📦'}</span>
-                <span style={{ fontSize: 12, fontWeight: 700, lineHeight: 1.3 }}>{g.name}</span>
-              </button>
-            );
-          })}
+  const goBack = () => setDrillGroupId(null);
+
+  if (drillGroup) {
+    const subs = drillGroup.children || [];
+    return (
+      <div className="category-picker-drill">
+        <button type="button" className="category-picker-drill__back" onClick={goBack} disabled={disabled}>
+          <FiChevronLeft size={18} />
+          <span>{drillGroup.name}</span>
+        </button>
+        <div className="ios-form-group category-picker-drill__list">
+          {subs.map((c) => (
+            <button
+              key={c.id}
+              type="button"
+              className={`category-picker-drill__row${categoryId === c.id ? ' category-picker-drill__row--active' : ''}`}
+              disabled={disabled}
+              onClick={() => pickSubcategory(drillGroup.id, c.id)}
+            >
+              <span className="category-picker-drill__row-icon">{c.icon || '⚙️'}</span>
+              <span className="category-picker-drill__row-label">{c.name}</span>
+              <FiChevronRight size={16} className="category-picker-drill__row-chevron" />
+            </button>
+          ))}
         </div>
       </div>
+    );
+  }
 
-      {selectedGroup && (
-        <div>
-          <span style={{ display: 'block', marginBottom: 8, fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>
-            Подкатегория (для поиска)
-          </span>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-            {children.map((c) => {
-              const on = categoryId === c.id;
-              return (
-                <button
-                  key={c.id}
-                  type="button"
-                  disabled={disabled}
-                  className={`catalog-chip ${on ? 'catalog-chip-active' : ''}`}
-                  onClick={() => setCategory(c.id)}
-                  style={{ padding: '8px 14px', fontSize: 13 }}
-                >
-                  {c.icon ? `${c.icon} ` : ''}{c.name}
-                </button>
-              );
-            })}
-          </div>
-        </div>
-      )}
+  return (
+    <div className="category-picker-drill">
+      <div className="ios-form-group category-picker-drill__list">
+        {groups.map((g) => {
+          const subCount = (g.children || []).length;
+          return (
+            <button
+              key={g.id}
+              type="button"
+              className={`category-picker-drill__row${groupId === g.id && categoryId ? ' category-picker-drill__row--active' : ''}`}
+              disabled={disabled}
+              onClick={() => openGroup(g.id)}
+            >
+              <span className="category-picker-drill__row-icon">{g.icon || '📦'}</span>
+              <span className="category-picker-drill__row-label">
+                <span>{g.name}</span>
+                <small className="category-picker-drill__row-meta">{subCount} подкат.</small>
+              </span>
+              <FiChevronRight size={16} className="category-picker-drill__row-chevron" />
+            </button>
+          );
+        })}
+      </div>
 
       {!categoryId && legacyCategoryText && (
-        <div style={{ padding: '10px 12px', borderRadius: 12, background: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.25)', fontSize: 12, color: '#b45309' }}>
+        <div className="product-form-legacy-banner">
           Старая категория: <strong>{legacyCategoryText}</strong> — выберите новую подкатегорию при обновлении
         </div>
       )}
 
-      {selectedChild && (
-        <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-          Выбрано: <strong style={{ color: 'var(--text)' }}>{selectedGroup.name} → {selectedChild.name}</strong>
+      {selectedChild && selectedGroup && (
+        <div className="product-form-template-badge">
+          <span className="product-form-template-badge__label">Шаблон</span>
+          <span className="product-form-template-badge__path">{selectedGroup.name} → {selectedChild.name}</span>
         </div>
       )}
     </div>

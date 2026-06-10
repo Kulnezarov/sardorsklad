@@ -12,6 +12,11 @@ from services.form_layout import has_custom_form_layout, normalize_attribute_sch
 
 router = APIRouter(prefix="/api/v1/categories", tags=["categories"], dependencies=[Depends(require_manager_or_admin)])
 brands_router = APIRouter(prefix="/api/v1/brands", tags=["brands"], dependencies=[Depends(require_manager_or_admin)])
+product_groups_router = APIRouter(
+    prefix="/api/v1/product-groups",
+    tags=["product-groups"],
+    dependencies=[Depends(require_manager_or_admin)],
+)
 
 
 def slugify(value: str) -> str:
@@ -63,6 +68,22 @@ def _build_tree(db: Session, active_only: bool) -> list[schemas.CategoryTreeGrou
 @router.get("/tree", response_model=list[schemas.CategoryTreeGroup])
 def category_tree(db: Session = Depends(get_db), active_only: bool = Query(True)):
     return _build_tree(db, active_only)
+
+
+@product_groups_router.get("", response_model=list[schemas.CategoryTreeGroup])
+@product_groups_router.get("/", response_model=list[schemas.CategoryTreeGroup])
+def list_product_groups(db: Session = Depends(get_db), active_only: bool = Query(True)):
+    """Алиас дерева категорий (группы → подкатегории с attribute_schema)."""
+    return _build_tree(db, active_only)
+
+
+@product_groups_router.get("/{group_id}", response_model=schemas.CategoryTreeGroup)
+def get_product_group(group_id: int, db: Session = Depends(get_db), active_only: bool = Query(True)):
+    tree = _build_tree(db, active_only)
+    hit = next((g for g in tree if g.id == group_id), None)
+    if not hit:
+        raise HTTPException(status_code=404, detail="Группа не найдена")
+    return hit
 
 
 @router.post("/seed-defaults")

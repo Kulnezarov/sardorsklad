@@ -1,23 +1,32 @@
 import React from 'react';
 import { layoutRowLabel, normalizeFormLayout } from '../utils/formLayoutUtils';
+import { IosFormRow } from './IosForm';
 
-function ChipField({ field, value, onChange, disabled }) {
+function ChipField({ field, value, onChange, disabled, label }) {
   const opts = Array.isArray(field.options)
     ? field.options
     : String(field.options || '').split(',').map((s) => s.trim()).filter(Boolean);
+  if (!opts.length) {
+    return (
+      <p className="product-form-field-hint">Добавьте варианты в настройках категории</p>
+    );
+  }
   return (
-    <div className="chip-field-group">
-      {opts.map((opt) => (
-        <button
-          key={opt}
-          type="button"
-          className={`catalog-chip${value === opt ? ' catalog-chip-active chip-field-option--active' : ''}`}
-          disabled={disabled}
-          onClick={() => onChange(value === opt ? '' : opt)}
-        >
-          {opt}
-        </button>
-      ))}
+    <div className="chip-field-group chip-field-group--large chip-field-group--ios">
+      {label && <div className="form-layout-field-label">{label}</div>}
+      <div className="chip-field-group__row ios-segment-row">
+        {opts.map((opt) => (
+          <button
+            key={opt}
+            type="button"
+            className={`catalog-chip chip-field-btn${value === opt ? ' catalog-chip-active chip-field-option--active' : ''}`}
+            disabled={disabled}
+            onClick={() => onChange(value === opt ? '' : opt)}
+          >
+            {opt}
+          </button>
+        ))}
+      </div>
     </div>
   );
 }
@@ -25,12 +34,13 @@ function ChipField({ field, value, onChange, disabled }) {
 function AttributeField({ fieldDef, value, onChange, disabled, placeholder }) {
   const type = fieldDef?.type || 'text';
   if (type === 'chip') {
-    return <ChipField field={fieldDef} value={value} onChange={onChange} disabled={disabled} />;
+    const chipLabel = fieldDef?.label || placeholder;
+    return <ChipField field={fieldDef} value={value} onChange={onChange} disabled={disabled} label={chipLabel} />;
   }
   if (type === 'select') {
     const opts = fieldDef.options || [];
     return (
-      <select className="ios-input" value={value || ''} disabled={disabled} onChange={(e) => onChange(e.target.value)}>
+      <select className="ios-input ios-input--inset" value={value || ''} disabled={disabled} onChange={(e) => onChange(e.target.value)}>
         <option value="">{placeholder || 'Выберите…'}</option>
         {opts.map((o) => (
           <option key={o} value={o}>{o}</option>
@@ -41,7 +51,7 @@ function AttributeField({ fieldDef, value, onChange, disabled, placeholder }) {
   if (type === 'textarea') {
     return (
       <textarea
-        className="ios-input"
+        className="ios-input ios-input--inset ios-input--stacked"
         rows={3}
         value={value || ''}
         disabled={disabled}
@@ -52,7 +62,7 @@ function AttributeField({ fieldDef, value, onChange, disabled, placeholder }) {
   }
   return (
     <input
-      className="ios-input"
+      className="ios-input ios-input--inset"
       type={type === 'number' ? 'number' : 'text'}
       value={value || ''}
       disabled={disabled}
@@ -116,20 +126,23 @@ export default function ProductFormByLayout({
   flushHalf();
 
   return (
-    <div className="product-form-by-layout">
+    <>
       {rows.map((block, idx) => {
         if (block.type === 'compat') {
-          return <React.Fragment key={`compat-${idx}`}>{compatibilitySlot}</React.Fragment>;
+          return (
+            <IosFormRow key={`compat-${idx}`} label="Совместим с авто" stacked>
+              {compatibilitySlot}
+            </IosFormRow>
+          );
         }
         if (block.type === 'half-row') {
           return (
-            <div key={`half-${idx}`} className="form-layout-row-pair">
+            <div key={`half-${idx}`} className="ios-form-row-pair">
               {block.items.map((row) => (
-                <div key={row.id} className="form-layout-field-wrap form-layout-field-wrap--half">
-                  <label className="form-layout-field-label">{layoutRowLabel(row, schema)}</label>
+                <IosFormRow key={row.id} label={layoutRowLabel(row, schema)} stacked className="ios-form-row--half">
                   {row.kind === 'builtin' && row.key === 'name' && (
                     <input
-                      className="ios-input"
+                      className="ios-input ios-input--inset ios-input--stacked"
                       value={formData.name || ''}
                       disabled={disabled}
                       placeholder={row.placeholder || 'Название'}
@@ -145,18 +158,19 @@ export default function ProductFormByLayout({
                       placeholder={row.placeholder || layoutRowLabel(row, schema)}
                     />
                   )}
-                </div>
+                </IosFormRow>
               ))}
             </div>
           );
         }
         const row = block.row;
+        const attrType = row.kind === 'attribute' ? fieldByKey[row.key]?.type : null;
+        const stacked = attrType === 'chip' || attrType === 'textarea';
         return (
-          <div key={row.id} className="form-layout-field-wrap">
-            <label className="form-layout-field-label">{layoutRowLabel(row, schema)}</label>
+          <IosFormRow key={row.id} label={layoutRowLabel(row, schema)} stacked={stacked}>
             {row.kind === 'builtin' && row.key === 'name' && (
               <input
-                className="ios-input"
+                className="ios-input ios-input--inset"
                 value={formData.name || ''}
                 disabled={disabled}
                 placeholder={row.placeholder || 'Название'}
@@ -172,9 +186,9 @@ export default function ProductFormByLayout({
                 placeholder={row.placeholder || layoutRowLabel(row, schema)}
               />
             )}
-          </div>
+          </IosFormRow>
         );
       })}
-    </div>
+    </>
   );
 }

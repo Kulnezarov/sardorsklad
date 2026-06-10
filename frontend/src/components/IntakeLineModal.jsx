@@ -115,12 +115,15 @@ function photosFromLine(line) {
   return items;
 }
 
-function IntakeFormCard({ title, children, className = '' }) {
+import { IosFormBlock, IosFormGroup } from './IosForm';
+
+function IntakeFormCard({ title, children, className = '', footer }) {
   return (
-    <section className={`intake-form-card${className ? ` ${className}` : ''}`}>
-      <div className="intake-form-card-label">{title}</div>
-      {children}
-    </section>
+    <IosFormBlock title={title} footer={footer} className={`intake-form-card-wrap${className ? ` ${className}` : ''}`}>
+      <IosFormGroup padded className="intake-form-card">
+        {children}
+      </IosFormGroup>
+    </IosFormBlock>
   );
 }
 
@@ -768,7 +771,7 @@ export default function IntakeLineModal({
             />
             {!form.category_id && !readonly && (
               <p className="product-form-category-gate" style={{ marginTop: 12, marginBottom: 0 }}>
-                Выберите подкатегорию — поля заполнения появятся ниже.
+                Выберите подкатегорию — ниже появятся поля по шаблону. Цены и артикул можно заполнить уже сейчас.
               </p>
             )}
           </IntakeFormCard>
@@ -820,13 +823,7 @@ export default function IntakeLineModal({
             </div>
           )}
 
-          <div
-            className="intake-form-category-fields"
-            style={{
-              opacity: form.category_id ? 1 : 0.45,
-              pointerEvents: form.category_id && !readonly ? 'auto' : readonly ? 'auto' : 'none',
-            }}
-          >
+          <div className="intake-form-prices-block">
           <IntakeFormCard title="Артикул">
             <input
               className="ios-input"

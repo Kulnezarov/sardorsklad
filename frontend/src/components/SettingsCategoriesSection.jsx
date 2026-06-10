@@ -266,14 +266,15 @@ export default function SettingsCategoriesSection() {
         <FiGrid size={16} /> Категории товаров
       </div>
       <div className="settings-section-body">
-        <p style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 0, lineHeight: 1.5 }}>
+        <div className="ios-settings-block">
+        <p className="ios-form-section-footer settings-categories-intro">
           Группы и подкатегории — на сервере. Карточку заполнения настраивайте для каждой подкатегории.
         </p>
 
         <button
           type="button"
-          className="catalog-chip catalog-chip-active"
-          style={{ marginBottom: 14 }}
+          className="ios-btn-secondary"
+          style={{ width: '100%', marginBottom: 4 }}
           disabled={seedMutation.isPending}
           onClick={() => {
             if (window.confirm('Загрузить каталог автозапчастей на сервер? Существующие категории обновятся.')) {
@@ -283,6 +284,7 @@ export default function SettingsCategoriesSection() {
         >
           Загрузить каталог автозапчастей
         </button>
+        </div>
 
         {isLoading && <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>Загрузка…</div>}
 
@@ -290,8 +292,8 @@ export default function SettingsCategoriesSection() {
           const open = expanded[g.id] !== false;
           const childCount = (g.children || []).length;
           return (
-            <div key={g.id} style={{ marginBottom: 14, borderRadius: 14, border: '1px solid var(--border)', overflow: 'hidden' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '12px 14px', background: 'var(--ios-grouped-bg)' }}>
+            <div key={g.id} className="settings-category-group">
+              <div className="settings-category-group__head">
                 <button type="button" onClick={() => setExpanded((e) => ({ ...e, [g.id]: !open }))} style={{ border: 'none', background: 'transparent', cursor: 'pointer', display: 'flex', color: 'var(--text-muted)' }}>
                   {open ? <FiChevronDown size={16} /> : <FiChevronRight size={16} />}
                 </button>
@@ -302,21 +304,24 @@ export default function SettingsCategoriesSection() {
                 <button type="button" className="topbar-theme-toggle" title="Удалить" onClick={() => { if (window.confirm(`Удалить группу «${g.name}»?`)) deleteMutation.mutate(g.id); }}><FiTrash2 size={14} /></button>
               </div>
               {open && (
-                <div style={{ padding: '10px 14px 14px' }}>
+                <div className="settings-category-group__body">
                   {(g.children || []).map((c) => (
-                    <div key={c.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 0', borderBottom: '1px solid var(--border-light)', flexWrap: 'wrap' }}>
-                      <span>{c.icon || '⚙️'}</span>
-                      <span style={{ flex: 1, fontSize: 13, minWidth: 120 }}>{c.name}</span>
-                      {c.has_form_layout ? (
-                        <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--success)', padding: '2px 8px', borderRadius: 999, background: 'rgba(16,185,129,0.1)' }}>Карточка настроена</span>
-                      ) : (
-                        <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', padding: '2px 8px', borderRadius: 999, background: 'var(--ios-grouped-bg)' }}>По умолчанию</span>
-                      )}
-                      <button type="button" className="catalog-chip catalog-chip-active" style={{ padding: '4px 10px', fontSize: 12 }} onClick={() => openLayoutEditor(g, c)}>
-                        <FiLayout size={12} /> Карточка
-                      </button>
-                      <button type="button" className="topbar-theme-toggle" onClick={() => startEditSub(g, c)}><FiEdit2 size={13} /></button>
-                      <button type="button" className="topbar-theme-toggle" onClick={() => { if (window.confirm(`Удалить «${c.name}»?`)) deleteMutation.mutate(c.id); }}><FiTrash2 size={13} /></button>
+                    <div key={c.id} className="settings-subcategory-row">
+                      <div className="settings-subcategory-row__meta">
+                        <div><span>{c.icon || '⚙️'} </span><span style={{ fontSize: 13 }}>{c.name}</span></div>
+                        {c.has_form_layout ? (
+                          <span className="settings-layout-badge settings-layout-badge--ok">Карточка настроена</span>
+                        ) : (
+                          <span className="settings-layout-badge settings-layout-badge--default">По умолчанию</span>
+                        )}
+                      </div>
+                      <div className="settings-subcategory-row__actions">
+                        <button type="button" className="catalog-chip catalog-chip-active" style={{ padding: '6px 12px', fontSize: 12 }} onClick={() => openLayoutEditor(g, c)}>
+                          <FiLayout size={12} /> Карточка
+                        </button>
+                        <button type="button" className="topbar-theme-toggle" onClick={() => startEditSub(g, c)}><FiEdit2 size={13} /></button>
+                        <button type="button" className="topbar-theme-toggle" onClick={() => { if (window.confirm(`Удалить «${c.name}»?`)) deleteMutation.mutate(c.id); }}><FiTrash2 size={13} /></button>
+                      </div>
                     </div>
                   ))}
                   <button type="button" className="catalog-chip" style={{ marginTop: 10 }} onClick={() => startAddSub(g.id)}>

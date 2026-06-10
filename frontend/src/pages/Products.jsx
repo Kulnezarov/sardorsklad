@@ -11,6 +11,8 @@ import { Button, Modal, Input, TextArea, LoadingSpinner, Alert } from '../compon
 import { productApi, resolveUploadedAssetUrl, compatibilityApi, categoryApi, getApiErrorMessage } from '../api/client';
 import CategoryPicker, { findGroupIdForCategory, findCategoryInTree } from '../components/CategoryPicker';
 import ProductFormByLayout from '../components/ProductFormByLayout';
+import ProductFormSection, { ProductFormTemplateBadge } from '../components/ProductFormSection';
+import { IosFormBlock, IosFormGroup } from '../components/IosForm';
 import VehicleCompatibilityPicker from '../components/VehicleCompatibilityPicker';
 import { formatAttributePreview } from '../components/CategoryAttributeFields';
 import { syncPrimaryVehicleFromSelection } from '../utils/productDisplayUtils';
@@ -349,6 +351,14 @@ const Products = () => {
     const cat = findCategoryInTree(categoryTree, formData.category_id);
     return cat?.attribute_schema || null;
   }, [categoryTree, formData.category_id]);
+
+  const selectedCategoryPath = useMemo(() => {
+    if (!formData.category_id) return '';
+    const sub = findCategoryInTree(categoryTree, formData.category_id);
+    const group = categoryTree.find((g) => g.id === formData.category_group_id);
+    if (group && sub) return `${group.name} → ${sub.name}`;
+    return sub?.name || '';
+  }, [categoryTree, formData.category_id, formData.category_group_id]);
 
   const showCompatibilityBlock = Boolean(selectedSubcategorySchema?.show_compatibility);
 
@@ -1005,6 +1015,10 @@ const Products = () => {
     e?.preventDefault?.();
     setFormError('');
     if (!formData.name?.trim()) { setFormError('Название товара обязательно'); return; }
+    if (!formData.category_id && !formData.id) {
+      setFormError('Выберите категорию — группу и подкатегорию в начале формы');
+      return;
+    }
     if (num(formData.sale_price) <= 0) { setFormError('Цена продажи должна быть больше 0'); return; }
     const payload = buildPayload(formData, cnyRate);
     const sku = String(formData.sku || '').trim();
@@ -1886,18 +1900,8 @@ const Products = () => {
           </div>
         )}
 
-        <div style={{ marginBottom: 18, padding: '12px 16px', borderRadius: 'var(--radius-ios)', background: 'var(--ios-grouped-bg)', border: '1px solid var(--border)' }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
-              <div>
-                <div style={{ fontWeight: 600, fontSize: 14, display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <FiImage size={16} /> Фото товара
-                </div>
-                <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>
-                  До {MAX_PRODUCT_PHOTOS} фото (спереди, сзади, сбоку…). Любой снимок с телефона → на сервере WebP. Сначала сохраните товар.
-                </div>
-              </div>
-            </div>
-            <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 10, maxWidth: 440 }}>
+        <IosFormBlock title="Фото товара" footer="До 12 фото. Сначала сохраните товар, затем загружайте снимки.">
+          <IosFormGroup padded className="product-form-photo-section">
               <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start', flexWrap: 'wrap' }}>
                 <div
                   style={{
@@ -2037,11 +2041,14 @@ const Products = () => {
                   ))}
                 </div>
               )}
-            </div>
-          </div>
+          </IosFormGroup>
+        </IosFormBlock>
 
-        <form className="ios-form-stack" onSubmit={handleSubmit}>
-          <div style={{ padding: '14px 16px', borderRadius: 16, background: 'var(--ios-grouped-bg)', border: '1px solid var(--border)' }}>
+        <form className="ios-form-stack product-form-flow product-form-modal" onSubmit={handleSubmit}>
+          <ProductFormSection
+            title="Тип товара"
+            footer="Группа и подкатегория — от этого зависят поля ниже"
+          >
             <CategoryPicker
               tree={categoryTree}
               groupId={formData.category_group_id}
@@ -2061,22 +2068,24 @@ const Products = () => {
                 });
               }}
             />
-          </div>
-
-          {!formData.category_id && (
-            <div className="product-form-category-gate">
-              Сначала выберите тип товара — остальные поля откроются после выбора подкатегории.
-            </div>
-          )}
-
-          {formData.id && !formData.category_id && (
-            <div className="product-form-legacy-banner">
-              Этот товар создан по старой схеме. Выберите категорию и при необходимости дополните характеристики. Базовые данные уже сохранены.
-            </div>
-          )}
+            {!formData.category_id && (
+              <p className="product-form-category-gate">
+                Выберите подкатегорию — ниже появятся поля по шаблону. Цены и штрих-код можно заполнить уже сейчас.
+              </p>
+            )}
+            {formData.id && !formData.category_id && (
+              <div className="product-form-legacy-banner">
+                Товар по старой схеме. Выберите категорию когда будет удобно — цены и остаток сохраняются как есть.
+              </div>
+            )}
+            <ProductFormTemplateBadge path={selectedCategoryPath} />
+          </ProductFormSection>
 
           {formData.category_id && selectedSubcategorySchema && (
-            <div style={{ padding: '14px 16px', borderRadius: 16, background: 'var(--ios-grouped-bg)', border: '1px solid var(--border)', opacity: formData.category_id ? 1 : 0.45 }}>
+            <ProductFormSection
+              title="Характеристики"
+              footer="Заполните по шаблону категории"
+            >
               <ProductFormByLayout
                 schema={selectedSubcategorySchema}
                 formData={formData}
@@ -2093,10 +2102,13 @@ const Products = () => {
                   ) : null
                 }
               />
-            </div>
+            </ProductFormSection>
           )}
 
-          <div style={{ opacity: formData.category_id ? 1 : 0.4, pointerEvents: formData.category_id ? 'auto' : 'none' }}>
+          <ProductFormSection
+            title="Коды, цены и склад"
+            footer="Штрих-код, закуп, продажа, количество"
+          >
           <Input
             label="Артикул"
             placeholder="AUTO-000001 или свой"
@@ -2296,7 +2308,7 @@ const Products = () => {
 
           <TextArea label="Доп. информация" placeholder="По желанию" value={formData.description || ''} onChange={(e) => setFormData({ ...formData, description: e.target.value })} />
 
-          </div>
+          </ProductFormSection>
 
           <div style={{ padding: '12px 14px', borderRadius: 'var(--radius-ios)', background: 'var(--ios-grouped-bg)', border: '1px solid var(--border)', fontSize: 14, fontWeight: 600, color: 'var(--text-secondary)' }}>
             Прибыль:{' '}

@@ -7,6 +7,7 @@ import unicodedata
 from datetime import UTC, datetime
 from typing import Iterable, List, Optional, Set
 
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session, joinedload
 
 import models
@@ -377,3 +378,62 @@ def build_compatibility_out(db: Session, product_id: int) -> schemas.ProductComp
         vehicle_models=vms,
         engine_code_compatibility=ecs,
     )
+
+
+def build_car_compatibility_from_model_ids(db: Session, model_ids: list[int]) -> dict[str, list[str]]:
+    """{slug марки: [имена моделей]} для API car_compatibility."""
+    if not model_ids:
+        return {}
+    rows = (
+        db.query(models.VehicleModel)
+        .options(joinedload(models.VehicleModel.vehicle_brand))
+        .filter(models.VehicleModel.id.in_(model_ids))
+        .all()
+    )
+    out: dict[str, list[str]] = {}
+    for vm in rows:
+        brand = vm.vehicle_brand
+        if not brand:
+            continue
+        key = brand.slug or slugify_label(brand.name)
+        out.setdefault(key, [])
+        if vm.name and vm.name not in out[key]:
+            out[key].append(vm.name)
+    return out
+
+
+def resolve_car_compatibility_to_model_ids(db: Session, car_compatibility: dict | None) -> list[int]:
+    """Разрешает car_compatibility в список vehicle_model.id."""
+    if not car_compatibility or not isinstance(car_compatibility, dict):
+        return []
+    ids: list[int] = []
+    for brand_key, model_names in car_compatibility.items():
+        if not brand_key:
+            continue
+        brand = (
+            db.query(models.VehicleBrand)
+            .filter(
+                or_(
+                    models.VehicleBrand.slug == str(brand_key).strip(),
+                    func.lower(models.VehicleBrand.name) == str(brand_key).strip().lower(),
+                )
+            )
+            .first()
+        )
+        if not brand:
+            continue
+        names = model_names if isinstance(model_names, list) else []
+        for name in names:
+            if not name:
+                continue
+            vm = (
+                db.query(models.VehicleModel)
+                .filter(
+                    models.VehicleModel.vehicle_brand_id == brand.id,
+                    models.VehicleModel.name == str(name).strip(),
+                )
+                .first()
+            )
+            if vm:
+                ids.append(vm.id)
+    return list(dict.fromkeys(ids))

@@ -60,6 +60,7 @@ class ProductBase(BaseModel):
     brand_id: Optional[int] = Field(None, ge=1)
     engine_code_id: Optional[int] = Field(None, ge=1)
     attributes: Optional[dict[str, Any]] = None
+    car_compatibility: Optional[dict[str, list[str]]] = None
     display_layout: Optional[list[dict[str, Any]]] = None
     description: Optional[str] = None
     image_url: Optional[str] = None
@@ -162,6 +163,21 @@ class ProductUpdate(BaseModel):
     @classmethod
     def normalize_vehicle_fields_update(cls, value):
         return _normalize_vehicle_text(value)
+
+
+class ProductCategoryUpdate(BaseModel):
+    """Обновление только категории, характеристик и совместимости (без цен/остатка)."""
+    subcategory_id: int = Field(..., ge=1, description="ID подкатегории (Category с parent_id)")
+    attributes: Optional[dict[str, Any]] = None
+    car_compatibility: Optional[dict[str, list[str]]] = None
+    compatibility_vehicle_model_ids: Optional[List[int]] = None
+
+    @field_validator("compatibility_vehicle_model_ids", mode="before")
+    @classmethod
+    def _cat_empty_ids(cls, v):
+        if v == [] or v is None:
+            return None
+        return v
 
 
 # ── Справочник авто-совместимости (CRUD) ──────────────────────────────────

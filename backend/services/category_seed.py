@@ -13,7 +13,14 @@ def _slug(name: str) -> str:
     return s or "item"
 
 
-def _schema(fields: list, *, show_compatibility: bool = False) -> dict:
+def _field(key: str, label: str, ftype: str, opts: list[str] | None = None, *, required: bool = False) -> dict:
+    row: dict = {"key": key, "label": label, "type": ftype, "required": required}
+    if opts:
+        row["options"] = opts
+    return row
+
+
+def _schema(fields: list[dict], *, show_compatibility: bool = False) -> dict:
     from services.form_layout import normalize_attribute_schema
 
     return normalize_attribute_schema({
@@ -22,136 +29,126 @@ def _schema(fields: list, *, show_compatibility: bool = False) -> dict:
     })
 
 
-# (icon, group_name, [(icon, sub_name, schema), ...])
-CATEGORY_TREE: list[tuple[str, str, list[tuple[str, str, dict]]]] = [
-    ("🏗️", "Двигатель и Навесное оборудование (Крупные узлы)", [
-        ("⚙️", "Двигатели в сборе (Моторы)", _schema([
-            {"key": "engine_volume", "label": "Объём", "type": "select", "options": ["1.1", "1.3", "1.5"], "unit": "л"},
-            {"key": "motor_code", "label": "Код мотора", "type": "text"},
+# (icon, group_name, [(sub_name, schema), ...])
+CATEGORY_TREE: list[tuple[str, str, list[tuple[str, dict]]]] = [
+    ("⚙️", "Двигатель", [
+        ("Мотор", _schema([
+            _field("volume", "Объём (л)", "text", required=True),
+            _field("fuel", "Тип топлива", "chip", ["Бензин", "Дизель", "Газ", "Гибрид"], required=True),
         ], show_compatibility=True)),
-        ("⚡", "Генераторы и Стартеры", _schema([
-            {"key": "voltage", "label": "Вольтаж", "type": "select", "options": ["12V", "24V"]},
-            {"key": "amperage", "label": "Ампераж", "type": "number", "unit": "А"},
+        ("Генератор", _schema([
+            _field("voltage", "Вольтаж", "text"),
+            _field("power", "Мощность (Вт)", "text"),
         ])),
-        ("🌀", "Турбины и Компрессоры", _schema([
-            {"key": "unit_type", "label": "Тип", "type": "select", "options": ["Турбина", "Компрессор"]},
-            {"key": "note", "label": "Примечание", "type": "textarea"},
+        ("Стартер", _schema([
+            _field("voltage", "Вольтаж", "text"),
+            _field("power", "Мощность (кВт)", "text"),
+        ])),
+        ("Турбина", _schema([
+            _field("type", "Тип", "text"),
+            _field("pressure", "Давление наддува", "text"),
+        ])),
+        ("Помпа", _schema([
+            _field("type", "Тип", "text"),
         ])),
     ]),
-    ("🌡️", "Система охлаждения и Отопления", [
-        ("🧊", "Радиаторы", _schema([
-            {"key": "purpose", "label": "Назначение", "type": "select", "options": ["Охлаждение", "Кондиционер", "Печка"]},
-            {"key": "transmission", "label": "Тип КПП", "type": "select", "options": ["МКПП", "АКПП"]},
+    ("🚗", "Кузов", [
+        ("Дверь", _schema([
+            _field("side", "Сторона", "chip", ["Левая", "Правая"]),
+            _field("pos", "Позиция", "chip", ["Передняя", "Задняя"]),
+            _field("moving", "Подвижная", "chip", ["Да", "Нет"]),
         ], show_compatibility=True)),
-        ("➿", "Патрубки и Шланги", _schema([
-            {"key": "material", "label": "Материал", "type": "select", "options": ["Резина", "Силикон", "Металл"]},
-            {"key": "diameter_mm", "label": "Диаметр", "type": "number", "unit": "мм"},
-        ])),
-        ("💧", "Помпы и Термостаты", _schema([
-            {"key": "unit_type", "label": "Тип", "type": "select", "options": ["Помпа", "Термостат"]},
-        ])),
-    ]),
-    ("🪟", "Кузовные запчасти и Оптика", [
-        ("🛡️", "Автостекла", _schema([
-            {"key": "glass_type", "label": "Тип", "type": "select", "options": ["Лобовое", "Боковое", "Заднее"]},
-            {"key": "heated", "label": "Подогрев", "type": "select", "options": ["Да", "Нет"]},
+        ("Капот", _schema([
+            _field("material", "Материал", "text"),
         ], show_compatibility=True)),
-        ("🪞", "Зеркала", _schema([
-            {"key": "side", "label": "Сторона", "type": "select", "options": ["Левое", "Правое"]},
-            {"key": "power", "label": "Электропривод", "type": "select", "options": ["Да", "Нет"]},
-            {"key": "chrome", "label": "Хром", "type": "select", "options": ["Да", "Нет"]},
+        ("Бампер", _schema([
+            _field("pos", "Позиция", "chip", ["Передний", "Задний"]),
+            _field("parking", "С парктроником", "chip", ["Да", "Нет"]),
         ], show_compatibility=True)),
-        ("🚪", "Дверные ручки и Замки", _schema([
-            {"key": "position", "label": "Позиция", "type": "select", "options": ["Передняя", "Задняя"]},
-            {"key": "side", "label": "Сторона", "type": "select", "options": ["Левая", "Правая"]},
-        ])),
-        ("🚙", "Брызговики", _schema([
-            {"key": "position", "label": "Позиция", "type": "select", "options": ["Передние", "Задние"]},
-        ])),
-        ("💡", "Фары и Фонари", _schema([
-            {"key": "light_type", "label": "Тип", "type": "select", "options": ["Фара", "Фонарь", "ПТФ"]},
-            {"key": "side", "label": "Сторона", "type": "select", "options": ["Левая", "Правая", "Пара"]},
-        ])),
-    ]),
-    ("🛋️", "Салон и Интерьер", [
-        ("🎛️", "Панели и Обшивка", _schema([
-            {"key": "panel_type", "label": "Тип", "type": "select", "options": ["Торпедо", "Дверная карта", "Потолок"]},
-            {"key": "color", "label": "Цвет", "type": "text"},
-        ])),
-        ("🛟", "Подушки безопасности (Airbag)", _schema([
-            {"key": "position", "label": "Позиция", "type": "select", "options": ["Водитель", "Пассажир", "Боковая", "Шторка"]},
-        ])),
-        ("🕹️", "Элементы управления", _schema([
-            {"key": "ctrl_type", "label": "Тип", "type": "select", "options": ["Кнопка", "Переключатель", "Ручка"]},
-        ])),
-    ]),
-    ("🧠", "Электроника и Датчики", [
-        ("🔌", "Датчики", _schema([
-            {"key": "sensor_type", "label": "Тип", "type": "select", "options": ["ABS", "Коленвал", "Парктроник", "Другой"]},
-            {"key": "contacts", "label": "Контактов", "type": "number"},
-        ])),
-        ("💻", "Блоки управления (ЭБУ)", _schema([
-            {"key": "ecu_type", "label": "Тип блока", "type": "text"},
-            {"key": "oem_code", "label": "Код OEM", "type": "text"},
-        ])),
-        ("🪢", "Проводка и Реле", _schema([
-            {"key": "wire_type", "label": "Тип", "type": "select", "options": ["Проводка", "Реле", "Предохранитель"]},
-        ])),
-    ]),
-    ("⚙️", "Ходовая часть, Подвеска и Рулевое управление", [
-        ("🚜", "Амортизаторы и Пружины", _schema([
-            {"key": "unit_type", "label": "Тип", "type": "select", "options": ["Амортизатор", "Пружина"]},
-            {"key": "axle", "label": "Ось", "type": "select", "options": ["Перед", "Зад"]},
+        ("Крыло", _schema([
+            _field("side", "Сторона", "chip", ["Левое", "Правое"]),
+            _field("pos", "Позиция", "chip", ["Переднее", "Заднее"]),
         ], show_compatibility=True)),
-        ("🦴", "Рычаги и Сайлентблоки", _schema([
-            {"key": "unit_type", "label": "Тип", "type": "select", "options": ["Рычаг", "Сайлентблок"]},
-            {"key": "axle", "label": "Позиция", "type": "select", "options": ["Перед", "Зад"]},
-        ])),
-        ("🛞", "Рулевые наконечники и Тяги", _schema([
-            {"key": "unit_type", "label": "Тип", "type": "select", "options": ["Наконечник", "Тяга", "Рейка"]},
-            {"key": "side", "label": "Сторона", "type": "select", "options": ["Левая", "Правая"]},
-        ])),
-    ]),
-    ("⛓️", "Тросы и Приводы", [
-        ("🧵", "Тросы", _schema([
-            {"key": "cable_type", "label": "Назначение", "type": "select", "options": ["Капот", "Ручник", "Газ"]},
-            {"key": "length_mm", "label": "Длина", "type": "number", "unit": "мм"},
-        ])),
-        ("⚙️", "Приводы в сборе и ШРУСы", _schema([
-            {"key": "unit_type", "label": "Тип", "type": "select", "options": ["Привод", "ШРУС"]},
-            {"key": "axle", "label": "Ось", "type": "select", "options": ["Перед", "Зад"]},
-            {"key": "side", "label": "Сторона", "type": "select", "options": ["Левая", "Правая"]},
+        ("Зеркало", _schema([
+            _field("side", "Сторона", "chip", ["Левое", "Правое"]),
+            _field("heat", "С обогревом", "chip", ["Да", "Нет"]),
         ], show_compatibility=True)),
     ]),
-    ("🔩", "Крепеж и Мелочевка", [
-        ("🔩", "Зажимные болты, гайки и пистоны", _schema([
-            {"key": "thread", "label": "Резьба", "type": "select", "options": ["М6", "М8", "М10"]},
-            {"key": "length_mm", "label": "Длина", "type": "number", "unit": "мм"},
-            {"key": "pitch", "label": "Шаг", "type": "text"},
+    ("🔩", "Подвеска", [
+        ("Амортизатор", _schema([
+            _field("side", "Сторона", "chip", ["Левый", "Правый"]),
+            _field("axis", "Ось", "chip", ["Передний", "Задний"]),
+            _field("type", "Тип", "chip", ["Масляный", "Газовый", "Газомасляный"]),
+        ], show_compatibility=True)),
+        ("Пружина", _schema([
+            _field("axis", "Ось", "chip", ["Передняя", "Задняя"]),
+            _field("stiff", "Жёсткость", "text"),
+        ], show_compatibility=True)),
+        ("Рычаг", _schema([
+            _field("side", "Сторона", "chip", ["Левый", "Правый"]),
+            _field("pos", "Позиция", "chip", ["Передний", "Задний"]),
+        ], show_compatibility=True)),
+    ]),
+    ("🛑", "Тормоза", [
+        ("Диск", _schema([
+            _field("axis", "Ось", "chip", ["Передний", "Задний"]),
+            _field("vent", "Вентилируемый", "chip", ["Да", "Нет"]),
+        ], show_compatibility=True)),
+        ("Колодки", _schema([
+            _field("axis", "Ось", "chip", ["Передние", "Задние"]),
+            _field("material", "Материал", "text"),
+        ], show_compatibility=True)),
+        ("Суппорт", _schema([
+            _field("side", "Сторона", "chip", ["Левый", "Правый"]),
+            _field("axis", "Ось", "chip", ["Передний", "Задний"]),
+            _field("pistons", "Поршней", "text"),
+        ], show_compatibility=True)),
+    ]),
+    ("🧴", "Жидкости", [
+        ("Моторное масло", _schema([
+            _field("visc", "Вязкость", "chip", ["0W-20", "5W-30", "5W-40", "10W-40", "15W-40"]),
+            _field("vol", "Объём (л)", "chip", ["1", "4", "5", "20", "60"]),
+            _field("oiltype", "Тип", "chip", ["Синтетика", "Полусинтетика", "Минерал"]),
         ])),
-        ("⭕", "Хомуты и Прокладки", _schema([
-            {"key": "unit_type", "label": "Тип", "type": "select", "options": ["Хомут", "Прокладка", "Сальник"]},
-            {"key": "size", "label": "Размер", "type": "text"},
+        ("Транс. масло", _schema([
+            _field("gearbox", "Тип КПП", "chip", ["МКПП", "АКПП", "DSG"]),
+            _field("vol", "Объём (л)", "chip", ["1", "2", "4", "5"]),
+            _field("visc", "Вязкость", "text"),
+        ])),
+        ("Антифриз", _schema([
+            _field("color", "Цвет", "chip", ["Зелёный", "Красный", "Синий", "Жёлтый"]),
+            _field("vol", "Объём (л)", "chip", ["1", "5", "10", "20"]),
+            _field("temp", "Температура (°C)", "text"),
+            _field("std", "Стандарт", "chip", ["G11", "G12", "G12+", "G13"]),
+        ])),
+        ("Тормозная жидкость", _schema([
+            _field("dot", "Класс (DOT)", "chip", ["DOT 3", "DOT 4", "DOT 5", "DOT 5.1"]),
+            _field("vol", "Объём (мл)", "chip", ["250", "500", "1000"]),
         ])),
     ]),
-    ("🛢️", "Жидкости и Расходники", [
-        ("🛢️", "Автомасла", _schema([
-            {"key": "viscosity", "label": "Вязкость", "type": "select", "options": ["0W-20", "5W-30", "5W-40", "10W-40"]},
-            {"key": "volume", "label": "Объём", "type": "select", "options": ["1л", "4л"]},
-        ])),
-        ("💨", "Фильтры", _schema([
-            {"key": "filter_type", "label": "Тип", "type": "select", "options": ["Масляный", "Воздушный", "Салонный", "Топливный"]},
+    ("🔘", "Фильтры", [
+        ("Масляный фильтр", _schema([
+            _field("thread", "Резьба", "text"),
         ], show_compatibility=True)),
-        ("🛑", "Тормозные колодки и диски", _schema([
-            {"key": "unit_type", "label": "Тип", "type": "select", "options": ["Колодки", "Диск"]},
-            {"key": "axle", "label": "Ось", "type": "select", "options": ["Перед", "Зад"]},
+        ("Воздушный фильтр", _schema([
+            _field("type", "Тип", "chip", ["Панельный", "Круглый", "Конусный"]),
         ], show_compatibility=True)),
-        ("🛞", "Шины и Диски", _schema([
-            {"key": "radius", "label": "Радиус", "type": "select", "options": ["R13", "R14", "R15", "R16", "R17", "R18", "R19", "R20", "R21", "R22"]},
-            {"key": "width_mm", "label": "Ширина", "type": "number", "unit": "мм"},
-            {"key": "profile", "label": "Профиль", "type": "number", "unit": "%"},
-            {"key": "season", "label": "Сезон", "type": "select", "options": ["Лето", "Зима", "Всесезон"]},
+        ("Топливный фильтр", _schema([
+            _field("fuel", "Тип топлива", "chip", ["Бензин", "Дизель"]),
+        ], show_compatibility=True)),
+    ]),
+    ("⚡", "Электрика", [
+        ("Фара", _schema([
+            _field("side", "Сторона", "chip", ["Левая", "Правая"]),
+            _field("type", "Тип", "chip", ["Ближний", "Дальний", "Противотуманная"]),
+        ], show_compatibility=True)),
+        ("Аккумулятор", _schema([
+            _field("cap", "Ёмкость (А·ч)", "text"),
         ])),
+        ("Датчик", _schema([
+            _field("type", "Тип", "text"),
+            _field("conn", "Разъём", "text"),
+        ], show_compatibility=True)),
     ]),
 ]
 
@@ -198,12 +195,12 @@ def seed_default_categories(db: Session) -> int:
     for gi, (g_icon, g_name, children) in enumerate(CATEGORY_TREE):
         group = _upsert_category(db, g_name, icon=g_icon, sort_order=gi * 100)
         count += 1
-        for si, (s_icon, s_name, schema) in enumerate(children):
+        for si, (s_name, schema) in enumerate(children):
             _upsert_category(
                 db,
                 s_name,
                 parent_id=group.id,
-                icon=s_icon,
+                icon=g_icon,
                 sort_order=gi * 100 + si + 1,
                 attribute_schema=schema,
             )

@@ -323,7 +323,29 @@ def ensure_schema_updates():
         "products.show_on_storefront",
     )
 
-    # history — только если таблица есть (в старой схеме мог быть product_history вместо history)
+    _exec_schema_sql(
+        """
+        DO $$
+        BEGIN
+          IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'public' AND table_name = 'products' AND column_name = 'needs_category_refresh'
+          ) THEN
+            ALTER TABLE products ADD COLUMN needs_category_refresh BOOLEAN NOT NULL DEFAULT FALSE;
+          END IF;
+          IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'public' AND table_name = 'products' AND column_name = 'car_compatibility'
+          ) THEN
+            ALTER TABLE products ADD COLUMN car_compatibility JSONB;
+          END IF;
+        END $$;
+        UPDATE products SET needs_category_refresh = TRUE WHERE category_id IS NULL;
+        """,
+        "products.needs_category_refresh_car_compatibility",
+    )
+
+    # history — только если таблица есть
     _exec_schema_sql(
         """
         DO $$

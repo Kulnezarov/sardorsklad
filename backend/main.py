@@ -282,6 +282,7 @@ app.include_router(intake_invoices.router)
 app.include_router(public.router)
 app.include_router(categories.router)
 app.include_router(categories.brands_router)
+app.include_router(categories.product_groups_router)
 app.include_router(orders.router)
 app.include_router(compatibility.router)
 

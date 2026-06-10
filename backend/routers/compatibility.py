@@ -220,9 +220,6 @@ async def delete_engine_code_compatibility(
     return None
 
 
-# ── Vehicle brands ──────────────────────────────────────────────────────────
-
-
 @router.get("/vehicle-brands", response_model=List[schemas.VehicleBrandResponse])
 def list_vehicle_brands(
     db: Session = Depends(get_db),
@@ -644,3 +641,23 @@ def autocomplete_families(
         .all()
     )
     return [_engine_family_to_schema(db, f) for f in fams]
+
+
+@router.post("/vehicle-brands/seed-defaults")
+def seed_vehicle_defaults(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_manager_or_admin),
+):
+    """Загрузить начальные марки и модели (Toyota, BMW, …)."""
+    from services.vehicle_seed import seed_default_vehicles
+    from services.audit import write_audit_log
+
+    count = seed_default_vehicles(db)
+    write_audit_log(
+        db,
+        user_id=current_user.id,
+        action="SEED_VEHICLES",
+        entity_type="vehicle_brand",
+        payload={"brands": count},
+    )
+    return {"ok": True, "brands": count}

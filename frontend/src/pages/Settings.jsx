@@ -29,20 +29,13 @@ const defaultSettings = {
 /** Стабильные ссылки на компоненты — если объявить внутри Settings, при каждом вводе
  *  создаётся новый тип и React размонтирует строки настроек → поле теряет фокус. */
 const Pills = ({ options, value, onChange }) => (
-  <div style={{ display: 'flex', gap: 8 }}>
+  <div className="ios-pills">
     {options.map((opt) => (
       <button
         key={opt.value}
         type="button"
+        className={`ios-pill${value === opt.value ? ' ios-pill--active' : ''}`}
         onClick={() => onChange(opt.value)}
-        style={{
-          flex: 1, padding: '10px 14px', borderRadius: 12,
-          border: value === opt.value ? '2px solid var(--primary)' : '1px solid var(--border)',
-          background: value === opt.value ? 'var(--primary-light)' : 'var(--bg-secondary)',
-          color: value === opt.value ? 'var(--primary)' : 'var(--text)',
-          fontWeight: 700, fontSize: 13, cursor: 'pointer',
-          transition: 'all 0.15s', textAlign: 'center',
-        }}
       >
         {opt.label}
       </button>
@@ -52,15 +45,11 @@ const Pills = ({ options, value, onChange }) => (
 
 const Row = ({ label, description, children }) => (
   <div className="settings-row">
-    <div style={{ flex: 1 }}>
-      <div style={{ fontWeight: 600, fontSize: 15, color: 'var(--text)', marginBottom: description ? 2 : 0 }}>
-        {label}
-      </div>
-      {description && (
-        <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>{description}</div>
-      )}
+    <div className="settings-row__label">
+      <div>{label}</div>
+      {description && <div className="settings-row__desc">{description}</div>}
     </div>
-    <div style={{ flexShrink: 0 }}>{children}</div>
+    <div className="settings-row__control">{children}</div>
   </div>
 );
 
@@ -231,28 +220,13 @@ const Settings = () => {
       <div className="settings-content">
 
         {/* Page title */}
-        <div style={{ marginBottom: 24, display: 'flex', flexWrap: 'wrap', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
-          <div>
-            <div style={{ fontSize: 26, fontWeight: 900, color: 'var(--text)' }}>Настройки</div>
-          </div>
+        <div className="ios-page-header">
+          <h1 className="ios-page-title">Настройки</h1>
           <button
             type="button"
+            className="ios-btn-primary"
             onClick={handleSaveSettings}
             disabled={saveMut.isPending}
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: 8,
-              padding: '12px 20px',
-              borderRadius: 14,
-              border: '1px solid #4f46e5',
-              background: 'linear-gradient(135deg, #6366f1, #7c3aed)',
-              color: '#fff',
-              fontWeight: 800,
-              fontSize: 14,
-              cursor: saveMut.isPending ? 'not-allowed' : 'pointer',
-              opacity: saveMut.isPending ? 0.75 : 1,
-            }}
           >
             {saveMut.isPending ? <FiLoader size={18} style={{ animation: 'spin 1s linear infinite' }} /> : <FiSave size={18} />}
             Сохранить
@@ -267,14 +241,9 @@ const Settings = () => {
           <div className="settings-section-body">
             <Row label="Название магазина">
               <input
+                className="ios-settings-input ios-settings-input--wide"
                 value={form.store_name}
                 onChange={(e) => handleChange('store_name', e.target.value)}
-                style={{
-                  width: 200, padding: '8px 12px', borderRadius: 10,
-                  border: '1px solid var(--border)', background: 'var(--bg-secondary)',
-                  fontSize: 14, color: 'var(--text)', outline: 'none', fontFamily: 'inherit',
-                  textAlign: 'left',
-                }}
               />
             </Row>
           </div>
@@ -290,18 +259,11 @@ const Settings = () => {
               <input
                 type="number"
                 min="1"
+                className="ios-settings-input"
                 value={form.low_stock_threshold}
                 onChange={(e) => handleChange('low_stock_threshold', Math.max(1, parseInt(e.target.value) || 1))}
-                style={{
-                  width: 80, padding: '8px 12px', borderRadius: 10,
-                  border: '1px solid var(--border)', background: 'var(--bg-secondary)',
-                  fontSize: 14, color: 'var(--text)', outline: 'none', textAlign: 'center',
-                  fontFamily: 'inherit',
-                }}
               />
             </Row>
-
-            <div className="settings-divider" />
 
             <Row label={`Курс юань → тенге (1 CNY = ${Number(form.cny_rate || 0).toLocaleString('ru-RU')} KZT)`}>
               <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
@@ -309,25 +271,16 @@ const Settings = () => {
                   type="number"
                   min="0"
                   step="0.01"
+                  className="ios-settings-input"
                   value={form.cny_rate}
                   onChange={(e) => handleChange('cny_rate', Number(e.target.value) || 0)}
-                  style={{
-                    width: 90, padding: '8px 12px', borderRadius: 10,
-                    border: '1px solid var(--border)', background: 'var(--bg-secondary)',
-                    fontSize: 14, color: 'var(--text)', outline: 'none', textAlign: 'center',
-                    fontFamily: 'inherit',
-                  }}
                 />
                 <button
                   type="button"
+                  className="ios-btn-secondary"
                   onClick={handleFetchRate}
                   disabled={rateLoading}
-                  style={{
-                    padding: '8px 12px', borderRadius: 10,
-                    border: '1px solid var(--primary)', background: 'var(--primary-light)',
-                    color: 'var(--primary)', fontWeight: 700, fontSize: 12, cursor: 'pointer',
-                    display: 'flex', alignItems: 'center', gap: 6, whiteSpace: 'nowrap',
-                  }}
+                  style={{ minHeight: 36, padding: '6px 12px', fontSize: 14 }}
                 >
                   {rateLoading ? <FiLoader size={13} style={{ animation: 'spin 1s linear infinite' }} /> : <FiRefreshCw size={13} />}
                   Обновить
@@ -335,21 +288,14 @@ const Settings = () => {
               </div>
             </Row>
 
-            <div className="settings-divider" />
-
             <Row label="Доставка, ₸ за 1 кг">
               <input
                 type="number"
                 min="0.01"
                 step="1"
+                className="ios-settings-input"
                 value={form.delivery_kzt_per_kg}
                 onChange={(e) => handleChange('delivery_kzt_per_kg', Math.max(0.01, Number(e.target.value) || 0))}
-                style={{
-                  width: 90, padding: '8px 12px', borderRadius: 10,
-                  border: '1px solid var(--border)', background: 'var(--bg-secondary)',
-                  fontSize: 14, color: 'var(--text)', outline: 'none', textAlign: 'center',
-                  fontFamily: 'inherit',
-                }}
               />
             </Row>
 
@@ -377,19 +323,13 @@ const Settings = () => {
               </div>
             </Row>
 
-            <div className="settings-divider" />
-
-            <div style={{ padding: '12px 0' }}>
+            <div className="settings-row">
               <button
+                type="button"
+                className="ios-btn-destructive"
                 onClick={() => setShowClearHistoryConfirm(true)}
-                style={{
-                  padding: '10px 16px', borderRadius: 12,
-                  border: '1.5px solid var(--danger)', background: 'transparent',
-                  color: 'var(--danger)', fontWeight: 700, fontSize: 13,
-                  cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8,
-                }}
               >
-                <FiTrash2 size={14} /> Очистить всю историю сейчас
+                <FiTrash2 size={16} /> Очистить всю историю сейчас
               </button>
             </div>
           </div>
@@ -405,10 +345,8 @@ const Settings = () => {
             <FiPrinter size={16} /> Этикетки
           </div>
           <div className="settings-section-body">
-            <div style={{ marginBottom: 16 }}>
-              <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)', marginBottom: 8 }}>
-                Размер этикетки
-              </div>
+            <div className="ios-settings-block">
+              <div className="ios-settings-block__label">Размер этикетки</div>
               <Pills
                 options={[
                   { value: 'small', label: 'Маленький' },
@@ -420,12 +358,8 @@ const Settings = () => {
               />
             </div>
 
-            <div className="settings-divider" />
-
-            <div style={{ marginTop: 12 }}>
-              <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)', marginBottom: 8 }}>
-                Тип по умолчанию
-              </div>
+            <div className="ios-settings-block">
+              <div className="ios-settings-block__label">Тип по умолчанию</div>
               <Pills
                 options={[
                   { value: 'barcode', label: 'Штрих-код' },
@@ -444,17 +378,13 @@ const Settings = () => {
             <FiSettings size={16} /> Данные
           </div>
           <div className="settings-section-body">
-            <div style={{ padding: '4px 0' }}>
+            <div className="settings-row">
               <button
+                type="button"
+                className="ios-btn-destructive"
                 onClick={() => setShowResetConfirm(true)}
-                style={{
-                  padding: '12px 16px', borderRadius: 12,
-                  border: '1.5px solid var(--danger)', background: 'transparent',
-                  color: 'var(--danger)', fontWeight: 700, fontSize: 13,
-                  cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8,
-                }}
               >
-                <FiAlertTriangle size={15} /> Сбросить все настройки
+                <FiAlertTriangle size={16} /> Сбросить все настройки
               </button>
             </div>
           </div>
@@ -466,21 +396,16 @@ const Settings = () => {
             <FiLogOut size={16} /> Аккаунт
           </div>
           <div className="settings-section-body">
-            <div style={{ padding: '4px 0' }}>
+            <div className="ios-settings-block">
               {user?.email && (
-                <div style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 12 }}>
+                <div style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 12, lineHeight: 1.45 }}>
                   Вы вошли как: <b style={{ color: 'var(--text)' }}>{user.email}</b>
                 </div>
               )}
               <button
+                type="button"
+                className="ios-btn-destructive ios-btn-destructive--filled"
                 onClick={() => setShowLogoutConfirm(true)}
-                style={{
-                  width: '100%', padding: '14px 16px', borderRadius: 14,
-                  border: 'none', background: 'var(--danger)',
-                  color: '#fff', fontWeight: 700, fontSize: 15,
-                  cursor: 'pointer', display: 'flex', alignItems: 'center',
-                  justifyContent: 'center', gap: 10,
-                }}
               >
                 <FiLogOut size={18} /> Выйти из аккаунта
               </button>

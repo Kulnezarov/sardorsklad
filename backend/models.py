@@ -210,6 +210,7 @@ class Product(Base):
     brand = Column(String(100), nullable=True, index=True)
     model = Column(String(120), nullable=True, index=True)
     attributes = Column(JSONB, nullable=True)
+    car_compatibility = Column(JSONB, nullable=True)  # {"toyota": ["Camry", "Corolla"]} — slug марки → имена моделей
     display_layout = Column(JSONB, nullable=True)  # порядок/состав полей для витрины
     engine_code_id = Column(Integer, ForeignKey("engine_codes.id", ondelete="SET NULL"), nullable=True, index=True)
     category_id = Column(Integer, ForeignKey("categories.id", ondelete="SET NULL"), nullable=True, index=True)
@@ -249,6 +250,7 @@ class Product(Base):
     # Status flags
     is_active = Column(Boolean, default=True, nullable=False)
     show_on_storefront = Column(Boolean, default=True, nullable=False, server_default="true")
+    needs_category_refresh = Column(Boolean, default=False, nullable=False, server_default="false")
     # Relationships
     category_rel = relationship("Category", back_populates="products")
     brand_rel = relationship("Brand", back_populates="products")

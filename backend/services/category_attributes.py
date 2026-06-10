@@ -98,18 +98,12 @@ def validate_attributes_for_category(
 
 
 def needs_category_refresh(db: Session, p) -> bool:
-    """Товар нужно обновить: нет category_id или не пересчитан display_layout."""
+    """Товар нужно обновить: флаг в БД или нет category_id."""
+    if bool(getattr(p, "needs_category_refresh", False)):
+        return True
     if getattr(p, "category_id", None) is None:
         return True
-    schema = get_category_schema(db, p.category_id)
-    if not schema:
-        return False
-    from services.form_layout import has_custom_form_layout
-
-    if not has_custom_form_layout(schema):
-        return False
-    dl = getattr(p, "display_layout", None)
-    return not isinstance(dl, list) or len(dl) == 0
+    return False
 
 
 def attribute_labels_from_product(db: Session, p) -> list[str]:
