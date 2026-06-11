@@ -93,6 +93,46 @@ export function defaultFormLayout(schema = null) {
   return layout;
 }
 
+/** Хвост цен/склада после артикула — всегда в форме товара. */
+const STOCK_TAIL_BUILTINS = ADDABLE_BUILTIN.filter((b) => b.id !== 'name');
+
+export function ensureLayoutStockTail(rows) {
+  const out = [...(rows || [])];
+  const tailKeySet = new Set(STOCK_TAIL_BUILTINS.map((r) => r.key));
+  const existing = new Set(
+    out.filter((r) => r.kind === 'builtin' && tailKeySet.has(r.key)).map((r) => r.key),
+  );
+  let skuIdx = out.findIndex((r) => r.kind === 'locked' && r.key === 'sku');
+  if (skuIdx < 0) skuIdx = out.length;
+  let insertAt = skuIdx + 1;
+  STOCK_TAIL_BUILTINS.forEach((row) => {
+    if (existing.has(row.key)) return;
+    out.splice(insertAt, 0, {
+      ...row,
+      kind: 'builtin',
+      width: row.width === 'half' ? 'half' : 'full',
+      label: row.label || BUILTIN_LABELS[row.key],
+    });
+    insertAt += 1;
+  });
+  return out;
+}
+
+export function ensureLayoutCompatibility(rows, schema) {
+  if (!schema?.show_compatibility) return rows;
+  const out = [...(rows || [])];
+  if (out.some((r) => r.kind === 'compatibility')) return out;
+  const nameIdx = out.findIndex((r) => r.key === 'name');
+  const at = nameIdx >= 0 ? nameIdx + 1 : Math.min(1, out.length);
+  out.splice(at, 0, {
+    id: 'compat',
+    kind: 'compatibility',
+    width: 'full',
+    label: 'Совместим с авто',
+  });
+  return out;
+}
+
 export function normalizeFormLayout(raw, schema = null) {
   if (!Array.isArray(raw) || !raw.length) return defaultFormLayout(schema);
   const fieldKeys = new Set((schema?.fields || []).map((f) => f.key?.trim()).filter(Boolean));
@@ -123,7 +163,8 @@ export function normalizeFormLayout(raw, schema = null) {
       label: item.label || BUILTIN_LABELS[item.key] || item.key || id,
     });
   });
-  return out.length ? out : defaultFormLayout(schema);
+  if (!out.length) return defaultFormLayout(schema);
+  return ensureLayoutStockTail(ensureLayoutCompatibility(out, schema));
 }
 
 /** Группирует соседние half-строки в пары для сетки (редактор и форма). */
@@ -150,8 +191,20 @@ export function groupLayoutRowsForDisplay(rows) {
 }
 
 export function priceLayoutRows(schema) {
-  const layout = expandLayoutPurchaseRows(normalizeFormLayout(schema?.form_layout, schema));
-  return layout.filter((r) => r.kind === 'builtin' && PRICE_BUILTIN_KEYS.has(r.key));
+  const base = schema && typeof schema === 'object' ? schema : {};
+  const layout = expandLayoutPurchaseRows(
+    ensureLayoutStockTail(normalizeFormLayout(base.form_layout, base)),
+  );
+  const rows = layout.filter((r) => r.kind === 'builtin' && PRICE_BUILTIN_KEYS.has(r.key));
+  const have = new Set(rows.map((r) => r.key));
+  const required = [
+    { id: 'cny', kind: 'builtin', key: 'cny_price', width: 'half', label: BUILTIN_LABELS.cny_price },
+    { id: 'delivery', kind: 'builtin', key: 'delivery_block', width: 'full', label: BUILTIN_LABELS.delivery_block },
+    { id: 'sale', kind: 'builtin', key: 'sale_price', width: 'half', label: BUILTIN_LABELS.sale_price },
+    { id: 'qty', kind: 'builtin', key: 'quantity', width: 'half', label: BUILTIN_LABELS.quantity },
+  ];
+  const missing = required.filter((r) => !have.has(r.key));
+  return missing.length ? [...missing, ...rows] : rows;
 }
 
 export function layoutRowLabel(row, schema) {

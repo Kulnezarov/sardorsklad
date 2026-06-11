@@ -213,6 +213,22 @@ def normalize_form_layout(
         name_idx = next((i for i, r in enumerate(out) if r.get("key") == "name"), 1)
         out.insert(name_idx + 1, {"id": "compat", "kind": "compatibility", "width": "full"})
 
+    # Гарантировать ¥, доставку, продажу и остаток после артикула
+    tail_keys = {str(r["key"]) for r in BUILTIN_ROWS[1:]}
+    existing_tail = {
+        str(r.get("key"))
+        for r in out
+        if r.get("kind") == "builtin" and str(r.get("key") or "") in tail_keys
+    }
+    sku_idx = next((i for i, r in enumerate(out) if r.get("key") == "sku"), len(out))
+    insert_at = sku_idx + 1
+    for row in BUILTIN_ROWS[1:]:
+        key = str(row["key"])
+        if key in existing_tail:
+            continue
+        out.insert(insert_at, dict(row))
+        insert_at += 1
+
     return out or default_form_layout(schema)
 
 

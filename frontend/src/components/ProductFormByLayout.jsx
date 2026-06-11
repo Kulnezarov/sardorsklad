@@ -161,6 +161,22 @@ export default function ProductFormByLayout({
   });
   flushFields();
 
+  if (compatibilitySlot && !rows.some((b) => b.type === 'compat')) {
+    let insertAt = 0;
+    for (let i = 0; i < rows.length; i += 1) {
+      const block = rows[i];
+      if (block.type === 'full' && block.row?.key === 'name') {
+        insertAt = i + 1;
+        break;
+      }
+      if (block.type === 'half-row' && block.items?.some((r) => r.key === 'name')) {
+        insertAt = i + 1;
+        break;
+      }
+    }
+    rows.splice(insertAt, 0, { type: 'compat', row: { id: 'compat', kind: 'compatibility' } });
+  }
+
   const fieldLabel = (row) => layoutRowLabel(row, schema);
   const isNameRow = (row) => row.kind === 'builtin' && row.key === 'name';
 

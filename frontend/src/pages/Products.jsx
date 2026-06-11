@@ -350,7 +350,12 @@ const Products = () => {
 
   const selectedSubcategorySchema = useMemo(() => {
     const cat = findCategoryInTree(categoryTree, formData.category_id);
-    return cat?.attribute_schema || null;
+    const raw = cat?.attribute_schema;
+    if (!raw || typeof raw !== 'object') return null;
+    return {
+      ...raw,
+      show_compatibility: raw.show_compatibility !== false,
+    };
   }, [categoryTree, formData.category_id]);
 
   const layoutPriceRows = useMemo(
@@ -418,8 +423,6 @@ const Products = () => {
     if (isEditingProduct) setChangeCategoryMode(true);
     else handleResetCategory();
   };
-
-  const showCompatibilityBlock = Boolean(selectedSubcategorySchema?.show_compatibility);
 
   const { data: vehicleBrands = [] } = useQuery({
     queryKey: ['compatibility', 'vehicle-brands'],
@@ -2214,7 +2217,7 @@ const Products = () => {
                 onFormDataChange={setFormData}
                 disabled={!formData.category_id}
                 compatibilitySlot={
-                  (showCompatibilityBlock || (formData.compatibility_vehicle_model_ids || []).length > 0) ? (
+                  selectedSubcategorySchema?.show_compatibility !== false ? (
                     <VehicleCompatibilityPicker
                       brands={vehicleBrands}
                       models={vehicleModels}
