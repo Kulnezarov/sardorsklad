@@ -14,7 +14,6 @@ import ProductFormByLayout from '../components/ProductFormByLayout';
 import ProductStockFormSection from '../components/ProductStockFormSection';
 import { priceLayoutRows } from '../utils/formLayoutUtils';
 import ProductFormSection, { ProductFormTemplateBadge } from '../components/ProductFormSection';
-import { IosFormBlock, IosFormGroup } from '../components/IosForm';
 import VehicleCompatibilityPicker from '../components/VehicleCompatibilityPicker';
 import { formatAttributePreview } from '../components/CategoryAttributeFields';
 import { syncPrimaryVehicleFromSelection } from '../utils/productDisplayUtils';
@@ -258,6 +257,8 @@ const Products = () => {
   const [skuConflictPayload, setSkuConflictPayload] = useState(null);
   const skuOpenAfterSaveRef = useRef(null);
   const [barcodeLocked, setBarcodeLocked] = useState(false);
+  /** Редактирование: смена категории тем же экраном, что при создании */
+  const [changeCategoryMode, setChangeCategoryMode] = useState(false);
 
   const [sideProduct, setSideProduct] = useState(null);
   const [deleteModal, setDeleteModal] = useState(null);
@@ -382,21 +383,25 @@ const Products = () => {
 
   const isEditingProduct = Boolean(formData.id);
   const categoryChosen = Boolean(formData.category_id);
-  const showCategoryWizard = !isEditingProduct && !categoryChosen;
-  const showProductFields = isEditingProduct || categoryChosen;
+  const showCategoryStep =
+    (!isEditingProduct && !categoryChosen) ||
+    changeCategoryMode ||
+    (isEditingProduct && !categoryChosen);
+  const showFillStep = categoryChosen && !changeCategoryMode;
 
   const handleCategoryChange = ({ groupId, categoryId }) => {
     const sub = findCategoryInTree(categoryTree, categoryId);
     setFormData((prev) => {
-      const catChanged = categoryId !== prev.category_id;
+      const catChanged = categoryId && categoryId !== prev.category_id;
       return {
         ...prev,
         category_group_id: groupId,
-        category_id: categoryId,
+        category_id: categoryId || null,
         category: sub?.name || prev.category,
         attributes: catChanged && prev.category_id ? {} : (prev.attributes || {}),
       };
     });
+    if (categoryId) setChangeCategoryMode(false);
   };
 
   const handleResetCategory = () => {
@@ -406,6 +411,12 @@ const Products = () => {
       category_group_id: null,
       attributes: {},
     }));
+    setChangeCategoryMode(false);
+  };
+
+  const handleRequestCategoryChange = () => {
+    if (isEditingProduct) setChangeCategoryMode(true);
+    else handleResetCategory();
   };
 
   const showCompatibilityBlock = Boolean(selectedSubcategorySchema?.show_compatibility);
@@ -889,6 +900,7 @@ const Products = () => {
     setDuplicateBarcodeValue('');
     setBarcodeLocked(false);
     setForceCreateMode(false);
+    setChangeCategoryMode(false);
   };
 
   const showFormRef = useRef(false);
@@ -1028,6 +1040,7 @@ const Products = () => {
     });
     setShowForm(true); setBarcodeLocked(true); setFormError('');
     setForceCreateMode(false);
+    setChangeCategoryMode(false);
     setDeliveryMode('normal');
     setCustomDeliveryRate(String(settingsDeliveryRate || 800));
     setSideProduct(null);
@@ -1167,6 +1180,7 @@ const Products = () => {
     setCustomDeliveryRate(String(settingsDeliveryRate || 800));
     setShowForm(true);
     setForceCreateMode(true);
+    setChangeCategoryMode(false);
   };
 
   const productImageDisplaySrc = (url) => {
@@ -1925,17 +1939,21 @@ const Products = () => {
       {/* ── Add / Edit product modal ── */}
       <Modal
         isOpen={showForm}
-        title={formData.id ? 'Редактировать товар' : (categoryChosen ? 'Новый товар' : 'Выберите категорию')}
+        title={
+          formData.id
+            ? (changeCategoryMode ? 'Изменить категорию' : 'Редактировать товар')
+            : (categoryChosen ? 'Новый товар' : 'Выберите категорию')
+        }
         onClose={resetForm}
         size="xl"
         icon={formData.id ? FiEdit2 : FiPlus}
         actions={(
           <>
             <Button variant="secondary" onClick={resetForm}>Отмена</Button>
-            {showProductFields && (formData.id || formData.name || formData.barcode) && (
+            {showFillStep && (formData.id || formData.name || formData.barcode) && (
               <Button variant="secondary" onClick={handleCreateCopy}>Копия</Button>
             )}
-            {showProductFields && (
+            {showFillStep && (
               <Button
                 variant="primary"
                 icon={formData.id ? FiEdit2 : FiPlus}
@@ -1962,9 +1980,9 @@ const Products = () => {
           </div>
         )}
 
-        {showCategoryWizard && (
-          <div className="product-wizard">
-            <div className="product-wizard-steps" aria-label="Шаги создания товара">
+        {showCategoryStep && (
+          <div className="product-wizard product-form-modal">
+            <div className="product-wizard-steps" aria-label="Шаги">
               <div className="product-wizard-step product-wizard-step--active">
                 <span className="product-wizard-step__num">1</span>
                 <span className="product-wizard-step__label">Категория</span>
@@ -1977,24 +1995,73 @@ const Products = () => {
             </div>
             <div className="product-wizard-panel">
               <CategoryPicker
-                key="new-product-category"
+                key={isEditingProduct ? `edit-cat-${formData.id}` : 'new-product-category'}
                 tree={categoryTree}
                 groupId={formData.category_group_id}
                 categoryId={formData.category_id}
+                legacyCategoryText={isEditingProduct ? (formData.category || '') : ''}
                 onChange={handleCategoryChange}
-                stepCaption="Новый товар"
+                stepCaption={isEditingProduct ? 'Товар' : 'Новый товар'}
                 stepTitle="Выберите группу"
               />
               <p className="product-wizard-hint">
-                Сначала группа (Двигатель, Кузов…), затем подкатегория. Поля товара откроются после выбора.
+                {isEditingProduct && !categoryChosen
+                  ? 'Выберите группу и подкатегорию — шаблон полей подстроится под категорию.'
+                  : 'Сначала группа (Двигатель, Кузов…), затем подкатегория. Поля товара откроются после выбора.'}
               </p>
+              {isEditingProduct && !categoryChosen && (
+                <div className="product-form-legacy-banner">
+                  Товар по старой схеме. Выберите категорию — цены и остаток сохранятся.
+                </div>
+              )}
+              {changeCategoryMode && (
+                <button
+                  type="button"
+                  className="product-wizard-cancel-change"
+                  onClick={() => setChangeCategoryMode(false)}
+                >
+                  Отмена — оставить текущую категорию
+                </button>
+              )}
             </div>
           </div>
         )}
 
-        {showProductFields && (
-        <IosFormBlock title="Фото товара" footer="До 12 фото. Сначала сохраните товар, затем загружайте снимки.">
-          <IosFormGroup padded className="product-form-photo-section">
+        {showFillStep && (
+        <form className="ios-form-stack product-form-flow product-form-modal" onSubmit={handleSubmit}>
+          {!isEditingProduct && (
+            <div className="product-wizard-steps product-wizard-steps--compact" aria-label="Шаги">
+              <div className="product-wizard-step product-wizard-step--done">
+                <span className="product-wizard-step__num">✓</span>
+                <span className="product-wizard-step__label">Категория</span>
+              </div>
+              <div className="product-wizard-step__line product-wizard-step__line--done" aria-hidden />
+              <div className="product-wizard-step product-wizard-step--active">
+                <span className="product-wizard-step__num">2</span>
+                <span className="product-wizard-step__label">Заполнение</span>
+              </div>
+            </div>
+          )}
+
+          {selectedCategoryGroup && selectedSubcategory && (
+            <div className="product-category-summary">
+              <span className="product-category-summary__emoji">{selectedCategoryGroup.icon || '📦'}</span>
+              <div className="product-category-summary__text">
+                <span className="product-category-summary__caption">Категория</span>
+                <strong>{selectedCategoryGroup.name} → {selectedSubcategory.name}</strong>
+              </div>
+              <button type="button" className="product-category-summary__change" onClick={handleRequestCategoryChange}>
+                Изменить
+              </button>
+            </div>
+          )}
+
+          <ProductFormSection
+            title="Фото товара"
+            footer="До 12 фото. Сначала сохраните товар, затем загружайте снимки."
+            className="product-form-photo-section"
+          >
+          <div className="product-form-photo-section__inner">
               <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start', flexWrap: 'wrap' }}>
                 <div
                   style={{
@@ -2134,67 +2201,15 @@ const Products = () => {
                   ))}
                 </div>
               )}
-          </IosFormGroup>
-        </IosFormBlock>
-        )}
+          </div>
+          </ProductFormSection>
 
-        {showProductFields && (
-        <form className="ios-form-stack product-form-flow product-form-modal" onSubmit={handleSubmit}>
-          {!isEditingProduct && categoryChosen && (
-            <div className="product-wizard-steps product-wizard-steps--compact" aria-label="Шаги">
-              <div className="product-wizard-step product-wizard-step--done">
-                <span className="product-wizard-step__num">✓</span>
-                <span className="product-wizard-step__label">Категория</span>
-              </div>
-              <div className="product-wizard-step__line product-wizard-step__line--done" aria-hidden />
-              <div className="product-wizard-step product-wizard-step--active">
-                <span className="product-wizard-step__num">2</span>
-                <span className="product-wizard-step__label">Заполнение</span>
-              </div>
-            </div>
-          )}
-
-          {categoryChosen && selectedCategoryGroup && selectedSubcategory && (
-            <div className="product-category-summary">
-              <span className="product-category-summary__emoji">{selectedCategoryGroup.icon || '📦'}</span>
-              <div className="product-category-summary__text">
-                <span className="product-category-summary__caption">Категория</span>
-                <strong>{selectedCategoryGroup.name} → {selectedSubcategory.name}</strong>
-              </div>
-              <button type="button" className="product-category-summary__change" onClick={handleResetCategory}>
-                Изменить
-              </button>
-            </div>
-          )}
-
-          {isEditingProduct && !categoryChosen && (
-            <ProductFormSection
-              title="Категория"
-              footer="Выберите группу и подкатегорию для шаблона полей"
-            >
-              <CategoryPicker
-                key={`edit-cat-${formData.id}`}
-                tree={categoryTree}
-                groupId={formData.category_group_id}
-                categoryId={formData.category_id}
-                legacyCategoryText={formData.category || ''}
-                onChange={handleCategoryChange}
-                stepCaption="Товар"
-                stepTitle="Выберите группу"
-              />
-              <div className="product-form-legacy-banner">
-                Товар по старой схеме. Выберите категорию — цены и остаток сохранятся.
-              </div>
-            </ProductFormSection>
-          )}
-
-          {categoryChosen && selectedSubcategorySchema && (
-            <ProductFormSection
-              title="Характеристики"
-              footer="Заполните по шаблону категории"
-            >
-              <ProductFormByLayout
-                schema={selectedSubcategorySchema}
+          <ProductFormSection
+            title="Характеристики"
+            footer="Заполните по шаблону категории"
+          >
+            <ProductFormByLayout
+              schema={selectedSubcategorySchema || {}}
                 formData={formData}
                 onFormDataChange={setFormData}
                 disabled={!formData.category_id}
@@ -2209,34 +2224,31 @@ const Products = () => {
                   ) : null
                 }
               />
-            </ProductFormSection>
-          )}
+          </ProductFormSection>
 
-          {(categoryChosen || isEditingProduct) && (
-            <ProductStockFormSection
-              formData={formData}
-              setFormData={setFormData}
-              barcodeLocked={barcodeLocked}
-              setBarcodeLocked={setBarcodeLocked}
-              barcodeCanvasRef={barcodeCanvasRef}
-              sanitizeBarcodeInput={sanitizeBarcodeFieldInput}
-              generateEAN13={generateEAN13}
-              layoutPriceRows={layoutPriceRows}
-              selectedSubcategorySchema={selectedSubcategorySchema}
-              cnyRate={cnyRate}
-              deliveryKztPerKg={deliveryKztPerKg}
-              deliveryMode={deliveryMode}
-              setDeliveryMode={setDeliveryMode}
-              customDeliveryRate={customDeliveryRate}
-              setCustomDeliveryRate={setCustomDeliveryRate}
-              settingsDeliveryRate={settingsDeliveryRate}
-              highlightStyle={formData.id ? { border: '1px solid var(--primary)' } : {}}
-              profitPreview={profitPreview}
-              effPurchasePreview={effPurchasePreview}
-              optionalNum={optionalNum}
-              num={num}
-            />
-          )}
+          <ProductStockFormSection
+            formData={formData}
+            setFormData={setFormData}
+            barcodeLocked={barcodeLocked}
+            setBarcodeLocked={setBarcodeLocked}
+            barcodeCanvasRef={barcodeCanvasRef}
+            sanitizeBarcodeInput={sanitizeBarcodeFieldInput}
+            generateEAN13={generateEAN13}
+            layoutPriceRows={layoutPriceRows}
+            selectedSubcategorySchema={selectedSubcategorySchema}
+            cnyRate={cnyRate}
+            deliveryKztPerKg={deliveryKztPerKg}
+            deliveryMode={deliveryMode}
+            setDeliveryMode={setDeliveryMode}
+            customDeliveryRate={customDeliveryRate}
+            setCustomDeliveryRate={setCustomDeliveryRate}
+            settingsDeliveryRate={settingsDeliveryRate}
+            highlightStyle={{}}
+            profitPreview={profitPreview}
+            effPurchasePreview={effPurchasePreview}
+            optionalNum={optionalNum}
+            num={num}
+          />
         </form>
         )}
       </Modal>
