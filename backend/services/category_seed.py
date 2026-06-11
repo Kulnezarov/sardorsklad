@@ -39,18 +39,18 @@ CATEGORY_TREE: list[tuple[str, str, list[tuple[str, dict]]]] = [
         ("Генератор", _schema([
             _field("voltage", "Вольтаж", "text"),
             _field("power", "Мощность (Вт)", "text"),
-        ])),
+        ], show_compatibility=True)),
         ("Стартер", _schema([
             _field("voltage", "Вольтаж", "text"),
             _field("power", "Мощность (кВт)", "text"),
-        ])),
+        ], show_compatibility=True)),
         ("Турбина", _schema([
             _field("type", "Тип", "text"),
             _field("pressure", "Давление наддува", "text"),
-        ])),
+        ], show_compatibility=True)),
         ("Помпа", _schema([
             _field("type", "Тип", "text"),
-        ])),
+        ], show_compatibility=True)),
     ]),
     ("🚗", "Кузов", [
         ("Дверь", _schema([
@@ -144,7 +144,7 @@ CATEGORY_TREE: list[tuple[str, str, list[tuple[str, dict]]]] = [
         ], show_compatibility=True)),
         ("Аккумулятор", _schema([
             _field("cap", "Ёмкость (А·ч)", "text"),
-        ])),
+        ], show_compatibility=True)),
         ("Датчик", _schema([
             _field("type", "Тип", "text"),
             _field("conn", "Разъём", "text"),

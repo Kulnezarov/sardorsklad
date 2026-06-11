@@ -16,6 +16,7 @@ import LabelPrint from './LabelPrint';
 import CameraBarcodeScanner from './CameraBarcodeScanner';
 import { productApi, categoryApi, compatibilityApi, resolveUploadedAssetUrl } from '../api/client';
 import CategoryPicker, { findGroupIdForCategory, findCategoryInTree } from './CategoryPicker';
+import { resolveCategoryProfile } from '../utils/formLayoutUtils';
 import ProductFormByLayout from './ProductFormByLayout';
 import VehicleCompatibilityPicker from './VehicleCompatibilityPicker';
 import { syncPrimaryVehicleFromSelection } from '../utils/productDisplayUtils';
@@ -158,10 +159,15 @@ export default function IntakeLineModal({
 
   const selectedSubcategorySchema = useMemo(() => {
     const cat = findCategoryInTree(categoryTree, form.category_id);
-    return cat?.attribute_schema || null;
+    const raw = cat?.attribute_schema || null;
+    if (!raw) return null;
+    const profile = resolveCategoryProfile(raw);
+    return { ...raw, ...profile, show_compatibility: profile.vehicle_mode === 'compatibility' };
   }, [categoryTree, form.category_id]);
 
-  const showCompatibilityBlock = Boolean(selectedSubcategorySchema?.show_compatibility);
+  const vehicleMode = selectedSubcategorySchema?.vehicle_mode || 'none';
+  const showCompatibilityBlock = vehicleMode === 'compatibility';
+  const showBrandModelBlock = vehicleMode === 'brand_model';
 
   const { data: vehicleBrands = [] } = useQuery({
     queryKey: ['compatibility', 'vehicle-brands'],
@@ -784,7 +790,7 @@ export default function IntakeLineModal({
                 onFormDataChange={setIntakeFormData}
                 disabled={readonly}
                 compatibilitySlot={
-                  (showCompatibilityBlock || (form.compatibility_vehicle_model_ids || []).length > 0) ? (
+                  showCompatibilityBlock ? (
                     <VehicleCompatibilityPicker
                       brands={vehicleBrands}
                       models={vehicleModels}
@@ -798,7 +804,7 @@ export default function IntakeLineModal({
             </IntakeFormCard>
           )}
 
-          {!showCompatibilityBlock && form.category_id && (
+          {(showBrandModelBlock || (!showCompatibilityBlock && form.category_id)) && (
             <div className="intake-form-row-2">
               <IntakeFormCard title="Марка">
                 <input

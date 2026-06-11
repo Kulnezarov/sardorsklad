@@ -1,13 +1,15 @@
-import React from 'react';
-import { groupLayoutRowsForDisplay, layoutRowLabel, normalizeFormLayout } from '../utils/formLayoutUtils';
+import React, { useCallback, useRef } from 'react';
+import { groupLayoutRowsForDisplay, layoutRowLabel, normalizeFormLayout, resolveCategoryProfile } from '../utils/formLayoutUtils';
+import { suggestProductName, generateProductName } from '../utils/productNameUtils';
 
-function ProductAttrField({ label, children, prominent = false, className = '' }) {
+function ProductAttrField({ label, children, prominent = false, className = '', error }) {
   return (
     <div
-      className={`product-attr-field${prominent ? ' product-attr-field--name' : ''}${className ? ` ${className}` : ''}`}
+      className={`product-attr-field${prominent ? ' product-attr-field--name' : ''}${error ? ' product-attr-field--error' : ''}${className ? ` ${className}` : ''}`}
     >
       {label && <span className="product-attr-field__label">{label}</span>}
       <div className="product-attr-field__control">{children}</div>
+      {error && <span className="product-attr-field__error">{error}</span>}
     </div>
   );
 }
@@ -83,13 +85,65 @@ function AttributeField({ fieldDef, value, onChange, disabled, placeholder }) {
 
 function renderFieldControl(row, schema, fieldByKey, formData, onFormDataChange, disabled, setAttr) {
   if (row.kind === 'builtin' && row.key === 'name') {
+    const canGenerate = (schema?.fields || []).some((f) => f.use_in_name) && categoryName;
+    const handleGenerate = () => {
+      const generated = generateProductName(
+        categoryName,
+        formData.attributes,
+        schema,
+        { brand: formData.brand, model: formData.model },
+      );
+      if (generated) {
+        nameTouchedRef.current = false;
+        onFormDataChange?.({ ...formData, name: generated });
+      }
+    };
+    return (
+      <div className="product-name-field-wrap">
+        <input
+          className="product-attr-field__input"
+          value={formData.name || ''}
+          disabled={disabled}
+          placeholder={row.placeholder || 'Название товара'}
+          onChange={(e) => {
+            nameTouchedRef.current = true;
+            onFormDataChange?.({ ...formData, name: e.target.value });
+          }}
+        />
+        {canGenerate && !disabled && (
+          <button
+            type="button"
+            className="product-name-generate-btn"
+            title="Сгенерировать название из категории и атрибутов"
+            onClick={handleGenerate}
+          >
+            ✨ Авто
+          </button>
+        )}
+      </div>
+    );
+  }
+  if (row.kind === 'builtin' && row.key === 'brand') {
     return (
       <input
         className="product-attr-field__input"
-        value={formData.name || ''}
+        value={formData.brand || ''}
         disabled={disabled}
-        placeholder={row.placeholder || 'Название товара'}
-        onChange={(e) => onFormDataChange?.({ ...formData, name: e.target.value })}
+        placeholder="Dongfeng, Changan…"
+        data-vehicle="brand"
+        onChange={(e) => onFormDataChange?.({ ...formData, brand: e.target.value })}
+      />
+    );
+  }
+  if (row.kind === 'builtin' && row.key === 'model') {
+    return (
+      <input
+        className="product-attr-field__input"
+        value={formData.model || ''}
+        disabled={disabled}
+        placeholder="H30, CS35…"
+        data-vehicle="model"
+        onChange={(e) => onFormDataChange?.({ ...formData, model: e.target.value })}
       />
     );
   }
@@ -116,7 +170,10 @@ export default function ProductFormByLayout({
   onFormDataChange,
   disabled = false,
   compatibilitySlot,
+  fieldErrors = {},
+  categoryName = '',
 }) {
+  const nameTouchedRef = useRef(false);
   const layout = normalizeFormLayout(schema?.form_layout, schema);
   const fieldByKey = {};
   (schema?.fields || []).forEach((f) => {
@@ -130,10 +187,17 @@ export default function ProductFormByLayout({
     });
   };
 
+  const { vehicle_mode: vm } = resolveCategoryProfile(schema);
+
   const contentRows = [];
   layout.forEach((row) => {
     if (row.kind === 'locked') return;
-    if (row.kind === 'builtin' && row.key !== 'name') return;
+    if (row.kind === 'builtin') {
+      // name, brand, model — показываем в форме
+      if (!['name', 'brand', 'model'].includes(row.key)) return;
+      // brand/model показываем только если vehicle_mode: brand_model
+      if ((row.key === 'brand' || row.key === 'model') && vm !== 'brand_model') return;
+    }
     if (row.kind === 'compatibility') {
       contentRows.push({ type: 'compat', row });
       return;
@@ -161,7 +225,7 @@ export default function ProductFormByLayout({
   });
   flushFields();
 
-  if (compatibilitySlot && !rows.some((b) => b.type === 'compat')) {
+  if (compatibilitySlot && vm === 'compatibility' && !rows.some((b) => b.type === 'compat')) {
     let insertAt = 0;
     for (let i = 0; i < rows.length; i += 1) {
       const block = rows[i];
@@ -193,24 +257,32 @@ export default function ProductFormByLayout({
         if (block.type === 'half-row') {
           return (
             <div key={`half-${idx}`} className="product-attr-row-pair">
-              {block.items.map((row) => (
-                <ProductAttrField
-                  key={row.id}
-                  label={fieldLabel(row)}
-                  prominent={isNameRow(row)}
-                >
-                  {renderFieldControl(row, schema, fieldByKey, formData, onFormDataChange, disabled, setAttr)}
-                </ProductAttrField>
-              ))}
+              {block.items.map((row) => {
+                const errKey = row.kind === 'attribute' ? `attr:${row.key}` : row.key;
+                const errMsg = fieldErrors[errKey];
+                return (
+                  <ProductAttrField
+                    key={row.id}
+                    label={fieldLabel(row)}
+                    prominent={isNameRow(row)}
+                    error={errMsg}
+                  >
+                    {renderFieldControl(row, schema, fieldByKey, formData, onFormDataChange, disabled, setAttr)}
+                  </ProductAttrField>
+                );
+              })}
             </div>
           );
         }
         const row = block.row;
+        const errKey = row.kind === 'attribute' ? `attr:${row.key}` : row.key;
+        const errMsg = fieldErrors[errKey];
         return (
           <ProductAttrField
             key={row.id}
             label={fieldLabel(row)}
             prominent={isNameRow(row)}
+            error={errMsg}
           >
             {renderFieldControl(row, schema, fieldByKey, formData, onFormDataChange, disabled, setAttr)}
           </ProductAttrField>

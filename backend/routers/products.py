@@ -29,7 +29,9 @@ from services.cny_price_history import record_cny_price_history
 from services.product_compatibility import (
     apply_product_compatibility,
     build_car_compatibility_from_model_ids,
+    build_compatibility_extra_counts,
     build_compatibility_out,
+    compatibility_extra_model_count,
     resolve_car_compatibility_to_model_ids,
 )
 from services.product_search import search_products
@@ -144,12 +146,22 @@ def _apply_product_category_fields(db: Session, payload: dict, *, strict: bool =
             payload["attributes"] = validate_attributes_for_category(db, cid, merged_attrs, strict=False)
 
 
-def _product_to_response_lite(db: Session, p: models.Product) -> schemas.ProductResponse:
-    """Список товаров: без N+1 по совместимости — смотрите product.model (кэш)."""
+def _product_to_response_lite(
+    db: Session,
+    p: models.Product,
+    *,
+    extra_counts: dict[int, int] | None = None,
+) -> schemas.ProductResponse:
+    """Список товаров: кэш brand/model + счётчик доп. совместимостей."""
     r = schemas.ProductResponse.model_validate(p, from_attributes=True)
     r = _inject_product_gallery(r, p)
     meta = _category_meta(db, p)
-    return r.model_copy(update={"compatibility": schemas.ProductCompatibilityOut(), **meta})
+    extra = (extra_counts or {}).get(p.id, 0)
+    return r.model_copy(update={
+        "compatibility": schemas.ProductCompatibilityOut(),
+        "compatibility_extra_count": extra,
+        **meta,
+    })
 
 
 def _product_to_response(db: Session, p: models.Product) -> schemas.ProductResponse:
@@ -162,7 +174,12 @@ def _product_to_response(db: Session, p: models.Product) -> schemas.ProductRespo
         if ec:
             engine_code = schemas.EngineCodeBrief.model_validate(ec, from_attributes=True)
     meta = _category_meta(db, p)
-    return r.model_copy(update={"compatibility": comp, "engine_code": engine_code, **meta})
+    return r.model_copy(update={
+        "compatibility": comp,
+        "engine_code": engine_code,
+        "compatibility_extra_count": compatibility_extra_model_count(comp),
+        **meta,
+    })
 
 
 def _apply_engine_code_defaults(db: Session, payload: dict) -> None:
@@ -302,7 +319,9 @@ def list_products(
         rows = search_products(query, str(search).strip(), limit=limit, skip=skip)
     else:
         rows = query.order_by(models.Product.created_at.desc()).offset(skip).limit(limit).all()
-    return [_product_to_response_lite(db, p) for p in rows]
+    pids = [p.id for p in rows]
+    extra_counts = build_compatibility_extra_counts(db, pids)
+    return [_product_to_response_lite(db, p, extra_counts=extra_counts) for p in rows]
 
 
 @router.post("/storefront/bulk", response_model=schemas.StorefrontBulkResponse)
@@ -1130,3 +1149,39 @@ def delete_product(
         db.rollback()
         raise HTTPException(status_code=500, detail="Не удалось сохранить удаление в базе")
     return JSONResponse({"ok": True})
+
+
+@router.post("/refresh-display-layout")
+def refresh_product_display_layouts(
+    category_id: Optional[int] = Query(None, ge=1, description="Только для указанной категории"),
+    db: Session = Depends(get_db),
+    _current_user: models.User = Depends(require_manager_or_admin),
+):
+    """Пересобрать display_layout для товаров по категории (или всех)."""
+    from sqlalchemy import update as sa_update
+
+    q = db.query(models.Product)
+    if category_id:
+        q = q.filter(models.Product.category_id == category_id)
+    products = q.all()
+
+    updated = 0
+    for p in products:
+        schema = get_category_schema(db, p.category_id)
+        if not schema:
+            continue
+        form_layout = normalize_form_layout(schema.get("form_layout"), schema)
+        new_layout = display_layout_from_form_layout(form_layout, schema)
+        if p.display_layout == new_layout:
+            continue
+        db.execute(
+            sa_update(models.Product)
+            .where(models.Product.id == p.id)
+            .values(display_layout=new_layout)
+        )
+        updated += 1
+
+    if updated:
+        db.commit()
+
+    return {"ok": True, "updated": updated, "total": len(products)}

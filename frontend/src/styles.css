@@ -55,6 +55,16 @@
   --dash-icon-bg-cyan: #dff8fb;
   --dash-icon-bg-green: #e3f9eb;
   --dash-icon-bg-amber: #fdf6db;
+
+  /* ── Семантические токены формы товара ── */
+  --form-vehicle-accent: #5856d6;
+  --form-vehicle-bg: rgba(88, 86, 214, 0.08);
+  --form-vehicle-border: rgba(88, 86, 214, 0.22);
+  --form-price-cny-accent: #f59e0b;
+  --form-price-kzt-accent: #34c759;
+  --form-sale-accent: #007aff;
+  --form-error: #ff3b30;
+  --form-error-bg: rgba(255, 59, 48, 0.08);
 }
 
 [data-theme="dark"] {
@@ -78,6 +88,11 @@
   --dash-icon-bg-cyan: #0c2d33;
   --dash-icon-bg-green: #0d2818;
   --dash-icon-bg-amber: #3a3208;
+
+  /* ── Семантические токены формы товара (dark) ── */
+  --form-vehicle-bg: rgba(88, 86, 214, 0.12);
+  --form-vehicle-border: rgba(88, 86, 214, 0.3);
+  --form-error-bg: rgba(255, 59, 48, 0.12);
 }
 
 * {
@@ -8209,6 +8224,74 @@ textarea {
   background: color-mix(in srgb, var(--bg-secondary) 55%, var(--surface)) !important;
   box-shadow: 0 0 0 3px rgba(0, 122, 255, 0.12);
 }
+
+/* Авто-название */
+.product-name-field-wrap {
+  position: relative;
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+}
+.product-name-field-wrap .product-attr-field__input {
+  flex: 1;
+}
+.product-name-generate-btn {
+  flex-shrink: 0;
+  padding: 0 12px;
+  border-radius: 12px;
+  border: 1.5px solid var(--primary);
+  background: var(--primary-light);
+  color: var(--primary);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s, box-shadow 0.15s;
+}
+.product-name-generate-btn:hover {
+  background: color-mix(in srgb, var(--primary-light) 70%, var(--primary) 10%);
+  box-shadow: 0 0 0 3px rgba(0, 122, 255, 0.12);
+}
+
+/* Ошибки полей */
+.product-attr-field--error .product-attr-field__input,
+.product-attr-field--error .product-attr-field__input:focus {
+  border-color: var(--form-error) !important;
+  background: var(--form-error-bg) !important;
+  box-shadow: 0 0 0 3px rgba(255, 59, 48, 0.1) !important;
+}
+.product-attr-field--error .product-attr-field__label {
+  color: var(--form-error);
+}
+.product-attr-field__error {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--form-error);
+  margin-top: 3px;
+  line-height: 1.3;
+}
+
+/* Авто-блок vehicle_mode: compatibility (фиолетовый) */
+.product-attr-field--compat {
+  padding: 14px;
+  border-radius: 14px;
+  background: var(--form-vehicle-bg);
+  border: 1px solid var(--form-vehicle-border);
+}
+.product-attr-field--compat .product-attr-field__label {
+  color: var(--form-vehicle-accent);
+}
+
+/* Авто-блок brand_model (фиолетовый тоже) */
+.product-form-by-layout .product-attr-row-pair:has([data-vehicle]) {
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--form-vehicle-bg);
+  border: 1px solid var(--form-vehicle-border);
+}
+.product-attr-field--vehicle .product-attr-field__label {
+  color: var(--form-vehicle-accent);
+}
 .product-attr-field__select {
   appearance: none;
   padding-right: 38px;
@@ -9846,6 +9929,62 @@ textarea {
   font-size: 12px;
   font-weight: 700;
   color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+/* ── Профиль категории (pricing_mode / vehicle_mode) ── */
+.settings-profile-row {
+  display: grid;
+  gap: 6px;
+}
+.settings-profile-row__label {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+.settings-profile-chips {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.settings-profile-chip {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 9px 12px;
+  border-radius: 12px;
+  border: 1.5px solid var(--border);
+  background: var(--bg-secondary);
+  cursor: pointer;
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
+}
+.settings-profile-chip:hover:not(.settings-profile-chip--active) {
+  border-color: color-mix(in srgb, var(--primary) 40%, var(--border));
+  background: var(--primary-light);
+}
+.settings-profile-chip--active {
+  border-color: var(--primary);
+  background: var(--primary-light);
+  box-shadow: 0 0 0 3px rgba(0, 122, 255, 0.1);
+}
+.settings-profile-chip__label {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+}
+.settings-profile-chip--active .settings-profile-chip__label {
+  color: var(--primary);
+}
+.settings-profile-chip__sub {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-weight: 400;
 }
 .settings-field-editor__card {
   padding: 12px;
@@ -9855,6 +9994,12 @@ textarea {
   display: grid;
   gap: 8px;
 }
+.settings-field-meta-checks {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
 .settings-field-editor__card-head {
   display: flex;
   gap: 8px;

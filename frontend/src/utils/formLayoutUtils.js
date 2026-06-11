@@ -21,6 +21,27 @@ export const BUILTIN_LABELS = {
   barcode: 'Штрих-код',
 };
 
+export const VALID_PRICING_MODES = ['import_cny', 'local_kzt'];
+export const VALID_VEHICLE_MODES = ['compatibility', 'brand_model', 'none'];
+
+/**
+ * Определяет профиль категории: pricing_mode и vehicle_mode.
+ * Мигрирует legacy show_compatibility → vehicle_mode.
+ */
+export function resolveCategoryProfile(schema) {
+  const s = schema && typeof schema === 'object' ? schema : {};
+
+  let pm = s.pricing_mode;
+  if (!VALID_PRICING_MODES.includes(pm)) pm = 'import_cny';
+
+  let vm = s.vehicle_mode;
+  if (!VALID_VEHICLE_MODES.includes(vm)) {
+    vm = s.show_compatibility ? 'compatibility' : 'none';
+  }
+
+  return { pricing_mode: pm, vehicle_mode: vm };
+}
+
 /** Поля цен/склада в хвосте form_layout (после артикула). */
 export const PRICE_BUILTIN_KEYS = new Set([
   'cny_price',
@@ -31,6 +52,12 @@ export const PRICE_BUILTIN_KEYS = new Set([
   'supplier',
   'description',
 ]);
+
+/** Поля авто-блока (brand_model mode). */
+export const VEHICLE_BUILTIN_ROWS = [
+  { id: 'brand', kind: 'builtin', key: 'brand', width: 'half', label: 'Марка авто' },
+  { id: 'model', kind: 'builtin', key: 'model', width: 'half', label: 'Модель авто' },
+];
 
 export const ADDABLE_BUILTIN = [
   { id: 'name', kind: 'builtin', key: 'name', width: 'full', label: 'Название' },
@@ -71,12 +98,18 @@ export function slugFieldKey(label) {
 }
 
 export function defaultFormLayout(schema = null) {
-  const showCompat = Boolean(schema?.show_compatibility);
+  const profile = resolveCategoryProfile(schema);
+  const { vehicle_mode: vm, pricing_mode: pm } = profile;
+
   const layout = LOCKED_ROWS.map((x) => ({ ...x }));
   layout.push({ id: 'name', kind: 'builtin', key: 'name', width: 'full', placeholder: 'Название товара' });
-  if (showCompat) {
+
+  if (vm === 'compatibility') {
     layout.push({ id: 'compat', kind: 'compatibility', width: 'full', label: 'Совместим с авто' });
+  } else if (vm === 'brand_model') {
+    VEHICLE_BUILTIN_ROWS.forEach((r) => layout.push({ ...r }));
   }
+
   (schema?.fields || []).forEach((f) => {
     const key = f.key?.trim();
     if (!key) return;
@@ -88,8 +121,14 @@ export function defaultFormLayout(schema = null) {
       placeholder: f.placeholder || f.label || key,
     });
   });
+
   layout.push({ id: 'sku', kind: 'locked', key: 'sku', width: 'full', label: 'Артикул' });
-  ADDABLE_BUILTIN.filter((b) => b.id !== 'name').forEach((row) => layout.push({ ...row }));
+
+  const priceTail = pm === 'import_cny'
+    ? ADDABLE_BUILTIN.filter((b) => b.id !== 'name')
+    : ADDABLE_BUILTIN.filter((b) => b.id !== 'name' && b.key !== 'cny_price' && b.key !== 'delivery_block');
+  priceTail.forEach((row) => layout.push({ ...row }));
+
   return layout;
 }
 
@@ -119,22 +158,32 @@ export function ensureLayoutStockTail(rows) {
 }
 
 export function ensureLayoutCompatibility(rows, schema) {
-  if (!schema?.show_compatibility) return rows;
+  const { vehicle_mode: vm } = resolveCategoryProfile(schema);
   const out = [...(rows || [])];
-  if (out.some((r) => r.kind === 'compatibility')) return out;
-  const nameIdx = out.findIndex((r) => r.key === 'name');
-  const at = nameIdx >= 0 ? nameIdx + 1 : Math.min(1, out.length);
-  out.splice(at, 0, {
-    id: 'compat',
-    kind: 'compatibility',
-    width: 'full',
-    label: 'Совместим с авто',
-  });
+
+  if (vm === 'compatibility') {
+    if (!out.some((r) => r.kind === 'compatibility')) {
+      const nameIdx = out.findIndex((r) => r.key === 'name');
+      const at = nameIdx >= 0 ? nameIdx + 1 : Math.min(1, out.length);
+      out.splice(at, 0, { id: 'compat', kind: 'compatibility', width: 'full', label: 'Совместим с авто' });
+    }
+  } else if (vm === 'brand_model') {
+    const hasBrand = out.some((r) => r.kind === 'builtin' && r.key === 'brand');
+    const hasModel = out.some((r) => r.kind === 'builtin' && r.key === 'model');
+    if (!hasBrand || !hasModel) {
+      const nameIdx = out.findIndex((r) => r.key === 'name');
+      let at = nameIdx >= 0 ? nameIdx + 1 : Math.min(1, out.length);
+      if (!hasBrand) { out.splice(at, 0, { ...VEHICLE_BUILTIN_ROWS[0] }); at += 1; }
+      if (!hasModel) { out.splice(at, 0, { ...VEHICLE_BUILTIN_ROWS[1] }); }
+    }
+  }
+
   return out;
 }
 
 export function normalizeFormLayout(raw, schema = null) {
   if (!Array.isArray(raw) || !raw.length) return defaultFormLayout(schema);
+  const { pricing_mode: pm } = resolveCategoryProfile(schema);
   const fieldKeys = new Set((schema?.fields || []).map((f) => f.key?.trim()).filter(Boolean));
   const out = [];
   const seen = new Set();
@@ -153,6 +202,8 @@ export function normalizeFormLayout(raw, schema = null) {
       return;
     }
     if (kind === 'builtin' && item.key && !BUILTIN_LABELS[item.key]) return;
+    // local_kzt — пропускаем ¥ и доставку
+    if (pm === 'local_kzt' && kind === 'builtin' && (item.key === 'cny_price' || item.key === 'delivery_block')) return;
     seen.add(id);
     out.push({
       id,
@@ -192,19 +243,31 @@ export function groupLayoutRowsForDisplay(rows) {
 
 export function priceLayoutRows(schema) {
   const base = schema && typeof schema === 'object' ? schema : {};
+  const { pricing_mode: pm } = resolveCategoryProfile(base);
   const layout = expandLayoutPurchaseRows(
     ensureLayoutStockTail(normalizeFormLayout(base.form_layout, base)),
   );
   const rows = layout.filter((r) => r.kind === 'builtin' && PRICE_BUILTIN_KEYS.has(r.key));
   const have = new Set(rows.map((r) => r.key));
-  const required = [
-    { id: 'cny', kind: 'builtin', key: 'cny_price', width: 'half', label: BUILTIN_LABELS.cny_price },
-    { id: 'delivery', kind: 'builtin', key: 'delivery_block', width: 'full', label: BUILTIN_LABELS.delivery_block },
-    { id: 'sale', kind: 'builtin', key: 'sale_price', width: 'half', label: BUILTIN_LABELS.sale_price },
-    { id: 'qty', kind: 'builtin', key: 'quantity', width: 'half', label: BUILTIN_LABELS.quantity },
-  ];
+
+  const required = pm === 'import_cny'
+    ? [
+        { id: 'cny', kind: 'builtin', key: 'cny_price', width: 'half', label: BUILTIN_LABELS.cny_price },
+        { id: 'delivery', kind: 'builtin', key: 'delivery_block', width: 'full', label: BUILTIN_LABELS.delivery_block },
+        { id: 'sale', kind: 'builtin', key: 'sale_price', width: 'half', label: BUILTIN_LABELS.sale_price },
+        { id: 'qty', kind: 'builtin', key: 'quantity', width: 'half', label: BUILTIN_LABELS.quantity },
+      ]
+    : [
+        { id: 'sale', kind: 'builtin', key: 'sale_price', width: 'half', label: BUILTIN_LABELS.sale_price },
+        { id: 'qty', kind: 'builtin', key: 'quantity', width: 'half', label: BUILTIN_LABELS.quantity },
+      ];
+
   const missing = required.filter((r) => !have.has(r.key));
-  return missing.length ? [...missing, ...rows] : rows;
+  // Для local_kzt фильтруем ¥/доставку из rows тоже
+  const filteredRows = pm === 'local_kzt'
+    ? rows.filter((r) => r.key !== 'cny_price' && r.key !== 'delivery_block')
+    : rows;
+  return missing.length ? [...missing, ...filteredRows] : filteredRows;
 }
 
 export function layoutRowLabel(row, schema) {
@@ -232,7 +295,7 @@ export function toggleRowWidth(row) {
   return { ...row, width: row.width === 'half' ? 'full' : 'half' };
 }
 
-export function fieldsToFullSchema(fields, showCompatibility, formLayout) {
+export function fieldsToFullSchema(fields, showCompatibility, formLayout, opts = {}) {
   const out = (fields || [])
     .filter((f) => f.label?.trim())
     .map((f) => {
@@ -240,6 +303,7 @@ export function fieldsToFullSchema(fields, showCompatibility, formLayout) {
       const row = { key, label: f.label.trim(), type: f.type || 'text' };
       if (f.unit?.trim()) row.unit = f.unit.trim();
       if (f.required) row.required = true;
+      if (f.use_in_name) row.use_in_name = true;
       if (f.placeholder?.trim()) row.placeholder = f.placeholder.trim();
       if (f.width === 'half') row.width = 'half';
       if ((f.type === 'select' || f.type === 'chip') && f.options) {
@@ -250,7 +314,14 @@ export function fieldsToFullSchema(fields, showCompatibility, formLayout) {
       }
       return row;
     });
-  const base = { fields: out, show_compatibility: Boolean(showCompatibility) };
+  const vehicleMode = opts.vehicle_mode || (showCompatibility ? 'compatibility' : 'none');
+  const pricingMode = opts.pricing_mode || 'import_cny';
+  const base = {
+    fields: out,
+    show_compatibility: vehicleMode === 'compatibility',
+    vehicle_mode: vehicleMode,
+    pricing_mode: pricingMode,
+  };
   return {
     ...base,
     form_layout: formLayout || defaultFormLayout(base),

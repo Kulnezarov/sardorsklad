@@ -68,6 +68,27 @@ async def lifespan(app: FastAPI):
         bootstrap_admin.ensure_default_admin()
 
         try:
+            from services.catalog_migrate import normalize_catalog_profiles
+
+            _db = next(database.get_db())
+            result = normalize_catalog_profiles(_db)
+            _db.close()
+            logger.info("✓ Catalog profiles migration: %s", result)
+        except Exception as _me:
+            logger.warning("Catalog profiles migration skipped: %s", _me)
+
+        try:
+            from services.product_compatibility import refresh_legacy_model_cache_summaries
+
+            _db = next(database.get_db())
+            fixed = refresh_legacy_model_cache_summaries(_db)
+            _db.close()
+            if fixed:
+                logger.info("✓ Product model cache refresh: %d rows", fixed)
+        except Exception as _me:
+            logger.warning("Product model cache refresh skipped: %s", _me)
+
+        try:
             from services.telegram_daily import setup_telegram_scheduler
 
             telegram_sched = setup_telegram_scheduler()

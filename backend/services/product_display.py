@@ -211,6 +211,107 @@ def storefront_fields_from_product(db: Session, p: models.Product) -> list[dict[
     return out
 
 
+def card_highlights_from_product(
+    p: models.Product,
+    schema: dict | None = None,
+    storefront_fields: list[dict[str, str]] | None = None,
+) -> list[str]:
+    """До 4 коротких характеристик для карточки каталога (chips)."""
+    highlights: list[str] = []
+    seen: set[str] = set()
+
+    def add(text: str) -> None:
+        t = str(text).strip()
+        if t and t not in seen and len(highlights) < 4:
+            seen.add(t)
+            highlights.append(t)
+
+    fields_meta = {
+        str(f.get("key") or ""): f
+        for f in (schema or {}).get("fields") or []
+        if isinstance(f, dict) and f.get("key")
+    }
+    attrs = p.attributes if isinstance(getattr(p, "attributes", None), dict) else {}
+
+    # Поля с storefront_priority > 0 — приоритет
+    priority_keys = [
+        k for k, f in fields_meta.items()
+        if isinstance(f.get("storefront_priority"), int) and f["storefront_priority"] > 0
+    ]
+    for key in sorted(priority_keys, key=lambda k: -int(fields_meta[k].get("storefront_priority", 0))):
+        val = attrs.get(key)
+        if val is not None and str(val).strip():
+            unit = fields_meta[key].get("unit") or ""
+            text = f"{str(val).strip()} {unit}".strip() if unit else str(val).strip()
+            add(text)
+
+    # Из storefront_fields (кроме назначения)
+    for row in (storefront_fields or []):
+        label = str(row.get("label") or "").strip().lower()
+        if "назнач" in label:
+            continue
+        value = str(row.get("value") or "").strip()
+        if value:
+            add(value)
+
+    return highlights
+
+
+def auto_description_from_product(
+    p: models.Product,
+    schema: dict | None = None,
+    storefront_fields: list[dict[str, str]] | None = None,
+    purpose: str | None = None,
+) -> str | None:
+    """Авто-описание если поле description пустое."""
+    # Если есть ручное описание — не трогаем
+    manual = _strip_or_none(getattr(p, "description", None))
+    if manual:
+        return manual
+
+    cat_name = None
+    if schema and isinstance(schema.get("_category_name"), str):
+        cat_name = schema["_category_name"].strip()
+
+    parts: list[str] = []
+    if cat_name:
+        parts.append(cat_name)
+
+    brand = _strip_or_none(getattr(p, "brand", None))
+    model = _strip_or_none(getattr(p, "model", None))
+    if brand:
+        parts.append(brand)
+    if model:
+        parts.append(model)
+
+    if purpose:
+        parts.append(purpose)
+
+    # Топ-2 важных поля
+    count = 0
+    fields_meta = {
+        str(f.get("key") or ""): f
+        for f in (schema or {}).get("fields") or []
+        if isinstance(f, dict) and f.get("key")
+    }
+    attrs = p.attributes if isinstance(getattr(p, "attributes", None), dict) else {}
+    for key, fdef in fields_meta.items():
+        if count >= 2:
+            break
+        val = attrs.get(key)
+        if val is None or not str(val).strip():
+            continue
+        label = str(fdef.get("label") or key).strip()
+        unit = fdef.get("unit") or ""
+        text = f"{label}: {str(val).strip()} {unit}".strip()
+        parts.append(text)
+        count += 1
+
+    if not parts:
+        return None
+    return ". ".join(parts)
+
+
 def sync_custom_fields_to_attributes(
     layout: list[dict[str, Any]] | None,
     attributes: dict | None,

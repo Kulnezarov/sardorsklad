@@ -12,11 +12,11 @@ import { productApi, resolveUploadedAssetUrl, compatibilityApi, categoryApi, get
 import CategoryPicker, { findGroupIdForCategory, findCategoryInTree } from '../components/CategoryPicker';
 import ProductFormByLayout from '../components/ProductFormByLayout';
 import ProductStockFormSection from '../components/ProductStockFormSection';
-import { priceLayoutRows } from '../utils/formLayoutUtils';
+import { priceLayoutRows, resolveCategoryProfile } from '../utils/formLayoutUtils';
 import ProductFormSection, { ProductFormTemplateBadge } from '../components/ProductFormSection';
 import VehicleCompatibilityPicker from '../components/VehicleCompatibilityPicker';
 import { formatAttributePreview } from '../components/CategoryAttributeFields';
-import { syncPrimaryVehicleFromSelection } from '../utils/productDisplayUtils';
+import { compatibilityLabelsFromProduct, syncPrimaryVehicleFromSelection } from '../utils/productDisplayUtils';
 import { importExcelStream } from '../api/importExcelStream';
 import { settingsApi } from '../api/settings';
 import { generateEAN13 } from '../utils/barcodeGen';
@@ -259,8 +259,15 @@ const Products = () => {
   const [barcodeLocked, setBarcodeLocked] = useState(false);
   /** Редактирование: смена категории тем же экраном, что при создании */
   const [changeCategoryMode, setChangeCategoryMode] = useState(false);
+  /** Диалог подтверждения сброса характеристик при смене категории */
+  const [confirmCategoryChange, setConfirmCategoryChange] = useState(null); // { groupId, categoryId, applyChange }
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  /** Ошибки конкретных полей формы (из клиентской валидации или 422) */
+  const [fieldErrors, setFieldErrors] = useState({});
 
   const [sideProduct, setSideProduct] = useState(null);
+  const [sideProductDetail, setSideProductDetail] = useState(null);
+  const [sideProductLoading, setSideProductLoading] = useState(false);
   const [deleteModal, setDeleteModal] = useState(null);
 
   const [showPrint, setShowPrint] = useState(false);
@@ -312,6 +319,38 @@ const Products = () => {
 
   useEffect(() => { formRef.current = formData; }, [formData]);
 
+  // ── Черновик в sessionStorage ──
+  const DRAFT_KEY = 'skladpro:product-draft:new';
+  const saveDraft = useCallback((data) => {
+    try {
+      if (!data || data.id) return; // только для нового товара
+      sessionStorage.setItem(DRAFT_KEY, JSON.stringify({ ...data, _savedAt: Date.now() }));
+    } catch { /* ignore quota errors */ }
+  }, []);
+  const loadDraft = useCallback(() => {
+    try {
+      const raw = sessionStorage.getItem(DRAFT_KEY);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      // TTL 24ч
+      if (Date.now() - (parsed._savedAt || 0) > 86400000) {
+        sessionStorage.removeItem(DRAFT_KEY);
+        return null;
+      }
+      return parsed;
+    } catch { return null; }
+  }, []);
+  const clearDraft = useCallback(() => {
+    try { sessionStorage.removeItem(DRAFT_KEY); } catch { /* ignore */ }
+  }, []);
+
+  // Автосохранение черновика при изменении формы нового товара
+  useEffect(() => {
+    if (!showForm || formData.id) return;
+    const t = setTimeout(() => saveDraft(formData), 500);
+    return () => clearTimeout(t);
+  }, [formData, showForm, saveDraft]);
+
   // Debounce search 300ms
   useEffect(() => {
     const t = setTimeout(() => setSearch(searchInput), 300);
@@ -352,9 +391,11 @@ const Products = () => {
     const cat = findCategoryInTree(categoryTree, formData.category_id);
     const raw = cat?.attribute_schema;
     if (!raw || typeof raw !== 'object') return null;
+    const profile = resolveCategoryProfile(raw);
     return {
       ...raw,
-      show_compatibility: raw.show_compatibility !== false,
+      ...profile,
+      show_compatibility: profile.vehicle_mode === 'compatibility',
     };
   }, [categoryTree, formData.category_id]);
 
@@ -396,17 +437,29 @@ const Products = () => {
 
   const handleCategoryChange = ({ groupId, categoryId }) => {
     const sub = findCategoryInTree(categoryTree, categoryId);
-    setFormData((prev) => {
-      const catChanged = categoryId && categoryId !== prev.category_id;
-      return {
+    const catChanged = categoryId && categoryId !== formData.category_id;
+    const hasAttrs = catChanged && formData.category_id && Object.keys(formData.attributes || {}).length > 0;
+
+    const applyChange = () => {
+      setFormData((prev) => ({
         ...prev,
         category_group_id: groupId,
         category_id: categoryId || null,
         category: sub?.name || prev.category,
         attributes: catChanged && prev.category_id ? {} : (prev.attributes || {}),
-      };
-    });
-    if (categoryId) setChangeCategoryMode(false);
+        compatibility_vehicle_model_ids: catChanged && prev.category_id ? [] : prev.compatibility_vehicle_model_ids,
+        brand: catChanged && prev.category_id ? '' : prev.brand,
+        model: catChanged && prev.category_id ? '' : prev.model,
+      }));
+      if (categoryId) setChangeCategoryMode(false);
+    };
+
+    if (hasAttrs && isEditingProduct) {
+      // Показать диалог подтверждения
+      setConfirmCategoryChange({ groupId, categoryId, applyChange });
+    } else {
+      applyChange();
+    }
   };
 
   const handleResetCategory = () => {
@@ -600,6 +653,29 @@ const Products = () => {
     if (p) { setSideProduct(p); setSearchParams((prev) => { const n = new URLSearchParams(prev); n.delete('product'); return n; }, { replace: true }); }
   }, [products, searchParams, setSearchParams]);
 
+  useEffect(() => {
+    if (!sideProduct?.id) {
+      setSideProductDetail(null);
+      setSideProductLoading(false);
+      return undefined;
+    }
+    let cancelled = false;
+    setSideProductLoading(true);
+    productApi.getById(sideProduct.id)
+      .then(({ data }) => {
+        if (!cancelled) setSideProductDetail({ ...sideProduct, ...data });
+      })
+      .catch(() => {
+        if (!cancelled) setSideProductDetail(sideProduct);
+      })
+      .finally(() => {
+        if (!cancelled) setSideProductLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [sideProduct?.id]);
+
+  const sidePanelProduct = sideProductDetail || sideProduct;
+
   const displayProducts = useMemo(() => {
     if (showStale) return products.filter(isStale);
     return products;
@@ -705,7 +781,31 @@ const Products = () => {
         handleEdit(openAfter);
         return;
       }
+      clearDraft();
       if (!wasEdit && res.data) { setSavedProduct(res.data); setShowPrintSuggest(true); }
+      if (saveAndAddMore && !wasEdit) {
+        // Оставить категорию и цены, сбросить sku/barcode/qty/название
+        setSaveAndAddMore(false);
+        setFormData((prev) => ({
+          ...prev,
+          id: null,
+          name: '',
+          sku: '',
+          barcode: generateEAN13(),
+          quantity: 0,
+          min_quantity: 0,
+          image_url: '',
+          image_urls: [],
+          description: '',
+        }));
+        setBarcodeLocked(false);
+        setForceCreateMode(true);
+        setFormError('');
+        setFieldErrors({});
+        toast.success('Товар сохранён — добавьте следующий');
+        return;
+      }
+      setSaveAndAddMore(false);
       resetForm();
     },
     onError: async (err, vars) => {
@@ -904,7 +1004,50 @@ const Products = () => {
     setBarcodeLocked(false);
     setForceCreateMode(false);
     setChangeCategoryMode(false);
+    clearDraft();
   };
+
+  /** Открыть форму нового товара — с проверкой черновика */
+  const openNewProductForm = useCallback((opts = {}) => {
+    const draft = loadDraft();
+    const base = { ...emptyForm(), barcode: generateEAN13(), ...opts };
+    if (draft && !opts.skipDraft) {
+      // Предложить восстановить черновик через toast с action
+      setFormData({ ...base });
+      setBarcodeLocked(false);
+      setShowForm(true);
+      toast(
+        (t) => (
+          <span style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            Восстановить незаконченный товар?
+            <button
+              type="button"
+              onClick={() => {
+                const { _savedAt: _x, ...restDraft } = draft;
+                setFormData({ ...base, ...restDraft });
+                toast.dismiss(t.id);
+              }}
+              style={{ background: 'var(--primary)', color: '#fff', border: 'none', borderRadius: 8, padding: '4px 12px', cursor: 'pointer', fontWeight: 600, fontSize: 13 }}
+            >
+              Восстановить
+            </button>
+            <button
+              type="button"
+              onClick={() => { clearDraft(); toast.dismiss(t.id); }}
+              style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 13 }}
+            >
+              Начать заново
+            </button>
+          </span>
+        ),
+        { duration: 8000, icon: '📋' },
+      );
+    } else {
+      setFormData(base);
+      setBarcodeLocked(Boolean(opts.barcode));
+      setShowForm(true);
+    }
+  }, [loadDraft, clearDraft]);
 
   const showFormRef = useRef(false);
   const blockScanRef = useRef(false);
@@ -1063,47 +1206,118 @@ const Products = () => {
       barcode: generateEAN13(),
       image_url: '',
       image_urls: [],
+      quantity: 0,
     }));
     setBarcodeLocked(false);
     setForceCreateMode(true);
     toast.success('Копия: артикул пустой, новый штрих-код');
   };
 
+  /** Дублировать товар из строки каталога */
+  const handleDuplicateProduct = useCallback((product) => {
+    const galleryUrls = normalizeProductGallery(product);
+    setFormData({
+      ...emptyForm(),
+      id: null,
+      sku: '',
+      barcode: generateEAN13(),
+      name: '',
+      category_id: product.category_id || null,
+      category_group_id: findGroupIdForCategory(categoryTree, product.category_id),
+      category: product.category || '',
+      brand: product.brand || '',
+      model: product.model || '',
+      attributes: product.attributes && typeof product.attributes === 'object' ? { ...product.attributes } : {},
+      sale_price: product.sale_price || 0,
+      purchase_price: product.purchase_price || 0,
+      cny_price: product.cny_price != null ? String(product.cny_price) : '',
+      delivery_cost_kzt: product.delivery_cost_kzt != null ? String(product.delivery_cost_kzt) : '',
+      delivery_weight_kg: product.delivery_weight_kg != null ? String(product.delivery_weight_kg) : '',
+      supplier: product.supplier || '',
+      description: product.description || '',
+      show_on_storefront: product.show_on_storefront !== false,
+      compatibility_vehicle_model_ids: (product.compatibility?.vehicle_models || []).map((x) => x.id),
+      quantity: 0,
+      min_quantity: 0,
+      image_url: galleryUrls[0] || '',
+      image_urls: galleryUrls,
+      storage_location: '',
+    });
+    setBarcodeLocked(false);
+    setForceCreateMode(true);
+    setChangeCategoryMode(false);
+    setFormError('');
+    setFieldErrors({});
+    setShowForm(true);
+    toast('Дублирование: измените нужные поля и сохраните', { icon: '📋', duration: 4000 });
+  }, [categoryTree]);
+
   const handleMigrateProduct = (product) => {
     handleEdit(product);
     toast('Данные перенесены — выберите категорию и заполните характеристики', { icon: 'ℹ️' });
   };
 
+  /** «Сохранить и ещё» — сохраняем, затем открываем форму с теми же категорией/ценами */
+  const [saveAndAddMore, setSaveAndAddMore] = useState(false);
+
+  const handleSubmitAndMore = () => {
+    setSaveAndAddMore(true);
+    handleSubmit();
+  };
+
   const handleSubmit = async (e) => {
     e?.preventDefault?.();
+    if (isSubmitting) return; // защита от двойного клика
     setFormError('');
-    if (!formData.name?.trim()) { setFormError('Название товара обязательно'); return; }
-    if (!formData.category_id && !formData.id) {
-      setFormError('Выберите категорию — группу и подкатегорию в начале формы');
+    setFieldErrors({});
+
+    // Клиентская валидация
+    const errors = {};
+    if (!formData.name?.trim()) errors.name = 'Название обязательно';
+    if (!formData.category_id && !formData.id) errors._form = 'Выберите категорию';
+    if (num(formData.sale_price) <= 0) errors.sale_price = 'Цена продажи должна быть > 0';
+
+    // Обязательные атрибуты из схемы
+    if (selectedSubcategorySchema?.fields) {
+      selectedSubcategorySchema.fields.forEach((f) => {
+        if (f.required && !String((formData.attributes || {})[f.key] || '').trim()) {
+          errors[`attr:${f.key}`] = `${f.label} обязательно`;
+        }
+      });
+    }
+
+    if (Object.keys(errors).length > 0) {
+      setFieldErrors(errors);
+      setFormError(errors._form || Object.values(errors)[0] || 'Заполните обязательные поля');
       return;
     }
-    if (num(formData.sale_price) <= 0) { setFormError('Цена продажи должна быть больше 0'); return; }
-    const payload = buildPayload(formData, cnyRate);
-    const sku = String(formData.sku || '').trim();
-    if (sku) {
-      try {
-        const r = await productApi.getBySku(sku, {
-          allow404: true,
-          excludeId: formData.id || undefined,
-        });
-        if (r?.status === 200 && r?.data) {
-          setSkuConflictSku(sku);
-          setSkuConflictExisting(r.data);
-          setSkuConflictPayload(payload);
-          skuOpenAfterSaveRef.current = null;
-          setSkuConflictOpen(true);
-          return;
+
+    setIsSubmitting(true);
+    try {
+      const payload = buildPayload(formData, cnyRate);
+      const sku = String(formData.sku || '').trim();
+      if (sku) {
+        try {
+          const r = await productApi.getBySku(sku, {
+            allow404: true,
+            excludeId: formData.id || undefined,
+          });
+          if (r?.status === 200 && r?.data) {
+            setSkuConflictSku(sku);
+            setSkuConflictExisting(r.data);
+            setSkuConflictPayload(payload);
+            skuOpenAfterSaveRef.current = null;
+            setSkuConflictOpen(true);
+            return;
+          }
+        } catch {
+          /* сеть — сохраним и обработаем ответ API */
         }
-      } catch {
-        /* сеть — сохраним и обработаем ответ API */
       }
+      submitProductPayload(payload);
+    } finally {
+      setIsSubmitting(false);
     }
-    submitProductPayload(payload);
   };
 
   const closeSkuConflict = () => {
@@ -1176,14 +1390,13 @@ const Products = () => {
       if (prev) URL.revokeObjectURL(prev);
       return '';
     });
-    setFormData({ ...emptyForm(), barcode: generateEAN13() });
     setFormError('');
-    setBarcodeLocked(false);
     setDeliveryMode('normal');
     setCustomDeliveryRate(String(settingsDeliveryRate || 800));
-    setShowForm(true);
     setForceCreateMode(true);
     setChangeCategoryMode(false);
+    setFieldErrors({});
+    openNewProductForm();
   };
 
   const productImageDisplaySrc = (url) => {
@@ -1647,7 +1860,33 @@ const Products = () => {
                       <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.name}</div>
                     </td>
                     <td style={{ padding: '12px 14px', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>{row.brand || <span style={{ color: 'var(--text-muted)' }}>—</span>}</td>
-                    <td style={{ padding: '12px 14px', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>{row.model || <span style={{ color: 'var(--text-muted)' }}>—</span>}</td>
+                    <td style={{ padding: '12px 14px', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
+                      {row.model || Number(row.compatibility_extra_count) > 0 ? (
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, maxWidth: 160 }}>
+                          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{row.model || '—'}</span>
+                          {Number(row.compatibility_extra_count) > 0 && (
+                            <span
+                              title={`Ещё ${row.compatibility_extra_count} — откройте карточку для полного списка`}
+                              style={{
+                                flexShrink: 0,
+                                display: 'inline-flex',
+                                borderRadius: 999,
+                                padding: '1px 7px',
+                                fontSize: 10,
+                                fontWeight: 700,
+                                background: 'var(--primary-light)',
+                                color: 'var(--primary)',
+                                border: '1px solid color-mix(in srgb, var(--primary) 25%, var(--border))',
+                              }}
+                            >
+                              +{row.compatibility_extra_count}
+                            </span>
+                          )}
+                        </span>
+                      ) : (
+                        <span style={{ color: 'var(--text-muted)' }}>—</span>
+                      )}
+                    </td>
                     <td style={{ padding: '12px 14px' }}>
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'flex-start' }}>
                         {(row.is_legacy_category || row.needs_category_refresh) && (
@@ -1700,6 +1939,7 @@ const Products = () => {
                     <td style={{ padding: '12px 10px', textAlign: 'right' }}>
                       <div className="products-catalog-row-actions">
                         <button type="button" onClick={(e) => { e.stopPropagation(); handleEdit(row); }} title="Редактировать" style={{ width: 32, height: 32, borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--primary)', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}><FiEdit2 size={14} /></button>
+                        <button type="button" onClick={(e) => { e.stopPropagation(); handleDuplicateProduct(row); }} title="Дублировать" style={{ width: 32, height: 32, borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-secondary)', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 13 }}>⧉</button>
                         <button type="button" onClick={(e) => openPrintForRow(row, e)} title="Этикетка" style={{ width: 32, height: 32, borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-secondary)', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}><FiTag size={14} /></button>
                         <button type="button" onClick={(e) => openDeleteConfirm(row, e)} title="Удалить" style={{ width: 32, height: 32, borderRadius: 10, border: '1px solid #fecaca', background: '#fee2e2', color: 'var(--danger)', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}><FiTrash2 size={14} /></button>
                       </div>
@@ -1784,39 +2024,45 @@ const Products = () => {
       )}
 
       {/* ── Side Sheet ── */}
-      {sideProduct && (
+      {sideProduct && sidePanelProduct && (
         <>
-          <div style={{ position: 'fixed', inset: 0, background: '#9ca3af', zIndex: 300 }} onClick={() => setSideProduct(null)} />
+          <div style={{ position: 'fixed', inset: 0, background: '#9ca3af', zIndex: 300 }} onClick={() => { setSideProduct(null); setSideProductDetail(null); }} />
           <div style={{ position: 'fixed', right: 0, top: 0, bottom: 0, width: 'min(420px, 100vw)', background: 'var(--surface)', borderLeft: '1px solid var(--border)', boxShadow: 'none', zIndex: 301, overflow: 'auto', display: 'flex', flexDirection: 'column', animation: 'slideInRight 0.25s ease-out', willChange: 'transform' }}>
             {/* Header */}
             <div style={{ padding: '20px 22px 16px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, background: 'var(--surface)', position: 'sticky', top: 0, zIndex: 10 }}>
               <div style={{ minWidth: 0 }}>
-                <div style={{ fontSize: 20, fontWeight: 800, letterSpacing: '-0.03em', color: 'var(--text)', lineHeight: 1.2, wordBreak: 'break-word' }}>{sideProduct.name}</div>
+                <div style={{ fontSize: 20, fontWeight: 800, letterSpacing: '-0.03em', color: 'var(--text)', lineHeight: 1.2, wordBreak: 'break-word' }}>{sidePanelProduct.name}</div>
                 <div style={{ marginTop: 8, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-                  {sideProduct.brand && <span style={{ fontSize: 13, color: 'var(--text-secondary)', fontWeight: 600 }}>{sideProduct.brand}</span>}
-                  {sideProduct.model && <span style={{ fontSize: 13, color: 'var(--primary)', fontWeight: 700 }}>Модель: {sideProduct.model}</span>}
-                  {(sideProduct.is_legacy_category || sideProduct.needs_category_refresh) && (
+                  {sidePanelProduct.brand && <span style={{ fontSize: 13, color: 'var(--text-secondary)', fontWeight: 600 }}>{sidePanelProduct.brand}</span>}
+                  {sidePanelProduct.model && <span style={{ fontSize: 13, color: 'var(--primary)', fontWeight: 700 }}>Модель: {sidePanelProduct.model}</span>}
+                  {(sidePanelProduct.is_legacy_category || sidePanelProduct.needs_category_refresh) && (
                     <span style={{ padding: '2px 10px', borderRadius: 999, fontSize: 11, fontWeight: 700, background: 'rgba(245,158,11,0.15)', color: '#b45309' }}>Обновить</span>
                   )}
-                  {sideProduct.category && (() => { const cc = getCatColor(sideProduct.category); return <span style={{ padding: '2px 10px', borderRadius: 999, fontSize: 12, fontWeight: 600, background: cc.bg, color: cc.color }}>{sideProduct.category}</span>; })()}
+                  {sidePanelProduct.category && (() => { const cc = getCatColor(sidePanelProduct.category); return <span style={{ padding: '2px 10px', borderRadius: 999, fontSize: 12, fontWeight: 600, background: cc.bg, color: cc.color }}>{sidePanelProduct.category}</span>; })()}
                 </div>
               </div>
-              <button type="button" onClick={() => setSideProduct(null)} style={{ width: 36, height: 36, borderRadius: 12, border: '1px solid var(--border)', background: 'var(--bg-secondary)', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', flexShrink: 0 }}><FiX size={18} /></button>
+              <button type="button" onClick={() => { setSideProduct(null); setSideProductDetail(null); }} style={{ width: 36, height: 36, borderRadius: 12, border: '1px solid var(--border)', background: 'var(--bg-secondary)', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', flexShrink: 0 }}><FiX size={18} /></button>
             </div>
             {/* Specs grid */}
             <div style={{ padding: '18px 22px', flex: 1 }}>
+              {sideProductLoading && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14, fontSize: 13, color: 'var(--text-muted)' }}>
+                  <FiLoader size={16} style={{ animation: 'spin 1s linear infinite' }} /> Загрузка деталей…
+                </div>
+              )}
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 18 }}>
                 {[
-                  ['Штрих-код', sideProduct.barcode || sideProduct.sku || '—', true],
-                  ['Модель', sideProduct.model || '—'],
-                  ['Производитель', sideProduct.supplier || '—'],
-                  ['Закуп (₸)', `${Number(sideProduct.purchase_price || 0).toLocaleString('ru-RU')} ₸`],
-                  ['Доставка', sideProduct.delivery_cost_kzt ? `${Number(sideProduct.delivery_cost_kzt).toLocaleString('ru-RU')} ₸` : '—'],
-                  ['Вес (доставка)', formatSideDeliveryKg(sideProduct, deliveryKztPerKg)],
-                  ['Продажа (₸)', `${Number(sideProduct.sale_price || 0).toLocaleString('ru-RU')} ₸`],
-                  ['Прибыль', profitPct(sideProduct) ? `${profitPct(sideProduct)}%` : '—'],
-                  ['Место', sideProduct.location_zone || '—', true],
-                  ['Мин. остаток', String(sideProduct.min_quantity ?? 0)],
+                  ['Штрих-код', sidePanelProduct.barcode || sidePanelProduct.sku || '—', true],
+                  ['Марка', sidePanelProduct.brand || '—'],
+                  ['Модель', sidePanelProduct.model || '—'],
+                  ['Производитель', sidePanelProduct.supplier || '—'],
+                  ['Закуп (₸)', `${Number(sidePanelProduct.purchase_price || 0).toLocaleString('ru-RU')} ₸`],
+                  ['Доставка', sidePanelProduct.delivery_cost_kzt ? `${Number(sidePanelProduct.delivery_cost_kzt).toLocaleString('ru-RU')} ₸` : '—'],
+                  ['Вес (доставка)', formatSideDeliveryKg(sidePanelProduct, deliveryKztPerKg)],
+                  ['Продажа (₸)', `${Number(sidePanelProduct.sale_price || 0).toLocaleString('ru-RU')} ₸`],
+                  ['Прибыль', profitPct(sidePanelProduct) ? `${profitPct(sidePanelProduct)}%` : '—'],
+                  ['Место', sidePanelProduct.location_zone || '—', true],
+                  ['Мин. остаток', String(sidePanelProduct.min_quantity ?? 0)],
                 ].map(([label, val, mono]) => (
                   <div key={label} style={{ padding: '12px 14px', borderRadius: 16, background: 'var(--ios-grouped-bg)', border: '1px solid var(--border)' }}>
                     <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>{label}</div>
@@ -1824,30 +2070,58 @@ const Products = () => {
                   </div>
                 ))}
               </div>
+              {(() => {
+                const compatLabels = compatibilityLabelsFromProduct(sidePanelProduct);
+                if (!compatLabels.length) return null;
+                return (
+                  <div style={{ padding: '14px 16px', borderRadius: 16, background: 'var(--ios-grouped-bg)', border: '1px solid var(--border)', marginBottom: 18 }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 10 }}>Совместимость с авто</div>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                      {compatLabels.map((label) => (
+                        <span
+                          key={label}
+                          style={{
+                            display: 'inline-flex',
+                            borderRadius: 999,
+                            padding: '4px 10px',
+                            fontSize: 12,
+                            fontWeight: 600,
+                            background: 'var(--primary-light)',
+                            color: 'var(--primary)',
+                            border: '1px solid color-mix(in srgb, var(--primary) 20%, var(--border))',
+                          }}
+                        >
+                          {label}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })()}
               {/* Stock big number */}
               <div style={{ padding: '16px 18px', borderRadius: 18, background: 'var(--ios-grouped-bg)', border: '1px solid var(--border)', textAlign: 'center', marginBottom: 18 }}>
                 <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 8 }}>Остаток</div>
-                <div style={{ fontSize: 48, fontWeight: 800, letterSpacing: '-0.04em', color: Number(sideProduct.quantity) === 0 ? 'var(--danger)' : Number(sideProduct.quantity) <= 5 ? '#d97706' : 'var(--success)', lineHeight: 1 }}>{sideProduct.quantity ?? 0}</div>
+                <div style={{ fontSize: 48, fontWeight: 800, letterSpacing: '-0.04em', color: Number(sidePanelProduct.quantity) === 0 ? 'var(--danger)' : Number(sidePanelProduct.quantity) <= 5 ? '#d97706' : 'var(--success)', lineHeight: 1 }}>{sidePanelProduct.quantity ?? 0}</div>
                 <div style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 4, fontWeight: 600 }}>штук</div>
               </div>
-              {formatAttributePreview(findCategoryInTree(categoryTree, sideProduct.category_id)?.attribute_schema, sideProduct.attributes || {}).length > 0 && (
+              {formatAttributePreview(findCategoryInTree(categoryTree, sidePanelProduct.category_id)?.attribute_schema, sidePanelProduct.attributes || {}).length > 0 && (
                 <div style={{ padding: '14px 16px', borderRadius: 16, background: 'var(--ios-grouped-bg)', border: '1px solid var(--border)', marginBottom: 18 }}>
                   <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8 }}>Характеристики</div>
                   <div style={{ fontSize: 14, lineHeight: 1.5, color: 'var(--text)' }}>
-                    {formatAttributePreview(findCategoryInTree(categoryTree, sideProduct.category_id)?.attribute_schema, sideProduct.attributes || {}).join(' · ')}
+                    {formatAttributePreview(findCategoryInTree(categoryTree, sidePanelProduct.category_id)?.attribute_schema, sidePanelProduct.attributes || {}).join(' · ')}
                   </div>
                 </div>
               )}
-              {sideProduct.description && <div style={{ padding: '14px 16px', borderRadius: 16, background: 'var(--ios-grouped-bg)', border: '1px solid var(--border)', fontSize: 14, lineHeight: 1.55, color: 'var(--text)', whiteSpace: 'pre-wrap', marginBottom: 18 }}>{sideProduct.description}</div>}
+              {sidePanelProduct.description && <div style={{ padding: '14px 16px', borderRadius: 16, background: 'var(--ios-grouped-bg)', border: '1px solid var(--border)', fontSize: 14, lineHeight: 1.55, color: 'var(--text)', whiteSpace: 'pre-wrap', marginBottom: 18 }}>{sidePanelProduct.description}</div>}
             </div>
             {/* Actions */}
             <div style={{ padding: '14px 22px 22px', borderTop: '1px solid var(--border)', display: 'flex', gap: 10, background: 'var(--surface)', position: 'sticky', bottom: 0, flexWrap: 'wrap' }}>
-              {(sideProduct.is_legacy_category || sideProduct.needs_category_refresh) && (
-                <button type="button" onClick={() => handleMigrateProduct(sideProduct)} style={{ flex: '1 1 100%', padding: '12px', borderRadius: 14, border: '1px solid rgba(245,158,11,0.35)', background: 'rgba(245,158,11,0.1)', color: '#b45309', fontWeight: 700, fontSize: 14, cursor: 'pointer' }}>Обновить категорию</button>
+              {(sidePanelProduct.is_legacy_category || sidePanelProduct.needs_category_refresh) && (
+                <button type="button" onClick={() => handleMigrateProduct(sidePanelProduct)} style={{ flex: '1 1 100%', padding: '12px', borderRadius: 14, border: '1px solid rgba(245,158,11,0.35)', background: 'rgba(245,158,11,0.1)', color: '#b45309', fontWeight: 700, fontSize: 14, cursor: 'pointer' }}>Обновить категорию</button>
               )}
-              <button type="button" onClick={() => handleEdit(sideProduct)} style={{ flex: 1, padding: '13px', borderRadius: 14, border: 'none', background: 'linear-gradient(135deg, #6366f1, #7c3aed)', color: '#fff', fontWeight: 700, fontSize: 14, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}><FiEdit2 size={16} />Редактировать</button>
-              <button type="button" onClick={() => openPrintForRow(sideProduct)} style={{ padding: '13px 16px', borderRadius: 14, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-secondary)', fontWeight: 600, fontSize: 14, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8 }}><FiTag size={16} /></button>
-              <button type="button" onClick={(e) => openDeleteConfirm(sideProduct, e)} style={{ padding: '13px 16px', borderRadius: 14, border: '1px solid #fecaca', background: '#fee2e2', color: 'var(--danger)', fontWeight: 600, fontSize: 14, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8 }}><FiTrash2 size={16} /></button>
+              <button type="button" onClick={() => handleEdit(sidePanelProduct)} style={{ flex: 1, padding: '13px', borderRadius: 14, border: 'none', background: 'linear-gradient(135deg, #6366f1, #7c3aed)', color: '#fff', fontWeight: 700, fontSize: 14, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}><FiEdit2 size={16} />Редактировать</button>
+              <button type="button" onClick={() => openPrintForRow(sidePanelProduct)} style={{ padding: '13px 16px', borderRadius: 14, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-secondary)', fontWeight: 600, fontSize: 14, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8 }}><FiTag size={16} /></button>
+              <button type="button" onClick={(e) => openDeleteConfirm(sidePanelProduct, e)} style={{ padding: '13px 16px', borderRadius: 14, border: '1px solid #fecaca', background: '#fee2e2', color: 'var(--danger)', fontWeight: 600, fontSize: 14, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8 }}><FiTrash2 size={16} /></button>
             </div>
           </div>
         </>
@@ -1956,12 +2230,24 @@ const Products = () => {
             {showFillStep && (formData.id || formData.name || formData.barcode) && (
               <Button variant="secondary" onClick={handleCreateCopy}>Копия</Button>
             )}
+            {showFillStep && !formData.id && (
+              <Button
+                variant="secondary"
+                onClick={handleSubmitAndMore}
+                loading={saveAndAddMore && (saveMutation.isPending || isSubmitting)}
+                disabled={isSubmitting}
+                title="Сохранить товар и сразу добавить следующий с той же категорией и ценами"
+              >
+                + Ещё
+              </Button>
+            )}
             {showFillStep && (
               <Button
                 variant="primary"
                 icon={formData.id ? FiEdit2 : FiPlus}
                 onClick={handleSubmit}
-                loading={saveMutation.isPending}
+                loading={!saveAndAddMore && (saveMutation.isPending || isSubmitting)}
+                disabled={isSubmitting}
               >
                 {formData.id ? 'Сохранить изменения' : 'Сохранить товар'}
               </Button>
@@ -2213,20 +2499,22 @@ const Products = () => {
           >
             <ProductFormByLayout
               schema={selectedSubcategorySchema || {}}
-                formData={formData}
-                onFormDataChange={setFormData}
-                disabled={!formData.category_id}
-                compatibilitySlot={
-                  selectedSubcategorySchema?.show_compatibility !== false ? (
-                    <VehicleCompatibilityPicker
-                      brands={vehicleBrands}
-                      models={vehicleModels}
-                      selectedIds={formData.compatibility_vehicle_model_ids || []}
-                      onChange={handleCompatibilityChange}
-                    />
-                  ) : null
-                }
-              />
+              formData={formData}
+              onFormDataChange={(next) => { setFormData(next); setFieldErrors((e) => { const n = { ...e }; delete n.name; return n; }); }}
+              disabled={!formData.category_id}
+              fieldErrors={fieldErrors}
+              categoryName={selectedSubcategory?.name || ''}
+              compatibilitySlot={
+                selectedSubcategorySchema?.vehicle_mode === 'compatibility' ? (
+                  <VehicleCompatibilityPicker
+                    brands={vehicleBrands}
+                    models={vehicleModels}
+                    selectedIds={formData.compatibility_vehicle_model_ids || []}
+                    onChange={handleCompatibilityChange}
+                  />
+                ) : null
+              }
+            />
           </ProductFormSection>
 
           <ProductStockFormSection
@@ -2289,6 +2577,35 @@ const Products = () => {
           <Input label="Количество" type="number" value={bulkForm.quantity} onChange={(e) => setBulkForm((p) => ({ ...p, quantity: e.target.value }))} />
         </div>
       </Modal>
+
+      {/* ── Диалог подтверждения смены категории ── */}
+      {confirmCategoryChange && (
+        <Modal
+          isOpen
+          title="Сменить категорию?"
+          onClose={() => setConfirmCategoryChange(null)}
+          size="sm"
+          actions={(
+            <>
+              <Button variant="secondary" onClick={() => setConfirmCategoryChange(null)}>Отмена</Button>
+              <Button
+                variant="danger"
+                onClick={() => {
+                  confirmCategoryChange.applyChange();
+                  setConfirmCategoryChange(null);
+                }}
+              >
+                Сбросить и сменить
+              </Button>
+            </>
+          )}
+        >
+          <p style={{ margin: 0, fontSize: 15, color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+            Заполненные характеристики, совместимость и марка/модель будут сброшены.
+            Цены и количество останутся. Продолжить?
+          </p>
+        </Modal>
+      )}
     </div>
   );
 };

@@ -43,9 +43,37 @@ VALID_FIELD_TYPES = frozenset({"text", "number", "select", "chip", "textarea"})
 VALID_WIDTHS = frozenset({"full", "half"})
 VALID_ROW_KINDS = frozenset({"locked", "builtin", "attribute", "compatibility"})
 
+# pricing_mode: import_cny (с ¥ + доставка) | local_kzt (только закуп ₸)
+VALID_PRICING_MODES = frozenset({"import_cny", "local_kzt"})
+DEFAULT_PRICING_MODE = "import_cny"
+
+# vehicle_mode: compatibility (полный пикер) | brand_model (марка+модель текстом/из справочника) | none
+VALID_VEHICLE_MODES = frozenset({"compatibility", "brand_model", "none"})
+DEFAULT_VEHICLE_MODE = "none"
+
 
 def _row_id(entry: dict) -> str:
     return str(entry.get("id") or entry.get("key") or "").strip()
+
+
+def resolve_category_profile(schema: dict | None) -> dict[str, str]:
+    """Возвращает {pricing_mode, vehicle_mode} по схеме категории с миграцией legacy-полей."""
+    s = schema if isinstance(schema, dict) else {}
+
+    # pricing_mode
+    pm = str(s.get("pricing_mode") or "").strip()
+    if pm not in VALID_PRICING_MODES:
+        pm = DEFAULT_PRICING_MODE  # по умолчанию всегда китайский закуп
+
+    # vehicle_mode — с миграцией из show_compatibility
+    vm = str(s.get("vehicle_mode") or "").strip()
+    if vm not in VALID_VEHICLE_MODES:
+        if s.get("show_compatibility"):
+            vm = "compatibility"
+        else:
+            vm = DEFAULT_VEHICLE_MODE
+
+    return {"pricing_mode": pm, "vehicle_mode": vm}
 
 
 def default_form_layout(
@@ -55,15 +83,24 @@ def default_form_layout(
 ) -> list[dict[str, Any]]:
     """Дефолтный порядок полей формы добавления товара."""
     schema = category_schema or {}
-    show_compat = (
-        bool(show_compatibility)
-        if show_compatibility is not None
-        else bool(schema.get("show_compatibility"))
-    )
+    profile = resolve_category_profile(schema)
+    vm = profile["vehicle_mode"]
+    pm = profile["pricing_mode"]
+
+    # Обратная совместимость: явный параметр show_compatibility перекрывает
+    if show_compatibility is not None:
+        vm = "compatibility" if show_compatibility else ("brand_model" if vm == "compatibility" else vm)
+
     layout: list[dict[str, Any]] = [dict(x) for x in LOCKED_ROWS]
-    layout.append(dict(BUILTIN_ROWS[0]))
-    if show_compat:
+    layout.append(dict(BUILTIN_ROWS[0]))  # name
+
+    # Блок авто по vehicle_mode
+    if vm == "compatibility":
         layout.append({"id": "compat", "kind": "compatibility", "width": "full"})
+    elif vm == "brand_model":
+        layout.append({"id": "brand", "kind": "builtin", "key": "brand", "width": "half"})
+        layout.append({"id": "model", "kind": "builtin", "key": "model", "width": "half"})
+
     fields = schema.get("fields") or []
     for f in fields:
         if not isinstance(f, dict):
@@ -84,9 +121,16 @@ def default_form_layout(
         if placeholder:
             row["placeholder"] = placeholder
         layout.append(row)
+
     layout.append({"id": "sku", "kind": "locked", "key": "sku", "width": "full"})
-    for row in BUILTIN_ROWS[1:]:
+
+    # Хвост цен по pricing_mode
+    price_tail = [r for r in BUILTIN_ROWS[1:] if r["key"] not in ("cny_price", "delivery_block")]
+    if pm == "import_cny":
+        price_tail = list(BUILTIN_ROWS[1:])  # все: ¥ + доставка + продажа + кол-во + ...
+    for row in price_tail:
         layout.append(dict(row))
+
     return layout
 
 
@@ -209,20 +253,47 @@ def normalize_form_layout(
         tail_start += 1
         seen_attr.add(key)
 
-    if schema.get("show_compatibility") and not has_compat:
+    profile = resolve_category_profile(schema)
+    vm = profile["vehicle_mode"]
+    pm = profile["pricing_mode"]
+
+    # Гарантировать блок авто после name
+    has_brand = any(r.get("kind") == "builtin" and r.get("key") == "brand" for r in out)
+    has_model = any(r.get("kind") == "builtin" and r.get("key") == "model" for r in out)
+    if vm == "compatibility" and not has_compat:
         name_idx = next((i for i, r in enumerate(out) if r.get("key") == "name"), 1)
         out.insert(name_idx + 1, {"id": "compat", "kind": "compatibility", "width": "full"})
+    elif vm == "brand_model":
+        if not has_brand or not has_model:
+            name_idx = next((i for i, r in enumerate(out) if r.get("key") == "name"), 1)
+            insert_at_vm = name_idx + 1
+            if not has_brand:
+                out.insert(insert_at_vm, {"id": "brand", "kind": "builtin", "key": "brand", "width": "half"})
+                insert_at_vm += 1
+            if not has_model:
+                out.insert(insert_at_vm, {"id": "model", "kind": "builtin", "key": "model", "width": "half"})
 
-    # Гарантировать ¥, доставку, продажу и остаток после артикула
-    tail_keys = {str(r["key"]) for r in BUILTIN_ROWS[1:]}
+    # Гарантировать хвост цен после артикула по pricing_mode
+    if pm == "import_cny":
+        price_tail_rows = BUILTIN_ROWS[1:]
+    else:  # local_kzt — без ¥ и доставки
+        price_tail_rows = [r for r in BUILTIN_ROWS[1:] if r["key"] not in ("cny_price", "delivery_block")]
+
+    tail_keys = {str(r["key"]) for r in price_tail_rows}
     existing_tail = {
         str(r.get("key"))
         for r in out
         if r.get("kind") == "builtin" and str(r.get("key") or "") in tail_keys
     }
+    # Также убрать ¥/доставку если local_kzt
+    if pm == "local_kzt":
+        out = [
+            r for r in out
+            if not (r.get("kind") == "builtin" and r.get("key") in ("cny_price", "delivery_block"))
+        ]
     sku_idx = next((i for i, r in enumerate(out) if r.get("key") == "sku"), len(out))
     insert_at = sku_idx + 1
-    for row in BUILTIN_ROWS[1:]:
+    for row in price_tail_rows:
         key = str(row["key"])
         if key in existing_tail:
             continue
@@ -255,6 +326,8 @@ def normalize_attribute_fields(raw: Any) -> list[dict[str, Any]]:
             row["unit"] = unit
         if bool(item.get("required")):
             row["required"] = True
+        if bool(item.get("use_in_name")):
+            row["use_in_name"] = True
         width = str(item.get("width") or "").strip()
         if width in VALID_WIDTHS:
             row["width"] = width
@@ -274,12 +347,28 @@ def normalize_attribute_fields(raw: Any) -> list[dict[str, Any]]:
 
 
 def normalize_attribute_schema(raw: Any) -> dict:
-    """Полная нормализация attribute_schema: fields + form_layout + show_compatibility."""
+    """Полная нормализация attribute_schema: fields + form_layout + show_compatibility + profiles."""
     if not isinstance(raw, dict):
         raw = {}
     fields = normalize_attribute_fields(raw.get("fields"))
     show_compatibility = bool(raw.get("show_compatibility"))
-    base = {"fields": fields, "show_compatibility": show_compatibility}
+
+    # pricing_mode
+    pm = str(raw.get("pricing_mode") or "").strip()
+    if pm not in VALID_PRICING_MODES:
+        pm = DEFAULT_PRICING_MODE
+
+    # vehicle_mode — с авто-миграцией из show_compatibility
+    vm = str(raw.get("vehicle_mode") or "").strip()
+    if vm not in VALID_VEHICLE_MODES:
+        vm = "compatibility" if show_compatibility else DEFAULT_VEHICLE_MODE
+
+    base: dict[str, Any] = {
+        "fields": fields,
+        "show_compatibility": show_compatibility,
+        "pricing_mode": pm,
+        "vehicle_mode": vm,
+    }
     base["form_layout"] = normalize_form_layout(raw.get("form_layout"), base)
     return base
 

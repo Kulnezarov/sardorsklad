@@ -105,6 +105,26 @@ def seed_categories_defaults(
     return {"ok": True, "groups": count}
 
 
+@router.post("/normalize-profiles")
+def normalize_category_profiles(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_roles("admin")),
+):
+    """Идемпотентная миграция pricing_mode/vehicle_mode для всех подкатегорий."""
+    from services.catalog_migrate import normalize_catalog_profiles
+
+    result = normalize_catalog_profiles(db)
+    write_audit_log(
+        db,
+        user_id=current_user.id,
+        action="NORMALIZE_CATEGORY_PROFILES",
+        entity_type="category",
+        entity_id=None,
+        payload=result,
+    )
+    return {"ok": True, **result}
+
+
 @router.get("/", response_model=list[schemas.CategoryResponse])
 def list_categories(db: Session = Depends(get_db), active_only: bool = Query(False)):
     q = db.query(models.Category)

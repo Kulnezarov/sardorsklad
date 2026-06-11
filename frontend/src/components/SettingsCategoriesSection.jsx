@@ -4,7 +4,7 @@ import toast from 'react-hot-toast';
 import { FiChevronLeft, FiChevronRight, FiPlus, FiTrash2, FiEdit2, FiLayout, FiX, FiDownload } from 'react-icons/fi';
 import { categoryApi, getApiErrorMessage } from '../api/client';
 import CategoryFormLayoutEditor from './CategoryFormLayoutEditor';
-import { fieldsToFullSchema, slugFieldKey } from '../utils/formLayoutUtils';
+import { fieldsToFullSchema, slugFieldKey, resolveCategoryProfile } from '../utils/formLayoutUtils';
 
 const emptyField = () => ({
   key: '',
@@ -13,6 +13,7 @@ const emptyField = () => ({
   options: '',
   unit: '',
   required: false,
+  use_in_name: false,
   placeholder: '',
   width: 'full',
 });
@@ -26,6 +27,7 @@ function schemaToFields(schema) {
     options: Array.isArray(f.options) ? f.options.join(', ') : '',
     unit: f.unit || '',
     required: Boolean(f.required),
+    use_in_name: Boolean(f.use_in_name),
     placeholder: f.placeholder || '',
     width: f.width === 'half' ? 'half' : 'full',
   }));
@@ -121,6 +123,8 @@ export default function SettingsCategoriesSection() {
       name: '',
       icon: '⚙️',
       show_compatibility: false,
+      vehicle_mode: 'none',
+      pricing_mode: 'import_cny',
       fields: [emptyField()],
     });
     setEditTarget(null);
@@ -134,6 +138,7 @@ export default function SettingsCategoriesSection() {
   };
 
   const startEditSub = (g, c) => {
+    const prof = resolveCategoryProfile(c.attribute_schema);
     setEditTarget({
       type: 'sub',
       id: c.id,
@@ -141,7 +146,9 @@ export default function SettingsCategoriesSection() {
       name: c.name,
       icon: c.icon || '⚙️',
       is_active: c.is_active !== false,
-      show_compatibility: Boolean(c.attribute_schema?.show_compatibility),
+      show_compatibility: prof.vehicle_mode === 'compatibility',
+      vehicle_mode: prof.vehicle_mode,
+      pricing_mode: prof.pricing_mode,
       fields: schemaToFields(c.attribute_schema).length ? schemaToFields(c.attribute_schema) : [emptyField()],
     });
     setSubForm(null);
@@ -163,11 +170,15 @@ export default function SettingsCategoriesSection() {
   const saveSub = () => {
     const f = subForm || editTarget;
     if (!f?.name?.trim()) { toast.error('Введите название подкатегории'); return; }
+    const vm = f.vehicle_mode || 'none';
     const payload = {
       name: f.name.trim(),
       icon: f.icon || '⚙️',
       parent_id: f.parent_id,
-      attribute_schema: fieldsToFullSchema(f.fields, f.show_compatibility),
+      attribute_schema: fieldsToFullSchema(f.fields, vm === 'compatibility', null, {
+        vehicle_mode: vm,
+        pricing_mode: f.pricing_mode || 'import_cny',
+      }),
       is_active: true,
     };
     if (editTarget?.type === 'sub') updateMutation.mutate({ id: editTarget.id, payload });
@@ -183,27 +194,72 @@ export default function SettingsCategoriesSection() {
       });
       return;
     }
+    const vm = editTarget.vehicle_mode || 'none';
     updateMutation.mutate({
       id: editTarget.id,
       payload: {
         name: editTarget.name.trim(),
         icon: editTarget.icon,
         is_active: editTarget.is_active,
-        attribute_schema: fieldsToFullSchema(editTarget.fields, editTarget.show_compatibility),
+        attribute_schema: fieldsToFullSchema(editTarget.fields, vm === 'compatibility', null, {
+          vehicle_mode: vm,
+          pricing_mode: editTarget.pricing_mode || 'import_cny',
+        }),
       },
     });
   };
 
   const renderFieldEditor = (form, setForm) => (
     <div className="settings-field-editor">
-      <label className="settings-field-editor__check">
-        <input
-          type="checkbox"
-          checked={form.show_compatibility}
-          onChange={(e) => setForm({ ...form, show_compatibility: e.target.checked })}
-        />
-        Показывать «Совместим с авто» в форме товара
-      </label>
+      {/* Профиль категории */}
+      <div className="settings-field-editor__title">Профиль категории</div>
+
+      <div className="settings-profile-row">
+        <span className="settings-profile-row__label">Закуп</span>
+        <div className="settings-profile-chips">
+          {[
+            { value: 'import_cny', label: '¥ из Китая', sub: '¥ + доставка + закуп ₸' },
+            { value: 'local_kzt', label: 'Локальный ₸', sub: 'только цена в тенге' },
+          ].map((opt) => (
+            <button
+              key={opt.value}
+              type="button"
+              className={`settings-profile-chip${(form.pricing_mode || 'import_cny') === opt.value ? ' settings-profile-chip--active' : ''}`}
+              onClick={() => setForm({ ...form, pricing_mode: opt.value })}
+            >
+              <span className="settings-profile-chip__label">{opt.label}</span>
+              <span className="settings-profile-chip__sub">{opt.sub}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="settings-profile-row">
+        <span className="settings-profile-row__label">Авто</span>
+        <div className="settings-profile-chips">
+          {[
+            { value: 'none', label: 'Нет', sub: 'без авто-полей' },
+            { value: 'brand_model', label: 'Марка + модель', sub: 'текстовый ввод' },
+            { value: 'compatibility', label: 'Совместимость', sub: 'полный пикер авто' },
+          ].map((opt) => (
+            <button
+              key={opt.value}
+              type="button"
+              className={`settings-profile-chip${(form.vehicle_mode || 'none') === opt.value ? ' settings-profile-chip--active' : ''}`}
+              onClick={() => setForm({
+                ...form,
+                vehicle_mode: opt.value,
+                show_compatibility: opt.value === 'compatibility',
+              })}
+            >
+              <span className="settings-profile-chip__label">{opt.label}</span>
+              <span className="settings-profile-chip__sub">{opt.sub}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="settings-field-editor__title" style={{ marginTop: 16 }}>Поля характеристик</div>
       <div className="settings-field-editor__title">Поля характеристик</div>
       {(form.fields || []).map((field, idx) => (
         <div key={idx} className="settings-field-editor__card">
@@ -279,6 +335,32 @@ export default function SettingsCategoriesSection() {
               setForm({ ...form, fields });
             }}
           />
+          <div className="settings-field-meta-checks">
+            <label className="settings-field-editor__check">
+              <input
+                type="checkbox"
+                checked={Boolean(field.required)}
+                onChange={(e) => {
+                  const fields = [...form.fields];
+                  fields[idx] = { ...fields[idx], required: e.target.checked };
+                  setForm({ ...form, fields });
+                }}
+              />
+              Обязательное
+            </label>
+            <label className="settings-field-editor__check">
+              <input
+                type="checkbox"
+                checked={Boolean(field.use_in_name)}
+                onChange={(e) => {
+                  const fields = [...form.fields];
+                  fields[idx] = { ...fields[idx], use_in_name: e.target.checked };
+                  setForm({ ...form, fields });
+                }}
+              />
+              В название товара
+            </label>
+          </div>
         </div>
       ))}
       <button type="button" className="settings-editor-btn settings-editor-btn--ghost" onClick={() => setForm({ ...form, fields: [...(form.fields || []), emptyField()] })}>+ Добавить поле</button>

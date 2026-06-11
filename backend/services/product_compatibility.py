@@ -169,8 +169,8 @@ def refresh_product_model_field_cache(db: Session, product: models.Product) -> N
             primary_model = str(vm.name).strip()
 
     if model_labels:
-        summary = ", ".join(model_labels[:8])[:120]
-        p.model = summary
+        # В таблице склада — одна марка и одна модель; полный список — в карточке/редактировании.
+        p.model = primary_model or model_labels[0][:120]
         if primary_brand:
             p.brand = primary_brand
         if product is not p:
@@ -181,6 +181,47 @@ def refresh_product_model_field_cache(db: Session, product: models.Product) -> N
 
     if product is not p:
         product.model = p.model
+
+
+def compatibility_extra_model_count(comp: schemas.ProductCompatibilityOut) -> int:
+    """Число доп. авто сверх первой пары марка+модель (для бейджа «+N» в таблице)."""
+    labels: list[str] = []
+    for vm in comp.vehicle_models or []:
+        bname = (vm.brand_name or "").strip()
+        mname = (vm.name or "").strip()
+        s = f"{bname} {mname}".strip() if bname else mname
+        if s and s not in labels:
+            labels.append(s)
+    for ec in comp.engine_code_compatibility or []:
+        s = f"{(ec.brand or '').strip()} {(ec.model or '').strip()}".strip()
+        if s and s not in labels:
+            labels.append(s)
+    return max(0, len(labels) - 1)
+
+
+def build_compatibility_extra_counts(db: Session, product_ids: List[int]) -> dict[int, int]:
+    """Пакетный подсчёт доп. совместимостей для списка товаров."""
+    if not product_ids:
+        return {}
+    comp_map = build_compatibility_map(db, product_ids)
+    return {pid: compatibility_extra_model_count(comp_map.get(pid, schemas.ProductCompatibilityOut())) for pid in product_ids}
+
+
+def refresh_legacy_model_cache_summaries(db: Session) -> int:
+    """Пересчитать кэш brand/model у товаров со старым форматом «модель1, модель2»."""
+    rows = (
+        db.query(models.Product)
+        .filter(models.Product.model.isnot(None))
+        .filter(models.Product.model.contains(","))
+        .all()
+    )
+    n = 0
+    for p in rows:
+        refresh_product_model_field_cache(db, p)
+        n += 1
+    if n:
+        db.commit()
+    return n
 
 
 def build_compatibility_map(db: Session, product_ids: List[int]) -> dict[int, schemas.ProductCompatibilityOut]:

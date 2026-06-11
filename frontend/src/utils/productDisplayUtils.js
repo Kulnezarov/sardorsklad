@@ -150,6 +150,20 @@ export function removeLayoutEntry(list, id) {
   return (list || []).filter((x) => x.id !== id);
 }
 
+/** Все метки совместимости для карточки товара. */
+export function compatibilityLabelsFromProduct(product) {
+  const labels = [];
+  (product?.compatibility?.vehicle_models || []).forEach((vm) => {
+    const s = `${vm.brand_name || ''} ${vm.name || ''}`.trim();
+    if (s && !labels.includes(s)) labels.push(s);
+  });
+  (product?.compatibility?.engine_code_compatibility || []).forEach((ec) => {
+    const s = `${ec.brand || ''} ${ec.model || ''}`.trim();
+    if (s && !labels.includes(s)) labels.push(s);
+  });
+  return labels;
+}
+
 export function syncPrimaryVehicleFromSelection(formData, selectedModels) {
   if (!selectedModels?.length) return formData;
   const byBrand = new Map();
