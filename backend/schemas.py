@@ -942,6 +942,7 @@ class PublicProductResponse(BaseModel):
     attributes: Optional[dict[str, Any]] = None
     attribute_labels: List[str] = Field(default_factory=list)
     storefront_fields: List[dict[str, str]] = Field(default_factory=list)
+    purpose: Optional[str] = None
     compatibility: ProductCompatibilityOut = Field(default_factory=ProductCompatibilityOut)
     compatibility_text: Optional[str] = None
     compatibility_labels: List[str] = Field(default_factory=list)

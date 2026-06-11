@@ -100,6 +100,13 @@ def merge_display_layout_with_schema(
     return base
 
 
+def _strip_or_none(value: Any) -> str | None:
+    if value is None:
+        return None
+    s = str(value).strip()
+    return s or None
+
+
 def _builtin_value(p: models.Product, key: str) -> str | None:
     mapping = {
         "name": p.name,
@@ -129,6 +136,44 @@ def _attribute_value(p: models.Product, key: str, schema: dict | None) -> str | 
     if unit:
         return f"{text} {unit}".strip()
     return text
+
+
+def product_purpose_from_product(
+    p: models.Product,
+    schema: dict | None = None,
+    storefront_fields: list[dict[str, str]] | None = None,
+) -> str | None:
+    """Назначение товара для карточки витрины (без открытия страницы товара)."""
+    for row in storefront_fields or []:
+        label = str(row.get("label") or "").strip().lower()
+        value = _strip_or_none(row.get("value"))
+        if value and "назнач" in label:
+            return value
+
+    attrs = p.attributes if isinstance(getattr(p, "attributes", None), dict) else {}
+    for f in (schema or {}).get("fields") or []:
+        if not isinstance(f, dict):
+            continue
+        label = str(f.get("label") or "").strip().lower()
+        key = str(f.get("key") or "").strip()
+        if not key:
+            continue
+        if "назнач" not in label and key not in ("naznachenie", "naznacheniye", "purpose", "назначение"):
+            continue
+        value = attrs.get(key)
+        if value is None or str(value).strip() == "":
+            continue
+        text = str(value).strip()
+        unit = f.get("unit")
+        if unit:
+            text = f"{text} {unit}".strip()
+        return text
+
+    for key in ("naznachenie", "naznacheniye", "purpose", "назначение"):
+        value = attrs.get(key)
+        if value is not None and str(value).strip():
+            return str(value).strip()
+    return None
 
 
 def storefront_fields_from_product(db: Session, p: models.Product) -> list[dict[str, str]]:

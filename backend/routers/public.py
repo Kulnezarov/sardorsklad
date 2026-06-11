@@ -17,7 +17,7 @@ from services.product_compatibility import (
     vehicle_brand_to_response,
 )
 from services.category_attributes import attribute_labels_from_product
-from services.product_display import storefront_fields_from_product
+from services.product_display import product_purpose_from_product, storefront_fields_from_product
 from services.public_rate_limit import check_public_order_rate_limit, check_rate_limit, client_ip
 from services.telegram_orders import send_new_order_notification
 
@@ -301,6 +301,12 @@ def product_to_public(
                 storefront_fields.append({"label": lbl, "value": val})
             else:
                 storefront_fields.append({"label": line, "value": ""})
+    schema = None
+    if db is not None:
+        from services.category_attributes import get_category_schema
+
+        schema = get_category_schema(db, getattr(p, "category_id", None))
+    purpose = product_purpose_from_product(p, schema, storefront_fields)
     raw_attrs = p.attributes if isinstance(getattr(p, "attributes", None), dict) else None
     return schemas.PublicProductResponse(
         id=p.id,
@@ -319,6 +325,7 @@ def product_to_public(
         attributes=raw_attrs,
         attribute_labels=attr_labels,
         storefront_fields=storefront_fields,
+        purpose=purpose,
         compatibility=comp,
         compatibility_text=compat_text,
         compatibility_labels=compat_labels,
