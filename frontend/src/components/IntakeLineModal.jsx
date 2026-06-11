@@ -20,6 +20,8 @@ import { resolveCategoryProfile } from '../utils/formLayoutUtils';
 import ProductFormByLayout from './ProductFormByLayout';
 import VehicleCompatibilityPicker from './VehicleCompatibilityPicker';
 import { syncPrimaryVehicleFromSelection } from '../utils/productDisplayUtils';
+
+const EMPTY_COMPAT_IDS = Object.freeze([]);
 import { generateEAN13 } from '../utils/barcodeGen';
 import {
   addCnyHistory,
@@ -150,6 +152,13 @@ export default function IntakeLineModal({
   const [photos, setPhotos] = useState([]);
   const [photoBusy, setPhotoBusy] = useState(false);
   const [showScanner, setShowScanner] = useState(false);
+  const [compatPickerKey, setCompatPickerKey] = useState(0);
+  const [compatInitialIds, setCompatInitialIds] = useState(EMPTY_COMPAT_IDS);
+
+  const resetCompatPicker = useCallback((ids = EMPTY_COMPAT_IDS) => {
+    setCompatInitialIds(ids?.length ? [...ids] : EMPTY_COMPAT_IDS);
+    setCompatPickerKey((k) => k + 1);
+  }, []);
 
   const { data: categoryTree = [] } = useQuery({
     queryKey: ['categories', 'tree'],
@@ -237,12 +246,14 @@ export default function IntakeLineModal({
       ...seedLine,
       quantity: null,
     };
-    setForm(lineToForm(draft));
+    const nextForm = lineToForm(draft);
+    setForm(nextForm);
+    resetCompatPicker(nextForm.compatibility_vehicle_model_ids);
     setPhotos(photosFromLine(draft));
     const bc = String(draft.barcode || '').trim();
     if (bc.length >= 4) fetchCnyHistory(bc).then(setCnyHistory);
     else setCnyHistory([]);
-  }, [isOpen, line, seedLine]);
+  }, [isOpen, line, seedLine, resetCompatPicker]);
 
   useEffect(() => {
     if (!isOpen || !form.category_id || form.category_group_id) return;
@@ -252,12 +263,38 @@ export default function IntakeLineModal({
 
   const setField = (key, value) => setForm((f) => ({ ...f, [key]: value }));
 
-  const handleCompatibilityChange = useCallback((ids, selectedModels) => {
-    setForm((f) => syncPrimaryVehicleFromSelection(
-      { ...f, compatibility_vehicle_model_ids: ids || [] },
-      selectedModels,
-    ));
-  }, []);
+  const handleCompatibilityChange = useCallback((ids) => {
+    const idList = Array.isArray(ids) ? ids : [];
+    setForm((f) => {
+      const selected = (vehicleModels || []).filter((m) => idList.includes(m.id));
+      return syncPrimaryVehicleFromSelection(
+        { ...f, compatibility_vehicle_model_ids: idList },
+        selected,
+      );
+    });
+  }, [vehicleModels]);
+
+  const compatibilityPickerSlot = useMemo(() => {
+    if (!showCompatibilityBlock) return null;
+    return (
+      <VehicleCompatibilityPicker
+        key={`compat-${compatPickerKey}`}
+        initialSelectedIds={compatInitialIds}
+        brands={vehicleBrands}
+        models={vehicleModels}
+        onChange={handleCompatibilityChange}
+        disabled={readonly}
+      />
+    );
+  }, [
+    showCompatibilityBlock,
+    compatPickerKey,
+    compatInitialIds,
+    vehicleBrands,
+    vehicleModels,
+    handleCompatibilityChange,
+    readonly,
+  ]);
 
   const intakeFormData = useMemo(() => ({
     name: form.name,
@@ -764,13 +801,17 @@ export default function IntakeLineModal({
               onChange={({ groupId, categoryId }) => {
                 const sub = findCategoryInTree(categoryTree, categoryId);
                 setForm((prev) => {
-                  const catChanged = categoryId !== prev.category_id;
+                  const catChanged = categoryId && categoryId !== prev.category_id;
+                  if (catChanged) resetCompatPicker([]);
                   return {
                     ...prev,
                     category_group_id: groupId,
                     category_id: categoryId,
                     category: sub?.name || prev.category,
                     attributes: catChanged && prev.category_id ? {} : (prev.attributes || {}),
+                    compatibility_vehicle_model_ids: catChanged && prev.category_id ? [] : prev.compatibility_vehicle_model_ids,
+                    brand: catChanged && prev.category_id ? '' : prev.brand,
+                    model: catChanged && prev.category_id ? '' : prev.model,
                   };
                 });
               }}
@@ -789,17 +830,7 @@ export default function IntakeLineModal({
                 formData={intakeFormData}
                 onFormDataChange={setIntakeFormData}
                 disabled={readonly}
-                compatibilitySlot={
-                  showCompatibilityBlock ? (
-                    <VehicleCompatibilityPicker
-                      brands={vehicleBrands}
-                      models={vehicleModels}
-                      selectedIds={form.compatibility_vehicle_model_ids || []}
-                      onChange={handleCompatibilityChange}
-                      disabled={readonly}
-                    />
-                  ) : null
-                }
+                compatibilitySlot={compatibilityPickerSlot}
               />
             </IntakeFormCard>
           )}

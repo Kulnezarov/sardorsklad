@@ -258,7 +258,7 @@ export default function ProductFormByLayout({
       {rows.map((block, idx) => {
         if (block.type === 'compat') {
           return (
-            <ProductAttrField key={`compat-${idx}`} label="Совместим с авто" className="product-attr-field--compat">
+            <ProductAttrField key="vehicle-compat-block" label="Совместим с авто" className="product-attr-field--compat">
               {compatibilitySlot}
             </ProductAttrField>
           );

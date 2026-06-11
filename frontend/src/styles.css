@@ -7857,6 +7857,18 @@ textarea {
   padding: 8px;
 }
 
+.vehicle-compat-picker__summary {
+  font-weight: 600;
+  color: var(--primary);
+}
+.vehicle-compat-row--active {
+  border-color: color-mix(in srgb, var(--primary) 28%, var(--border));
+}
+.vehicle-compat-row__count {
+  font-weight: 600;
+  color: var(--primary);
+  font-size: 12px;
+}
 .vehicle-compat-picker--rows .vehicle-compat-picker__hint {
   font-size: 11px;
   color: var(--text-muted);

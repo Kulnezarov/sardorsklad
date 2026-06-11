@@ -1,5 +1,9 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { FiMinus, FiPlus } from 'react-icons/fi';
+
+function idsKey(ids) {
+  return (ids || []).slice().sort((a, b) => a - b).join(',');
+}
 
 function selectedIdsToRows(selectedIds, models) {
   const byBrand = new Map();
@@ -32,18 +36,49 @@ function rowsToSelectedIds(rows) {
   return out;
 }
 
+function emptyRow() {
+  return { key: `new-${Date.now()}`, brandId: null, modelIds: [] };
+}
+
+function hasDraftRows(rows) {
+  return (rows || []).some((r) => {
+    if (!r.brandId && !(r.modelIds || []).length) return true;
+    if (r.brandId && !(r.modelIds || []).length) return true;
+    return false;
+  });
+}
+
+function mergeCommittedWithDrafts(committed, drafts) {
+  const committedBrandIds = new Set(committed.map((r) => r.brandId).filter(Boolean));
+  const merged = [...committed];
+  drafts.forEach((draft) => {
+    if (!draft.brandId) {
+      if (!merged.some((r) => !r.brandId && !(r.modelIds || []).length)) merged.push(draft);
+      return;
+    }
+    if (!committedBrandIds.has(draft.brandId)) merged.push(draft);
+  });
+  return merged.length ? merged : [emptyRow()];
+}
+
+function brandName(brands, brandId) {
+  return (brands || []).find((b) => b.id === brandId)?.name || '';
+}
+
+/**
+ * Локальное состояние: родитель только получает onChange, не управляет selectedIds.
+ * initialSelectedIds — только при монтировании (key= на родителе при смене товара/категории).
+ */
 export default function VehicleCompatibilityPicker({
+  initialSelectedIds = [],
   brands = [],
   models = [],
-  selectedIds = [],
   onChange,
   disabled = false,
 }) {
-  const [rows, setRows] = useState(() => selectedIdsToRows(selectedIds, models));
-
-  useEffect(() => {
-    setRows(selectedIdsToRows(selectedIds, models));
-  }, [selectedIds, models]);
+  const userEditedRef = useRef(false);
+  const hydratedRef = useRef(false);
+  const [rows, setRows] = useState(() => selectedIdsToRows(initialSelectedIds, models));
 
   const modelsByBrand = useMemo(() => {
     const map = new Map();
@@ -59,59 +94,118 @@ export default function VehicleCompatibilityPicker({
     return map;
   }, [models]);
 
-  const emit = (nextRows) => {
-    setRows(nextRows);
+  const emitRows = (nextRows) => {
     onChange?.(rowsToSelectedIds(nextRows));
   };
 
-  const updateRow = (idx, patch) => {
-    const next = rows.map((row, i) => (i === idx ? { ...row, ...patch } : row));
-    emit(next);
+  const scheduleEmit = (nextRows) => {
+    queueMicrotask(() => emitRows(nextRows));
+  };
+
+  // Один раз: подтянуть сохранённые id после загрузки справочника (редактирование товара).
+  useEffect(() => {
+    if (hydratedRef.current || userEditedRef.current) return;
+    if (!(initialSelectedIds || []).length || !(models || []).length) return;
+    hydratedRef.current = true;
+    setRows((prev) => {
+      if (rowsToSelectedIds(prev).length > 0) return prev;
+      if (hasDraftRows(prev)) return prev;
+      const committed = selectedIdsToRows(initialSelectedIds, models);
+      if (!committed.some((r) => r.brandId)) return prev;
+      return mergeCommittedWithDrafts(committed, prev);
+    });
+  }, [models, initialSelectedIds]);
+
+  const patchRows = (updater, { emit = false } = {}) => {
+    userEditedRef.current = true;
+    setRows((prev) => {
+      const next = typeof updater === 'function' ? updater(prev) : updater;
+      if (emit) scheduleEmit(next);
+      return next;
+    });
   };
 
   const removeRow = (idx) => {
-    if (rows.length <= 1) {
-      emit([{ key: `new-${Date.now()}`, brandId: null, modelIds: [] }]);
-      return;
-    }
-    emit(rows.filter((_, i) => i !== idx));
+    patchRows((prev) => (prev.length <= 1 ? [emptyRow()] : prev.filter((_, i) => i !== idx)), { emit: true });
   };
 
-  const addRow = () => {
-    emit([...rows, { key: `new-${Date.now()}`, brandId: null, modelIds: [] }]);
+  const addBrandRow = () => {
+    patchRows((prev) => {
+      if (prev.some((r) => !r.brandId && !(r.modelIds || []).length)) return prev;
+      return [...prev, emptyRow()];
+    });
   };
 
   const toggleModel = (rowIdx, modelId) => {
-    const row = rows[rowIdx];
-    const set = new Set(row.modelIds || []);
-    if (set.has(modelId)) set.delete(modelId);
-    else set.add(modelId);
-    updateRow(rowIdx, { modelIds: [...set] });
+    patchRows((prev) => {
+      const row = prev[rowIdx];
+      if (!row) return prev;
+      const set = new Set(row.modelIds || []);
+      if (set.has(modelId)) set.delete(modelId);
+      else set.add(modelId);
+      return prev.map((r, i) => (i === rowIdx ? { ...r, modelIds: [...set] } : r));
+    }, { emit: true });
   };
 
   const onBrandChange = (rowIdx, brandId) => {
     const parsed = brandId ? Number(brandId) : null;
-    const allowed = new Set((modelsByBrand.get(parsed) || []).map((m) => m.id));
-    const kept = (rows[rowIdx].modelIds || []).filter((id) => allowed.has(id));
-    updateRow(rowIdx, { brandId: parsed, modelIds: kept });
+    patchRows((prev) => {
+      const next = prev.map((row, i) => {
+        if (i !== rowIdx) return row;
+        const allowed = new Set((modelsByBrand.get(parsed) || []).map((m) => m.id));
+        const kept = (row.modelIds || []).filter((id) => allowed.has(id));
+        return {
+          ...row,
+          brandId: parsed,
+          modelIds: kept,
+          key: parsed ? `brand-${parsed}` : row.key,
+        };
+      });
+      const prevIds = idsKey(rowsToSelectedIds(prev));
+      const nextIds = idsKey(rowsToSelectedIds(next));
+      if (prevIds !== nextIds) scheduleEmit(next);
+      return next;
+    });
   };
+
+  const totalModels = rowsToSelectedIds(rows).length;
+  const brandCount = new Set(rows.filter((r) => (r.modelIds || []).length).map((r) => r.brandId)).size;
 
   return (
     <div className="vehicle-compat-picker vehicle-compat-picker--rows">
       <div className="vehicle-compat-picker__head">
         <span className="vehicle-compat-picker__title">Совместим с авто</span>
-        <span className="vehicle-compat-picker__hint">Несколько марок — одна деталь для FAW, Dongfeng, Changan…</span>
+        <span className="vehicle-compat-picker__hint">
+          Отметьте несколько моделей у одной марки. Другая марка — кнопка «Добавить ещё марку».
+          {totalModels > 0 && (
+            <span className="vehicle-compat-picker__summary">
+              {' '}Выбрано: {totalModels} мод.
+              {brandCount > 1 ? ` · ${brandCount} марки` : ''}
+            </span>
+          )}
+        </span>
       </div>
 
       <div className="vehicle-compat-rows">
         {rows.map((row, idx) => {
           const brandModels = row.brandId ? modelsByBrand.get(row.brandId) || [] : [];
           const selectedSet = new Set(row.modelIds || []);
+          const rowModelCount = (row.modelIds || []).length;
           return (
-            <div key={row.key || idx} className="vehicle-compat-row">
+            <div
+              key={row.key || `row-${idx}`}
+              className={`vehicle-compat-row${row.brandId ? ' vehicle-compat-row--active' : ''}`}
+            >
               <div className="vehicle-compat-row__top">
                 <label className="vehicle-compat-row__brand-label">
-                  <span>Марка</span>
+                  <span>
+                    Марка
+                    {row.brandId && rowModelCount > 0 && (
+                      <span className="vehicle-compat-row__count">
+                        {' '}· {brandName(brands, row.brandId)} ({rowModelCount})
+                      </span>
+                    )}
+                  </span>
                   <select
                     className="ios-input"
                     value={row.brandId || ''}
@@ -127,7 +221,7 @@ export default function VehicleCompatibilityPicker({
                 <button
                   type="button"
                   className="product-field-minus"
-                  title="Удалить марку"
+                  title="Убрать эту марку"
                   disabled={disabled}
                   onClick={() => removeRow(idx)}
                 >
@@ -137,7 +231,7 @@ export default function VehicleCompatibilityPicker({
 
               {row.brandId ? (
                 <div className="vehicle-compat-row__models">
-                  <span className="vehicle-compat-row__models-label">Модели</span>
+                  <span className="vehicle-compat-row__models-label">Модели — можно несколько</span>
                   <div className="vehicle-compat-row__model-chips">
                     {brandModels.map((m) => {
                       const on = selectedSet.has(m.id);
@@ -159,7 +253,7 @@ export default function VehicleCompatibilityPicker({
                   </div>
                 </div>
               ) : (
-                <p className="vehicle-compat-picker__empty">Сначала выберите марку, затем отметьте модели</p>
+                <p className="vehicle-compat-picker__empty">Выберите марку, затем отметьте одну или несколько моделей</p>
               )}
             </div>
           );
@@ -170,7 +264,7 @@ export default function VehicleCompatibilityPicker({
         type="button"
         className="catalog-chip vehicle-compat-add-brand"
         disabled={disabled}
-        onClick={addRow}
+        onClick={addBrandRow}
       >
         <FiPlus size={14} /> Добавить ещё марку
       </button>

@@ -134,6 +134,8 @@ function getCatColor(cat) {
   return CAT_COLORS[h % CAT_COLORS.length];
 }
 
+const EMPTY_COMPAT_IDS = Object.freeze([]);
+
 const emptyForm = () => ({
   id: null, name: '', sku: '', barcode: '', brand: '', model: '', category: '',
   category_id: null, category_group_id: null, attributes: {},
@@ -277,6 +279,13 @@ const Products = () => {
   const [customDeliveryRate, setCustomDeliveryRate] = useState('800');
   const [showPrintSuggest, setShowPrintSuggest] = useState(false);
   const [savedProduct, setSavedProduct] = useState(null);
+  /** Пикер совместимости: свой key + снимок ids при открытии (не синхронизируем обратно при каждом клике) */
+  const [compatPickerKey, setCompatPickerKey] = useState(0);
+  const [compatInitialIds, setCompatInitialIds] = useState(EMPTY_COMPAT_IDS);
+  const resetCompatPicker = useCallback((ids = EMPTY_COMPAT_IDS) => {
+    setCompatInitialIds(ids?.length ? [...ids] : EMPTY_COMPAT_IDS);
+    setCompatPickerKey((k) => k + 1);
+  }, []);
 
   const [imageUploading, setImageUploading] = useState(false);
   /** 0–100 во время upload; null когда не качаем */
@@ -451,6 +460,7 @@ const Products = () => {
         brand: catChanged && prev.category_id ? '' : prev.brand,
         model: catChanged && prev.category_id ? '' : prev.model,
       }));
+      if (catChanged) resetCompatPicker([]);
       if (categoryId) setChangeCategoryMode(false);
     };
 
@@ -496,14 +506,41 @@ const Products = () => {
   }, [categoryTree, formData.category_id, formData.category_group_id]);
 
   const handleCompatibilityChange = useCallback((ids) => {
-    const selected = (vehicleModels || []).filter((m) => (ids || []).includes(m.id));
-    setFormData((fd) =>
-      syncPrimaryVehicleFromSelection(
-        { ...fd, compatibility_vehicle_model_ids: ids || [] },
+    const idList = Array.isArray(ids) ? ids : [];
+    setFormData((fd) => {
+      const selected = (vehicleModels || []).filter((m) => idList.includes(m.id));
+      return syncPrimaryVehicleFromSelection(
+        { ...fd, compatibility_vehicle_model_ids: idList },
         selected,
-      ),
-    );
+      );
+    });
   }, [vehicleModels]);
+
+  const compatibilityPickerSlot = useMemo(() => {
+    const catLabel = selectedSubcategory?.name || formData.category || '';
+    const vm = selectedSubcategorySchema?.vehicle_mode;
+    const ropeLike = /трос|тяга/i.test(catLabel);
+    const showPicker = vm === 'compatibility' || ropeLike;
+    if (!showPicker) return null;
+    return (
+      <VehicleCompatibilityPicker
+        key={`compat-${compatPickerKey}`}
+        initialSelectedIds={compatInitialIds}
+        brands={vehicleBrands}
+        models={vehicleModels}
+        onChange={handleCompatibilityChange}
+      />
+    );
+  }, [
+    compatPickerKey,
+    compatInitialIds,
+    selectedSubcategory?.name,
+    formData.category,
+    selectedSubcategorySchema?.vehicle_mode,
+    vehicleBrands,
+    vehicleModels,
+    handleCompatibilityChange,
+  ]);
 
   // openVoiceAdd: открыть форму нового товара (как «Добавить»)
   // openAdd + barcode: со страницы продаж
@@ -1184,6 +1221,7 @@ const Products = () => {
       if (prev) URL.revokeObjectURL(prev);
       return '';
     });
+    resetCompatPicker((p.compatibility?.vehicle_models || []).map((x) => x.id));
     setShowForm(true); setBarcodeLocked(true); setFormError('');
     setForceCreateMode(false);
     setChangeCategoryMode(false);
@@ -1248,9 +1286,10 @@ const Products = () => {
     setChangeCategoryMode(false);
     setFormError('');
     setFieldErrors({});
+    resetCompatPicker((product.compatibility?.vehicle_models || []).map((x) => x.id));
     setShowForm(true);
     toast('Дублирование: измените нужные поля и сохраните', { icon: '📋', duration: 4000 });
-  }, [categoryTree]);
+  }, [categoryTree, resetCompatPicker]);
 
   const handleMigrateProduct = (product) => {
     handleEdit(product);
@@ -2507,21 +2546,7 @@ const Products = () => {
               disabled={false}
               fieldErrors={fieldErrors}
               categoryName={selectedSubcategory?.name || formData.category || ''}
-              compatibilitySlot={(() => {
-                const catLabel = selectedSubcategory?.name || formData.category || '';
-                const vm = selectedSubcategorySchema?.vehicle_mode;
-                const ropeLike = /трос|тяга/i.test(catLabel);
-                const showPicker = vm === 'compatibility' || ropeLike;
-                if (!showPicker) return null;
-                return (
-                  <VehicleCompatibilityPicker
-                    brands={vehicleBrands}
-                    models={vehicleModels}
-                    selectedIds={formData.compatibility_vehicle_model_ids || []}
-                    onChange={handleCompatibilityChange}
-                  />
-                );
-              })()}
+              compatibilitySlot={compatibilityPickerSlot}
             />
           </ProductFormSection>
 
