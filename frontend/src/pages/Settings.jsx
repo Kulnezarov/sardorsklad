@@ -43,6 +43,18 @@ const Pills = ({ options, value, onChange }) => (
   </div>
 );
 
+const CatalogTab = ({ id, label, active, onSelect }) => (
+  <button
+    type="button"
+    role="tab"
+    aria-selected={active === id}
+    className={`settings-catalog-segment__tab${active === id ? ' settings-catalog-segment__tab--active' : ''}`}
+    onClick={() => onSelect(id)}
+  >
+    {label}
+  </button>
+);
+
 const Row = ({ label, description, children }) => (
   <div className="settings-row">
     <div className="settings-row__label">
@@ -96,6 +108,7 @@ const Settings = () => {
   const [showClearHistoryConfirm, setShowClearHistoryConfirm] = useState(false);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
+  const [catalogTab, setCatalogTab] = useState('categories');
   /** Однократная подстановка формы с сервера при открытии страницы */
   const didHydrateFromServer = useRef(false);
 
@@ -335,9 +348,16 @@ const Settings = () => {
           </div>
         </div>
 
-        <SettingsCategoriesSection />
-
-        <SettingsVehicleBrandsSection />
+        <div className="settings-section settings-catalog-section">
+          <div className="settings-section-title">Каталог</div>
+          <div className="settings-catalog-segment" role="tablist" aria-label="Каталог">
+            <CatalogTab id="categories" label="Категории" active={catalogTab} onSelect={setCatalogTab} />
+            <CatalogTab id="brands" label="Марки и модели" active={catalogTab} onSelect={setCatalogTab} />
+          </div>
+          <div className="settings-catalog-section__body">
+            {catalogTab === 'categories' ? <SettingsCategoriesSection /> : <SettingsVehicleBrandsSection />}
+          </div>
+        </div>
 
         {/* ── Section 4: Этикетки ── */}
         <div className="settings-section">

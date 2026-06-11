@@ -1,14 +1,23 @@
 import React, { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
-import { FiPlus, FiTrash2, FiTruck } from 'react-icons/fi';
+import { FiChevronDown, FiChevronUp, FiPlus, FiX } from 'react-icons/fi';
 import { compatibilityApi, getApiErrorMessage } from '../api/client';
+
+function pluralModels(n) {
+  const m = n % 10;
+  const m2 = n % 100;
+  if (m2 >= 11 && m2 <= 14) return 'моделей';
+  if (m === 1) return 'модель';
+  if (m >= 2 && m <= 4) return 'модели';
+  return 'моделей';
+}
 
 export default function SettingsVehicleBrandsSection() {
   const qc = useQueryClient();
   const [brandName, setBrandName] = useState('');
   const [expandedBrandId, setExpandedBrandId] = useState(null);
-  const [modelName, setModelName] = useState('');
+  const [modelDraft, setModelDraft] = useState({});
 
   const { data: brands = [], isLoading: brandsLoading } = useQuery({
     queryKey: ['compatibility', 'vehicle-brands', 'all'],
@@ -39,7 +48,7 @@ export default function SettingsVehicleBrandsSection() {
     mutationFn: (id) => compatibilityApi.deleteVehicleBrand(id),
     onSuccess: () => {
       toast.success('Марка удалена');
-      if (expandedBrandId) setExpandedBrandId(null);
+      setExpandedBrandId(null);
       invalidate();
     },
     onError: (e) => toast.error(getApiErrorMessage(e, 'Не удалось удалить марку')),
@@ -47,9 +56,9 @@ export default function SettingsVehicleBrandsSection() {
 
   const createModelMut = useMutation({
     mutationFn: (payload) => compatibilityApi.createVehicleModel(payload),
-    onSuccess: () => {
+    onSuccess: (_, vars) => {
       toast.success('Модель добавлена');
-      setModelName('');
+      setModelDraft((d) => ({ ...d, [vars.vehicle_brand_id]: '' }));
       invalidate();
     },
     onError: (e) => toast.error(getApiErrorMessage(e, 'Не удалось добавить модель')),
@@ -71,6 +80,7 @@ export default function SettingsVehicleBrandsSection() {
       if (!map.has(bid)) map.set(bid, []);
       map.get(bid).push(m);
     });
+    map.forEach((list) => list.sort((a, b) => String(a.name).localeCompare(String(b.name), 'ru')));
     return map;
   }, [models]);
 
@@ -79,58 +89,53 @@ export default function SettingsVehicleBrandsSection() {
     [brands],
   );
 
+  const loading = brandsLoading || modelsLoading;
+
   return (
-    <div className="settings-section vehicle-brands-settings">
-      <div className="settings-section-title">
-        <FiTruck size={16} /> Марки и модели авто
-      </div>
-      <div className="settings-section-body">
-        <p style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 0, lineHeight: 1.5 }}>
-          Справочник для выбора совместимости в карточке товара и на сайте CHPARTS. Например: Changan → CS55, CS75.
-        </p>
-
-        <div className="compat-add-code">
-          <input
-            className="compat-input compat-input-grow"
-            value={brandName}
-            onChange={(e) => setBrandName(e.target.value)}
-            placeholder="Новая марка, напр. Changan"
-          />
-          <button
-            type="button"
-            className="compat-btn-primary"
-            disabled={createBrandMut.isPending}
-            onClick={() => {
-              const name = brandName.trim();
-              if (!name) return toast.error('Введите марку');
-              createBrandMut.mutate({ name, is_active: true });
-            }}
-          >
-            <FiPlus size={15} style={{ marginRight: 4, verticalAlign: 'middle' }} /> Марка
-          </button>
+    <div className="settings-catalog-panel">
+      <div className="settings-catalog-hero settings-catalog-hero--compact">
+        <div className="settings-catalog-hero__text">
+          <h2 className="settings-catalog-hero__title">Марки и модели</h2>
+          <p className="settings-catalog-hero__desc">
+            Марки автомобилей и модели для совместимости запчастей.
+          </p>
         </div>
+      </div>
 
-        {(brandsLoading || modelsLoading) && (
-          <div className="compat-muted" style={{ marginTop: 12 }}>Загрузка…</div>
-        )}
+      {loading && <p className="settings-catalog-empty">Загрузка…</p>}
 
-        <div className="vehicle-settings-list" style={{ marginTop: 14 }}>
-          {sortedBrands.map((brand) => {
-            const open = expandedBrandId === brand.id;
-            const brandModels = modelsByBrand.get(brand.id) || [];
-            return (
-              <div key={brand.id} className="compat-accordion">
+      {!loading && !sortedBrands.length && (
+        <div className="settings-catalog-empty">
+          <span className="settings-catalog-empty__icon">🚗</span>
+          <p>Марок пока нет</p>
+          <span>Добавьте первую марку в форме ниже</span>
+        </div>
+      )}
+
+      {sortedBrands.length > 0 && (
+      <div className="settings-ios-group">
+        {sortedBrands.map((brand) => {
+          const open = expandedBrandId === brand.id;
+          const brandModels = modelsByBrand.get(brand.id) || [];
+          const draft = modelDraft[brand.id] || '';
+
+          return (
+            <div key={brand.id} className={`settings-ios-brand${open ? ' settings-ios-brand--open' : ''}`}>
+              <div className="settings-ios-row">
                 <button
                   type="button"
-                  className="compat-accordion-head"
+                  className="settings-ios-row__main"
                   onClick={() => setExpandedBrandId(open ? null : brand.id)}
                 >
-                  <span className="compat-code-label">{brand.name}</span>
-                  <span className="compat-code-sub">{brandModels.length} мод.</span>
+                  <span className="settings-ios-row__text">
+                    <span className="settings-ios-row__title">{brand.name}</span>
+                    <span className="settings-ios-row__meta">{brandModels.length} {pluralModels(brandModels.length)}</span>
+                  </span>
+                  {open ? <FiChevronUp size={17} className="settings-ios-row__chevron" /> : <FiChevronDown size={17} className="settings-ios-row__chevron" />}
                 </button>
                 <button
                   type="button"
-                  className="compat-icon-del"
+                  className="settings-ios-icon-btn settings-ios-icon-btn--danger"
                   title="Удалить марку"
                   onClick={() => {
                     if (window.confirm(`Удалить марку «${brand.name}» и все модели?`)) {
@@ -138,59 +143,93 @@ export default function SettingsVehicleBrandsSection() {
                     }
                   }}
                 >
-                  <FiTrash2 size={14} />
+                  <FiX size={15} />
                 </button>
-                {open && (
-                  <div style={{ padding: '8px 12px 12px', borderTop: '1px solid var(--border)' }}>
-                    <div className="compat-add-code" style={{ marginBottom: 10 }}>
-                      <input
-                        className="compat-input compat-input-grow"
-                        value={modelName}
-                        onChange={(e) => setModelName(e.target.value)}
-                        placeholder={`Модель для ${brand.name}, напр. CS55`}
-                      />
-                      <button
-                        type="button"
-                        className="compat-btn-primary"
-                        disabled={createModelMut.isPending}
-                        onClick={() => {
-                          const name = modelName.trim();
-                          if (!name) return toast.error('Введите модель');
-                          createModelMut.mutate({
-                            vehicle_brand_id: brand.id,
-                            name,
-                            is_active: true,
-                          });
-                        }}
-                      >
-                        <FiPlus size={14} /> Модель
-                      </button>
-                    </div>
-                    <ul className="compat-model-list">
-                      {brandModels.map((m) => (
-                        <li key={m.id} className="compat-model-line">
-                          <span>{m.name}</span>
-                          <button
-                            type="button"
-                            className="compat-icon-del"
-                            onClick={() => deleteModelMut.mutate(m.id)}
-                          >
-                            <FiTrash2 size={14} />
-                          </button>
-                        </li>
-                      ))}
-                      {!brandModels.length && (
-                        <li className="compat-muted">Нет моделей</li>
-                      )}
-                    </ul>
-                  </div>
-                )}
               </div>
-            );
-          })}
-          {!sortedBrands.length && !brandsLoading && (
-            <div className="compat-muted">Пока нет марок — добавьте первую выше</div>
-          )}
+
+              {open && (
+                <div className="settings-ios-brand__body">
+                  <div className="settings-ios-chips">
+                    {brandModels.map((m) => (
+                      <span key={m.id} className="settings-ios-chip">
+                        {m.name}
+                        <button
+                          type="button"
+                          className="settings-ios-chip__x"
+                          aria-label={`Удалить ${m.name}`}
+                          onClick={() => deleteModelMut.mutate(m.id)}
+                        >
+                          <FiX size={11} />
+                        </button>
+                      </span>
+                    ))}
+                    {!brandModels.length && (
+                      <span className="settings-ios-brand__empty">Нет моделей</span>
+                    )}
+                  </div>
+                  <div className="settings-ios-add__row settings-ios-add__row--nested">
+                    <input
+                      className="settings-ios-add__input"
+                      value={draft}
+                      onChange={(e) => setModelDraft((d) => ({ ...d, [brand.id]: e.target.value }))}
+                      placeholder="Новая модель"
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          const name = draft.trim();
+                          if (name) createModelMut.mutate({ vehicle_brand_id: brand.id, name, is_active: true });
+                        }
+                      }}
+                    />
+                    <button
+                      type="button"
+                      className="settings-ios-add__btn"
+                      disabled={createModelMut.isPending}
+                      aria-label="Добавить модель"
+                      onClick={() => {
+                        const name = draft.trim();
+                        if (!name) return toast.error('Введите модель');
+                        createModelMut.mutate({ vehicle_brand_id: brand.id, name, is_active: true });
+                      }}
+                    >
+                      <FiPlus size={18} />
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+      )}
+
+      <div className="settings-ios-group settings-ios-group--add">
+        <div className="settings-ios-add__label">Новая марка</div>
+        <div className="settings-ios-add__row settings-ios-add__row--inline">
+          <input
+            className="settings-ios-add__input"
+            value={brandName}
+            onChange={(e) => setBrandName(e.target.value)}
+            placeholder="Название марки"
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                const name = brandName.trim();
+                if (name) createBrandMut.mutate({ name, is_active: true });
+              }
+            }}
+          />
+          <button
+            type="button"
+            className="settings-ios-add__btn"
+            disabled={createBrandMut.isPending}
+            aria-label="Добавить марку"
+            onClick={() => {
+              const name = brandName.trim();
+              if (!name) return toast.error('Введите марку');
+              createBrandMut.mutate({ name, is_active: true });
+            }}
+          >
+            <FiPlus size={18} />
+          </button>
         </div>
       </div>
     </div>

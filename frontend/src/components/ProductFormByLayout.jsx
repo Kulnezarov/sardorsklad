@@ -1,32 +1,37 @@
 import React from 'react';
-import { layoutRowLabel, normalizeFormLayout } from '../utils/formLayoutUtils';
-import { IosFormRow } from './IosForm';
+import { groupLayoutRowsForDisplay, layoutRowLabel, normalizeFormLayout } from '../utils/formLayoutUtils';
 
-function ChipField({ field, value, onChange, disabled, label }) {
+function ProductAttrField({ label, children, prominent = false, className = '' }) {
+  return (
+    <div
+      className={`product-attr-field${prominent ? ' product-attr-field--name' : ''}${className ? ` ${className}` : ''}`}
+    >
+      {label && <span className="product-attr-field__label">{label}</span>}
+      <div className="product-attr-field__control">{children}</div>
+    </div>
+  );
+}
+
+function ChipField({ field, value, onChange, disabled }) {
   const opts = Array.isArray(field.options)
     ? field.options
     : String(field.options || '').split(',').map((s) => s.trim()).filter(Boolean);
   if (!opts.length) {
-    return (
-      <p className="product-form-field-hint">Добавьте варианты в настройках категории</p>
-    );
+    return <p className="product-form-field-hint">Добавьте варианты в настройках категории</p>;
   }
   return (
-    <div className="chip-field-group chip-field-group--large chip-field-group--ios">
-      {label && <div className="form-layout-field-label">{label}</div>}
-      <div className="chip-field-group__row ios-segment-row">
-        {opts.map((opt) => (
-          <button
-            key={opt}
-            type="button"
-            className={`catalog-chip chip-field-btn${value === opt ? ' catalog-chip-active chip-field-option--active' : ''}`}
-            disabled={disabled}
-            onClick={() => onChange(value === opt ? '' : opt)}
-          >
-            {opt}
-          </button>
-        ))}
-      </div>
+    <div className="product-attr-chips">
+      {opts.map((opt) => (
+        <button
+          key={opt}
+          type="button"
+          className={`product-attr-chip${value === opt ? ' product-attr-chip--active' : ''}`}
+          disabled={disabled}
+          onClick={() => onChange(value === opt ? '' : opt)}
+        >
+          {opt}
+        </button>
+      ))}
     </div>
   );
 }
@@ -34,13 +39,17 @@ function ChipField({ field, value, onChange, disabled, label }) {
 function AttributeField({ fieldDef, value, onChange, disabled, placeholder }) {
   const type = fieldDef?.type || 'text';
   if (type === 'chip') {
-    const chipLabel = fieldDef?.label || placeholder;
-    return <ChipField field={fieldDef} value={value} onChange={onChange} disabled={disabled} label={chipLabel} />;
+    return <ChipField field={fieldDef} value={value} onChange={onChange} disabled={disabled} />;
   }
   if (type === 'select') {
     const opts = fieldDef.options || [];
     return (
-      <select className="ios-input ios-input--inset" value={value || ''} disabled={disabled} onChange={(e) => onChange(e.target.value)}>
+      <select
+        className="product-attr-field__input product-attr-field__select"
+        value={value || ''}
+        disabled={disabled}
+        onChange={(e) => onChange(e.target.value)}
+      >
         <option value="">{placeholder || 'Выберите…'}</option>
         {opts.map((o) => (
           <option key={o} value={o}>{o}</option>
@@ -51,7 +60,7 @@ function AttributeField({ fieldDef, value, onChange, disabled, placeholder }) {
   if (type === 'textarea') {
     return (
       <textarea
-        className="ios-input ios-input--inset ios-input--stacked"
+        className="product-attr-field__input product-attr-field__textarea"
         rows={3}
         value={value || ''}
         disabled={disabled}
@@ -62,7 +71,7 @@ function AttributeField({ fieldDef, value, onChange, disabled, placeholder }) {
   }
   return (
     <input
-      className="ios-input ios-input--inset"
+      className="product-attr-field__input"
       type={type === 'number' ? 'number' : 'text'}
       value={value || ''}
       disabled={disabled}
@@ -72,9 +81,34 @@ function AttributeField({ fieldDef, value, onChange, disabled, placeholder }) {
   );
 }
 
+function renderFieldControl(row, schema, fieldByKey, formData, onFormDataChange, disabled, setAttr) {
+  if (row.kind === 'builtin' && row.key === 'name') {
+    return (
+      <input
+        className="product-attr-field__input"
+        value={formData.name || ''}
+        disabled={disabled}
+        placeholder={row.placeholder || 'Название товара'}
+        onChange={(e) => onFormDataChange?.({ ...formData, name: e.target.value })}
+      />
+    );
+  }
+  if (row.kind === 'attribute') {
+    return (
+      <AttributeField
+        fieldDef={fieldByKey[row.key]}
+        value={(formData.attributes || {})[row.key]}
+        onChange={(v) => setAttr(row.key, v)}
+        disabled={disabled}
+        placeholder={row.placeholder || layoutRowLabel(row, schema)}
+      />
+    );
+  }
+  return null;
+}
+
 /**
  * Рендер полей товара по form_layout категории (только ввод значений).
- * Секции gallery/barcode/prices передаются через renderSlot.
  */
 export default function ProductFormByLayout({
   schema,
@@ -96,99 +130,76 @@ export default function ProductFormByLayout({
     });
   };
 
-  const rows = [];
-  let halfBuffer = null;
-
-  const flushHalf = () => {
-    if (halfBuffer) {
-      rows.push({ type: 'half-row', items: halfBuffer });
-      halfBuffer = null;
-    }
-  };
-
+  const contentRows = [];
   layout.forEach((row) => {
     if (row.kind === 'locked') return;
     if (row.kind === 'builtin' && row.key !== 'name') return;
     if (row.kind === 'compatibility') {
-      flushHalf();
-      rows.push({ type: 'compat', row });
+      contentRows.push({ type: 'compat', row });
       return;
     }
-    if (row.width === 'half') {
-      if (!halfBuffer) halfBuffer = [];
-      halfBuffer.push(row);
-      if (halfBuffer.length === 2) flushHalf();
-      return;
-    }
-    flushHalf();
-    rows.push({ type: 'full', row });
+    contentRows.push({ type: 'field', row });
   });
-  flushHalf();
+
+  const rows = [];
+  let fieldBatch = [];
+  const flushFields = () => {
+    if (!fieldBatch.length) return;
+    groupLayoutRowsForDisplay(fieldBatch).forEach((block) => {
+      if (block.type === 'half-row') rows.push({ type: 'half-row', items: block.items });
+      else rows.push({ type: 'full', row: block.row });
+    });
+    fieldBatch = [];
+  };
+  contentRows.forEach((item) => {
+    if (item.type === 'compat') {
+      flushFields();
+      rows.push(item);
+      return;
+    }
+    fieldBatch.push(item.row);
+  });
+  flushFields();
+
+  const fieldLabel = (row) => layoutRowLabel(row, schema);
+  const isNameRow = (row) => row.kind === 'builtin' && row.key === 'name';
 
   return (
-    <>
+    <div className="product-form-by-layout">
       {rows.map((block, idx) => {
         if (block.type === 'compat') {
           return (
-            <IosFormRow key={`compat-${idx}`} label="Совместим с авто" stacked>
+            <ProductAttrField key={`compat-${idx}`} label="Совместим с авто" className="product-attr-field--compat">
               {compatibilitySlot}
-            </IosFormRow>
+            </ProductAttrField>
           );
         }
         if (block.type === 'half-row') {
           return (
-            <div key={`half-${idx}`} className="ios-form-row-pair">
+            <div key={`half-${idx}`} className="product-attr-row-pair">
               {block.items.map((row) => (
-                <IosFormRow key={row.id} label={layoutRowLabel(row, schema)} stacked className="ios-form-row--half">
-                  {row.kind === 'builtin' && row.key === 'name' && (
-                    <input
-                      className="ios-input ios-input--inset ios-input--stacked"
-                      value={formData.name || ''}
-                      disabled={disabled}
-                      placeholder={row.placeholder || 'Название'}
-                      onChange={(e) => onFormDataChange?.({ ...formData, name: e.target.value })}
-                    />
-                  )}
-                  {row.kind === 'attribute' && (
-                    <AttributeField
-                      fieldDef={fieldByKey[row.key]}
-                      value={(formData.attributes || {})[row.key]}
-                      onChange={(v) => setAttr(row.key, v)}
-                      disabled={disabled}
-                      placeholder={row.placeholder || layoutRowLabel(row, schema)}
-                    />
-                  )}
-                </IosFormRow>
+                <ProductAttrField
+                  key={row.id}
+                  label={fieldLabel(row)}
+                  prominent={isNameRow(row)}
+                >
+                  {renderFieldControl(row, schema, fieldByKey, formData, onFormDataChange, disabled, setAttr)}
+                </ProductAttrField>
               ))}
             </div>
           );
         }
         const row = block.row;
-        const attrType = row.kind === 'attribute' ? fieldByKey[row.key]?.type : null;
-        const stacked = attrType === 'chip' || attrType === 'textarea';
         return (
-          <IosFormRow key={row.id} label={layoutRowLabel(row, schema)} stacked={stacked}>
-            {row.kind === 'builtin' && row.key === 'name' && (
-              <input
-                className="ios-input ios-input--inset"
-                value={formData.name || ''}
-                disabled={disabled}
-                placeholder={row.placeholder || 'Название'}
-                onChange={(e) => onFormDataChange?.({ ...formData, name: e.target.value })}
-              />
-            )}
-            {row.kind === 'attribute' && (
-              <AttributeField
-                fieldDef={fieldByKey[row.key]}
-                value={(formData.attributes || {})[row.key]}
-                onChange={(v) => setAttr(row.key, v)}
-                disabled={disabled}
-                placeholder={row.placeholder || layoutRowLabel(row, schema)}
-              />
-            )}
-          </IosFormRow>
+          <ProductAttrField
+            key={row.id}
+            label={fieldLabel(row)}
+            prominent={isNameRow(row)}
+          >
+            {renderFieldControl(row, schema, fieldByKey, formData, onFormDataChange, disabled, setAttr)}
+          </ProductAttrField>
         );
       })}
-    </>
+    </div>
   );
 }

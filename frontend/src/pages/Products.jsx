@@ -4,13 +4,15 @@ import { keepPreviousData, useInfiniteQuery, useMutation, useQuery, useQueryClie
 import toast from 'react-hot-toast';
 import {
   FiPlus, FiEdit2, FiTrash2, FiSearch, FiAlertTriangle,
-  FiImage, FiGrid, FiShoppingCart, FiLock, FiUnlock, FiRefreshCw, FiMaximize2,
+  FiImage, FiGrid, FiShoppingCart, FiRefreshCw,
   FiTag, FiUpload, FiDownload, FiX, FiLoader, FiClock, FiPackage, FiGlobe,
 } from 'react-icons/fi';
 import { Button, Modal, Input, TextArea, LoadingSpinner, Alert } from '../components/ui';
 import { productApi, resolveUploadedAssetUrl, compatibilityApi, categoryApi, getApiErrorMessage } from '../api/client';
 import CategoryPicker, { findGroupIdForCategory, findCategoryInTree } from '../components/CategoryPicker';
 import ProductFormByLayout from '../components/ProductFormByLayout';
+import ProductStockFormSection from '../components/ProductStockFormSection';
+import { priceLayoutRows } from '../utils/formLayoutUtils';
 import ProductFormSection, { ProductFormTemplateBadge } from '../components/ProductFormSection';
 import { IosFormBlock, IosFormGroup } from '../components/IosForm';
 import VehicleCompatibilityPicker from '../components/VehicleCompatibilityPicker';
@@ -22,7 +24,6 @@ import { generateEAN13 } from '../utils/barcodeGen';
 import { productMatchesSearch } from '../utils/smartSearch';
 import LabelPrint from '../components/LabelPrint';
 import SkuConflictModal from '../components/SkuConflictModal';
-import { QRCodeSVG } from 'qrcode.react';
 import JsBarcode from 'jsbarcode';
 
 const MAX_PRODUCT_PHOTOS = 12;
@@ -257,7 +258,6 @@ const Products = () => {
   const [skuConflictPayload, setSkuConflictPayload] = useState(null);
   const skuOpenAfterSaveRef = useRef(null);
   const [barcodeLocked, setBarcodeLocked] = useState(false);
-  const [showQrPanel, setShowQrPanel] = useState(false);
 
   const [sideProduct, setSideProduct] = useState(null);
   const [deleteModal, setDeleteModal] = useState(null);
@@ -352,6 +352,11 @@ const Products = () => {
     return cat?.attribute_schema || null;
   }, [categoryTree, formData.category_id]);
 
+  const layoutPriceRows = useMemo(
+    () => priceLayoutRows(selectedSubcategorySchema || {}),
+    [selectedSubcategorySchema],
+  );
+
   const selectedCategoryPath = useMemo(() => {
     if (!formData.category_id) return '';
     const sub = findCategoryInTree(categoryTree, formData.category_id);
@@ -359,6 +364,49 @@ const Products = () => {
     if (group && sub) return `${group.name} → ${sub.name}`;
     return sub?.name || '';
   }, [categoryTree, formData.category_id, formData.category_group_id]);
+
+  const selectedCategoryGroup = useMemo(() => {
+    if (formData.category_group_id) {
+      return categoryTree.find((g) => g.id === formData.category_group_id) || null;
+    }
+    if (formData.category_id) {
+      return categoryTree.find((g) => (g.children || []).some((c) => c.id === formData.category_id)) || null;
+    }
+    return null;
+  }, [categoryTree, formData.category_group_id, formData.category_id]);
+
+  const selectedSubcategory = useMemo(
+    () => findCategoryInTree(categoryTree, formData.category_id),
+    [categoryTree, formData.category_id],
+  );
+
+  const isEditingProduct = Boolean(formData.id);
+  const categoryChosen = Boolean(formData.category_id);
+  const showCategoryWizard = !isEditingProduct && !categoryChosen;
+  const showProductFields = isEditingProduct || categoryChosen;
+
+  const handleCategoryChange = ({ groupId, categoryId }) => {
+    const sub = findCategoryInTree(categoryTree, categoryId);
+    setFormData((prev) => {
+      const catChanged = categoryId !== prev.category_id;
+      return {
+        ...prev,
+        category_group_id: groupId,
+        category_id: categoryId,
+        category: sub?.name || prev.category,
+        attributes: catChanged && prev.category_id ? {} : (prev.attributes || {}),
+      };
+    });
+  };
+
+  const handleResetCategory = () => {
+    setFormData((prev) => ({
+      ...prev,
+      category_id: null,
+      category_group_id: null,
+      attributes: {},
+    }));
+  };
 
   const showCompatibilityBlock = Boolean(selectedSubcategorySchema?.show_compatibility);
 
@@ -399,7 +447,7 @@ const Products = () => {
         return '';
       });
       setFormData({ ...emptyForm(), barcode: generateEAN13() });
-      setFormError(''); setBarcodeLocked(false); setShowQrPanel(false); setShowForm(true);
+      setFormError(''); setBarcodeLocked(false); setShowForm(true);
       setForceCreateMode(true);
       navigate(location.pathname, { replace: true, state: {} });
     } else if (location.state?.openAdd) {
@@ -409,7 +457,7 @@ const Products = () => {
       });
       const bc = location.state.barcode || '';
       setFormData({ ...emptyForm(), barcode: bc });
-      setFormError(''); setBarcodeLocked(Boolean(bc)); setShowQrPanel(false); setShowForm(true);
+      setFormError(''); setBarcodeLocked(Boolean(bc)); setShowForm(true);
       setForceCreateMode(true);
       navigate(location.pathname, { replace: true, state: {} });
     }
@@ -840,7 +888,6 @@ const Products = () => {
     setDuplicateBarcodeProduct(null);
     setDuplicateBarcodeValue('');
     setBarcodeLocked(false);
-    setShowQrPanel(false);
     setForceCreateMode(false);
   };
 
@@ -979,7 +1026,7 @@ const Products = () => {
       if (prev) URL.revokeObjectURL(prev);
       return '';
     });
-    setShowForm(true); setBarcodeLocked(true); setShowQrPanel(false); setFormError('');
+    setShowForm(true); setBarcodeLocked(true); setFormError('');
     setForceCreateMode(false);
     setDeliveryMode('normal');
     setCustomDeliveryRate(String(settingsDeliveryRate || 800));
@@ -1116,7 +1163,6 @@ const Products = () => {
     setFormData({ ...emptyForm(), barcode: generateEAN13() });
     setFormError('');
     setBarcodeLocked(false);
-    setShowQrPanel(false);
     setDeliveryMode('normal');
     setCustomDeliveryRate(String(settingsDeliveryRate || 800));
     setShowForm(true);
@@ -1877,14 +1923,30 @@ const Products = () => {
       </Modal>
 
       {/* ── Add / Edit product modal ── */}
-      <Modal isOpen={showForm} title={formData.id ? 'Редактировать товар' : 'Новый товар'} onClose={resetForm} size="xl" icon={formData.id ? FiEdit2 : FiPlus}
-        actions={<>
-          <Button variant="secondary" onClick={resetForm}>Отмена</Button>
-          {(formData.id || formData.name || formData.barcode) && (
-            <Button variant="secondary" onClick={handleCreateCopy}>Копия</Button>
-          )}
-          <Button variant="primary" icon={formData.id ? FiEdit2 : FiPlus} onClick={handleSubmit} loading={saveMutation.isPending}>{formData.id ? 'Сохранить изменения' : 'Сохранить товар'}</Button>
-        </>}
+      <Modal
+        isOpen={showForm}
+        title={formData.id ? 'Редактировать товар' : (categoryChosen ? 'Новый товар' : 'Выберите категорию')}
+        onClose={resetForm}
+        size="xl"
+        icon={formData.id ? FiEdit2 : FiPlus}
+        actions={(
+          <>
+            <Button variant="secondary" onClick={resetForm}>Отмена</Button>
+            {showProductFields && (formData.id || formData.name || formData.barcode) && (
+              <Button variant="secondary" onClick={handleCreateCopy}>Копия</Button>
+            )}
+            {showProductFields && (
+              <Button
+                variant="primary"
+                icon={formData.id ? FiEdit2 : FiPlus}
+                onClick={handleSubmit}
+                loading={saveMutation.isPending}
+              >
+                {formData.id ? 'Сохранить изменения' : 'Сохранить товар'}
+              </Button>
+            )}
+          </>
+        )}
       >
         {formError && (
           <div style={{ marginBottom: 16, display: 'grid', gap: 10 }}>
@@ -1900,6 +1962,37 @@ const Products = () => {
           </div>
         )}
 
+        {showCategoryWizard && (
+          <div className="product-wizard">
+            <div className="product-wizard-steps" aria-label="Шаги создания товара">
+              <div className="product-wizard-step product-wizard-step--active">
+                <span className="product-wizard-step__num">1</span>
+                <span className="product-wizard-step__label">Категория</span>
+              </div>
+              <div className="product-wizard-step__line" aria-hidden />
+              <div className="product-wizard-step product-wizard-step--pending">
+                <span className="product-wizard-step__num">2</span>
+                <span className="product-wizard-step__label">Заполнение</span>
+              </div>
+            </div>
+            <div className="product-wizard-panel">
+              <CategoryPicker
+                key="new-product-category"
+                tree={categoryTree}
+                groupId={formData.category_group_id}
+                categoryId={formData.category_id}
+                onChange={handleCategoryChange}
+                stepCaption="Новый товар"
+                stepTitle="Выберите группу"
+              />
+              <p className="product-wizard-hint">
+                Сначала группа (Двигатель, Кузов…), затем подкатегория. Поля товара откроются после выбора.
+              </p>
+            </div>
+          </div>
+        )}
+
+        {showProductFields && (
         <IosFormBlock title="Фото товара" footer="До 12 фото. Сначала сохраните товар, затем загружайте снимки.">
           <IosFormGroup padded className="product-form-photo-section">
               <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start', flexWrap: 'wrap' }}>
@@ -2043,45 +2136,59 @@ const Products = () => {
               )}
           </IosFormGroup>
         </IosFormBlock>
+        )}
 
+        {showProductFields && (
         <form className="ios-form-stack product-form-flow product-form-modal" onSubmit={handleSubmit}>
-          <ProductFormSection
-            title="Тип товара"
-            footer="Группа и подкатегория — от этого зависят поля ниже"
-          >
-            <CategoryPicker
-              tree={categoryTree}
-              groupId={formData.category_group_id}
-              categoryId={formData.category_id}
-              legacyCategoryText={!formData.category_id ? (formData.category || '') : ''}
-              onChange={({ groupId, categoryId }) => {
-                const sub = findCategoryInTree(categoryTree, categoryId);
-                setFormData((prev) => {
-                  const catChanged = categoryId !== prev.category_id;
-                  return {
-                    ...prev,
-                    category_group_id: groupId,
-                    category_id: categoryId,
-                    category: sub?.name || prev.category,
-                    attributes: catChanged && prev.category_id ? {} : (prev.attributes || {}),
-                  };
-                });
-              }}
-            />
-            {!formData.category_id && (
-              <p className="product-form-category-gate">
-                Выберите подкатегорию — ниже появятся поля по шаблону. Цены и штрих-код можно заполнить уже сейчас.
-              </p>
-            )}
-            {formData.id && !formData.category_id && (
-              <div className="product-form-legacy-banner">
-                Товар по старой схеме. Выберите категорию когда будет удобно — цены и остаток сохраняются как есть.
+          {!isEditingProduct && categoryChosen && (
+            <div className="product-wizard-steps product-wizard-steps--compact" aria-label="Шаги">
+              <div className="product-wizard-step product-wizard-step--done">
+                <span className="product-wizard-step__num">✓</span>
+                <span className="product-wizard-step__label">Категория</span>
               </div>
-            )}
-            <ProductFormTemplateBadge path={selectedCategoryPath} />
-          </ProductFormSection>
+              <div className="product-wizard-step__line product-wizard-step__line--done" aria-hidden />
+              <div className="product-wizard-step product-wizard-step--active">
+                <span className="product-wizard-step__num">2</span>
+                <span className="product-wizard-step__label">Заполнение</span>
+              </div>
+            </div>
+          )}
 
-          {formData.category_id && selectedSubcategorySchema && (
+          {categoryChosen && selectedCategoryGroup && selectedSubcategory && (
+            <div className="product-category-summary">
+              <span className="product-category-summary__emoji">{selectedCategoryGroup.icon || '📦'}</span>
+              <div className="product-category-summary__text">
+                <span className="product-category-summary__caption">Категория</span>
+                <strong>{selectedCategoryGroup.name} → {selectedSubcategory.name}</strong>
+              </div>
+              <button type="button" className="product-category-summary__change" onClick={handleResetCategory}>
+                Изменить
+              </button>
+            </div>
+          )}
+
+          {isEditingProduct && !categoryChosen && (
+            <ProductFormSection
+              title="Категория"
+              footer="Выберите группу и подкатегорию для шаблона полей"
+            >
+              <CategoryPicker
+                key={`edit-cat-${formData.id}`}
+                tree={categoryTree}
+                groupId={formData.category_group_id}
+                categoryId={formData.category_id}
+                legacyCategoryText={formData.category || ''}
+                onChange={handleCategoryChange}
+                stepCaption="Товар"
+                stepTitle="Выберите группу"
+              />
+              <div className="product-form-legacy-banner">
+                Товар по старой схеме. Выберите категорию — цены и остаток сохранятся.
+              </div>
+            </ProductFormSection>
+          )}
+
+          {categoryChosen && selectedSubcategorySchema && (
             <ProductFormSection
               title="Характеристики"
               footer="Заполните по шаблону категории"
@@ -2105,229 +2212,33 @@ const Products = () => {
             </ProductFormSection>
           )}
 
-          <ProductFormSection
-            title="Коды, цены и склад"
-            footer="Штрих-код, закуп, продажа, количество"
-          >
-          <Input
-            label="Артикул"
-            placeholder="AUTO-000001 или свой"
-            value={formData.sku || ''}
-            onChange={(e) => setFormData({ ...formData, sku: e.target.value })}
-            style={formData.id ? { border: '1px solid var(--primary)' } : {}}
-          />
-
-          <div>
-            <span style={{ display: 'block', marginBottom: 8, fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>Штрих-код</span>
-            <div style={{ display: 'flex', gap: 8, alignItems: 'stretch', flexWrap: 'wrap' }}>
-              <input
-                className="ios-input"
-                style={{ flex: 1, minWidth: 160, border: formData.id ? '1px solid var(--primary)' : '1px solid var(--border)' }}
-                value={formData.barcode || ''}
-                readOnly={barcodeLocked}
-                onChange={(e) => !barcodeLocked && setFormData({ ...formData, barcode: sanitizeBarcodeFieldInput(e.target.value) })}
-                inputMode="text"
-                autoCapitalize="characters"
-                autoCorrect="off"
-                spellCheck={false}
-                placeholder="Для сканера и этикетки (не показывается на витрине как поле)"
-              />
-              <button type="button" className="topbar-theme-toggle" title={barcodeLocked ? 'Разблокировать' : 'Замкнуть'} onClick={() => setBarcodeLocked((v) => !v)} style={{ padding: '0 12px', display: 'inline-flex', alignItems: 'center', gap: 6 }}>{barcodeLocked ? <FiUnlock size={17} /> : <FiLock size={17} />}<span style={{ fontSize: 12, fontWeight: 600 }}>{barcodeLocked ? 'Разблок.' : 'Замкнуть'}</span></button>
-              <button type="button" className="topbar-theme-toggle" title="Новый EAN-13" disabled={barcodeLocked} onClick={() => setFormData({ ...formData, barcode: generateEAN13() })} style={{ padding: '0 10px', opacity: barcodeLocked ? 0.4 : 1 }}><FiRefreshCw size={17} /></button>
-              <button type="button" className="topbar-theme-toggle" title="Показать QR" onClick={() => setShowQrPanel((s) => !s)} style={{ padding: '0 10px', background: showQrPanel ? 'var(--primary-light)' : undefined }}><FiMaximize2 size={17} /></button>
-            </div>
-            {formData.barcode && <div style={{ marginTop: 10, padding: 10, borderRadius: 'var(--radius-ios)', background: 'var(--ios-grouped-bg)', border: '1px solid var(--border)', overflow: 'auto' }}><canvas ref={barcodeCanvasRef} style={{ display: 'block', maxWidth: '100%', height: 'auto' }} /></div>}
-            {showQrPanel && formData.barcode && <div style={{ marginTop: 10, display: 'flex', justifyContent: 'center', padding: 14, borderRadius: 'var(--radius-ios)', background: '#fff', border: '1px solid var(--border)' }}><QRCodeSVG value={String(formData.barcode)} size={156} level="M" /></div>}
-          </div>
-
-          <label
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 12,
-              padding: '12px 14px',
-              borderRadius: 14,
-              border: '1px solid var(--border)',
-              background: formData.show_on_storefront !== false ? 'rgba(16, 185, 129, 0.06)' : 'var(--ios-grouped-bg)',
-              cursor: 'pointer',
-            }}
-          >
-            <input
-              type="checkbox"
-              checked={formData.show_on_storefront !== false}
-              onChange={(e) => setFormData({ ...formData, show_on_storefront: e.target.checked })}
+          {(categoryChosen || isEditingProduct) && (
+            <ProductStockFormSection
+              formData={formData}
+              setFormData={setFormData}
+              barcodeLocked={barcodeLocked}
+              setBarcodeLocked={setBarcodeLocked}
+              barcodeCanvasRef={barcodeCanvasRef}
+              sanitizeBarcodeInput={sanitizeBarcodeFieldInput}
+              generateEAN13={generateEAN13}
+              layoutPriceRows={layoutPriceRows}
+              selectedSubcategorySchema={selectedSubcategorySchema}
+              cnyRate={cnyRate}
+              deliveryKztPerKg={deliveryKztPerKg}
+              deliveryMode={deliveryMode}
+              setDeliveryMode={setDeliveryMode}
+              customDeliveryRate={customDeliveryRate}
+              setCustomDeliveryRate={setCustomDeliveryRate}
+              settingsDeliveryRate={settingsDeliveryRate}
+              highlightStyle={formData.id ? { border: '1px solid var(--primary)' } : {}}
+              profitPreview={profitPreview}
+              effPurchasePreview={effPurchasePreview}
+              optionalNum={optionalNum}
+              num={num}
             />
-            <span>
-              <span style={{ display: 'block', fontSize: 14, fontWeight: 700, color: 'var(--text)' }}>
-                <FiGlobe size={14} style={{ verticalAlign: -2, marginRight: 6 }} />
-                Показывать на сайте (CHPARTS)
-              </span>
-              <span style={{ fontSize: 12, color: 'var(--text-muted)', fontWeight: 500 }}>
-                Скрытые позиции не видны клиентам в каталоге
-              </span>
-            </span>
-          </label>
-
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-            <Input
-              label="Закуп (¥ юань)"
-              type="number"
-              step="0.1"
-              min="0"
-              placeholder="0"
-              value={formData.cny_price}
-              onChange={(e) => {
-                const v = e.target.value;
-                setFormData((prev) => {
-                  const next = { ...prev, cny_price: v };
-                  const cny = optionalNum(v);
-                  const del = optionalNum(prev.delivery_cost_kzt) || 0;
-                  if (cny != null && cny > 0) {
-                    next.purchase_price = Number(cny) * cnyRate + del;
-                  }
-                  return next;
-                });
-              }}
-              style={formData.id ? { border: '1px solid var(--primary)' } : {}}
-            />
-            <div style={{ fontSize: 12, color: 'var(--text-muted)', alignSelf: 'end', paddingBottom: 10, lineHeight: 1.45 }}>
-              Тариф доставки:
-              <strong style={{ color: 'var(--text)', marginLeft: 4 }}>
-                {deliveryKztPerKg.toLocaleString('ru-RU')} ₸/кг
-              </strong>
-            </div>
-          </div>
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            {[
-              { id: 'custom', label: 'Своя цена' },
-              { id: 'normal', label: `Обычная (${settingsDeliveryRate} ₸/кг)` },
-              { id: 'express', label: 'Экспресс (2000 ₸/кг)' },
-            ].map((mode) => (
-              <button
-                key={mode.id}
-                type="button"
-                className={`catalog-chip ${deliveryMode === mode.id ? 'catalog-chip-active' : ''}`}
-                onClick={() => setDeliveryMode(mode.id)}
-              >
-                {mode.label}
-              </button>
-            ))}
-            {deliveryMode === 'custom' && (
-              <input
-                className="ios-input"
-                type="number"
-                min="0.1"
-                step="0.1"
-                value={customDeliveryRate}
-                onChange={(e) => setCustomDeliveryRate(e.target.value)}
-                placeholder="Свой тариф за кг"
-                style={{ maxWidth: 180 }}
-              />
-            )}
-          </div>
-
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-            <Input
-              label="Доставка (₸)"
-              type="number"
-              step="0.01"
-              min="0"
-              placeholder="0"
-              value={formData.delivery_cost_kzt}
-              onChange={(e) => {
-                const v = e.target.value;
-                setFormData((prev) => {
-                  const next = { ...prev, delivery_cost_kzt: v };
-                  const d = optionalNum(v);
-                  if (d != null && d > 0 && deliveryKztPerKg > 0) {
-                    const kg = roundKgVal(d / deliveryKztPerKg);
-                    next.delivery_weight_kg = kg != null ? String(kg) : '';
-                  } else if (v === '' || v == null) {
-                    next.delivery_weight_kg = '';
-                  }
-                  const cny = optionalNum(prev.cny_price);
-                  const del = optionalNum(v) || 0;
-                  if (cny != null && cny > 0) {
-                    next.purchase_price = Number(cny) * cnyRate + del;
-                  }
-                  return next;
-                });
-              }}
-              style={formData.id ? { border: '1px solid var(--primary)' } : {}}
-            />
-            <Input
-              label="Вес под доставку (кг)"
-              type="number"
-              step="0.001"
-              min="0"
-              placeholder="0"
-              value={formData.delivery_weight_kg}
-              onChange={(e) => {
-                const v = e.target.value;
-                setFormData((prev) => {
-                  const next = { ...prev, delivery_weight_kg: v };
-                  const w = optionalNum(v);
-                  if (w != null && w > 0 && deliveryKztPerKg > 0) {
-                    const m = roundMoneyKzt(w * deliveryKztPerKg);
-                    next.delivery_cost_kzt = m != null ? String(m) : '';
-                  } else if (v === '' || v == null) {
-                    next.delivery_cost_kzt = '';
-                  }
-                  const cny = optionalNum(prev.cny_price);
-                  const del = optionalNum(next.delivery_cost_kzt) || 0;
-                  if (cny != null && cny > 0) {
-                    next.purchase_price = Number(cny) * cnyRate + del;
-                  }
-                  return next;
-                });
-              }}
-              style={formData.id ? { border: '1px solid var(--primary)' } : {}}
-            />
-          </div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-            <Input
-              label="Закуп (₸)"
-              type="number"
-              step="0.01"
-              min="0"
-              value={formData.purchase_price ?? 0}
-              onChange={(e) => setFormData({ ...formData, purchase_price: parseFloat(e.target.value) || 0 })}
-              style={formData.id ? { border: '1px solid var(--primary)' } : {}}
-            />
-            <Input label="Продажа (₸) *" type="number" step="0.01" min="0" value={formData.sale_price || 0} onChange={(e) => setFormData({ ...formData, sale_price: parseFloat(e.target.value) || 0 })} style={formData.id ? { border: '1px solid var(--primary)' } : {}} />
-          </div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-            <div style={{ gridColumn: '1 / -1' }}>
-              <Input label="Производитель" placeholder="По желанию" value={formData.supplier || ''} onChange={(e) => setFormData({ ...formData, supplier: e.target.value })} style={formData.id ? { border: '1px solid var(--primary)' } : {}} />
-            </div>
-          </div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-            <Input label="Количество" type="number" min="0" value={formData.quantity || 0} onChange={(e) => setFormData({ ...formData, quantity: parseInt(e.target.value, 10) || 0 })} style={formData.id ? { border: '1px solid var(--primary)' } : {}} />
-            <Input label="Место на складе" placeholder="А25, B87…" value={formData.storage_location || ''} onChange={(e) => setFormData({ ...formData, storage_location: e.target.value.toUpperCase() })} style={formData.id ? { border: '1px solid var(--primary)' } : {}} />
-          </div>
-
-          <TextArea label="Доп. информация" placeholder="По желанию" value={formData.description || ''} onChange={(e) => setFormData({ ...formData, description: e.target.value })} />
-
-          </ProductFormSection>
-
-          <div style={{ padding: '12px 14px', borderRadius: 'var(--radius-ios)', background: 'var(--ios-grouped-bg)', border: '1px solid var(--border)', fontSize: 14, fontWeight: 600, color: 'var(--text-secondary)' }}>
-            Прибыль:{' '}
-            <span
-              style={{
-                color: parseFloat(profitPreview) < 0 ? 'var(--danger)' : parseFloat(profitPreview) >= 50 ? 'var(--success)' : '#d97706',
-                fontSize: 16,
-              }}
-            >
-              {profitPreview}%
-            </span>
-            <span style={{ fontWeight: 500, fontSize: 12, marginLeft: 8, color: 'var(--text-muted)' }}>
-              · закуп для расчёта: {Math.round(effPurchasePreview).toLocaleString('ru-RU')} ₸
-              {(optionalNum(formData.cny_price) || 0) > 0 && num(formData.purchase_price) <= 0 && (
-                <span> (из ¥ × курс {cnyRate})</span>
-              )}
-            </span>
-          </div>
+          )}
         </form>
+        )}
       </Modal>
 
       {/* ── Label Print ── */}

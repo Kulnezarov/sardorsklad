@@ -34,7 +34,7 @@ def require_roles(*allowed_roles: str):
     def _checker(current_user: models.User = Depends(get_current_user)) -> models.User:
         role = (current_user.role or "manager").lower()
         if role not in normalized:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Недостаточно прав для этого действия")
         return current_user
 
     return _checker
@@ -43,5 +43,5 @@ def require_roles(*allowed_roles: str):
 def require_manager_or_admin(current_user: models.User = Depends(get_current_user)) -> models.User:
     role = (current_user.role or "manager").lower()
     if role not in {"manager", "admin"}:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Недостаточно прав для этого действия")
     return current_user

@@ -11,6 +11,8 @@ export const BUILTIN_LABELS = {
   model: 'Модель авто',
   sku: 'Артикул',
   description: 'Описание',
+  cny_price: 'Закуп (¥)',
+  delivery_block: 'Доставка (₸, кг)',
   purchase_block: 'Закуп и доставка',
   sale_price: 'Цена продажи',
   quantity: 'Количество',
@@ -19,14 +21,46 @@ export const BUILTIN_LABELS = {
   barcode: 'Штрих-код',
 };
 
+/** Поля цен/склада в хвосте form_layout (после артикула). */
+export const PRICE_BUILTIN_KEYS = new Set([
+  'cny_price',
+  'delivery_block',
+  'purchase_block',
+  'sale_price',
+  'quantity',
+  'supplier',
+  'description',
+]);
+
 export const ADDABLE_BUILTIN = [
   { id: 'name', kind: 'builtin', key: 'name', width: 'full', label: 'Название' },
-  { id: 'purchase', kind: 'builtin', key: 'purchase_block', width: 'full', label: 'Закуп и доставка' },
+  { id: 'cny', kind: 'builtin', key: 'cny_price', width: 'half', label: 'Закуп (¥)' },
+  { id: 'delivery', kind: 'builtin', key: 'delivery_block', width: 'full', label: 'Доставка (₸, кг)' },
   { id: 'sale', kind: 'builtin', key: 'sale_price', width: 'half', label: 'Цена продажи' },
   { id: 'qty', kind: 'builtin', key: 'quantity', width: 'half', label: 'Количество' },
   { id: 'supplier', kind: 'builtin', key: 'supplier', width: 'full', label: 'Поставщик' },
   { id: 'description', kind: 'builtin', key: 'description', width: 'full', label: 'Описание' },
 ];
+
+function splitLegacyPurchaseRow(row) {
+  const width = row.width === 'half' ? 'half' : 'full';
+  return [
+    { id: 'cny', kind: 'builtin', key: 'cny_price', width, label: BUILTIN_LABELS.cny_price },
+    { id: 'delivery', kind: 'builtin', key: 'delivery_block', width: 'full', label: BUILTIN_LABELS.delivery_block },
+  ];
+}
+
+export function expandLayoutPurchaseRows(rows) {
+  const out = [];
+  (rows || []).forEach((row) => {
+    if (row?.key === 'purchase_block') {
+      out.push(...splitLegacyPurchaseRow(row));
+    } else {
+      out.push(row);
+    }
+  });
+  return out;
+}
 
 export function slugFieldKey(label) {
   return String(label || '')
@@ -55,7 +89,7 @@ export function defaultFormLayout(schema = null) {
     });
   });
   layout.push({ id: 'sku', kind: 'locked', key: 'sku', width: 'full', label: 'Артикул' });
-  ADDABLE_BUILTIN.slice(1).forEach((row) => layout.push({ ...row }));
+  ADDABLE_BUILTIN.filter((b) => b.id !== 'name').forEach((row) => layout.push({ ...row }));
   return layout;
 }
 
@@ -70,6 +104,15 @@ export function normalizeFormLayout(raw, schema = null) {
     if (!id || seen.has(id)) return;
     const kind = item.kind || 'builtin';
     if (kind === 'attribute' && item.key && !fieldKeys.has(item.key)) return;
+    if (kind === 'builtin' && item.key === 'purchase_block') {
+      splitLegacyPurchaseRow(item).forEach((splitRow) => {
+        if (seen.has(splitRow.id)) return;
+        seen.add(splitRow.id);
+        out.push({ ...splitRow, width: splitRow.width === 'half' ? 'half' : 'full' });
+      });
+      return;
+    }
+    if (kind === 'builtin' && item.key && !BUILTIN_LABELS[item.key]) return;
     seen.add(id);
     out.push({
       id,
@@ -81,6 +124,34 @@ export function normalizeFormLayout(raw, schema = null) {
     });
   });
   return out.length ? out : defaultFormLayout(schema);
+}
+
+/** Группирует соседние half-строки в пары для сетки (редактор и форма). */
+export function groupLayoutRowsForDisplay(rows) {
+  const blocks = [];
+  let halfBuffer = [];
+  const flushHalf = () => {
+    if (halfBuffer.length) {
+      blocks.push({ type: 'half-row', items: [...halfBuffer] });
+      halfBuffer = [];
+    }
+  };
+  (rows || []).forEach((row) => {
+    if (row.width === 'half') {
+      halfBuffer.push(row);
+      if (halfBuffer.length === 2) flushHalf();
+    } else {
+      flushHalf();
+      blocks.push({ type: 'full', row });
+    }
+  });
+  flushHalf();
+  return blocks;
+}
+
+export function priceLayoutRows(schema) {
+  const layout = expandLayoutPurchaseRows(normalizeFormLayout(schema?.form_layout, schema));
+  return layout.filter((r) => r.kind === 'builtin' && PRICE_BUILTIN_KEYS.has(r.key));
 }
 
 export function layoutRowLabel(row, schema) {

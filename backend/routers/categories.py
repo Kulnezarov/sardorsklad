@@ -192,7 +192,7 @@ def update_category(
 def delete_category(
     category_id: int,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(require_roles("admin")),
+    current_user: models.User = Depends(require_manager_or_admin),
 ):
     category = db.query(models.Category).filter(models.Category.id == category_id).first()
     if not category:

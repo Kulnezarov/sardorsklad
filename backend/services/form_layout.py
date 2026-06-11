@@ -13,7 +13,8 @@ LOCKED_KEYS = {str(x["key"]) for x in LOCKED_ROWS}
 
 BUILTIN_ROWS: list[dict[str, str]] = [
     {"id": "name", "kind": "builtin", "key": "name", "width": "full", "placeholder": "Название товара"},
-    {"id": "purchase", "kind": "builtin", "key": "purchase_block", "width": "full"},
+    {"id": "cny", "kind": "builtin", "key": "cny_price", "width": "half"},
+    {"id": "delivery", "kind": "builtin", "key": "delivery_block", "width": "full"},
     {"id": "sale", "kind": "builtin", "key": "sale_price", "width": "half"},
     {"id": "qty", "kind": "builtin", "key": "quantity", "width": "half"},
     {"id": "supplier", "kind": "builtin", "key": "supplier", "width": "full"},
@@ -26,7 +27,9 @@ BUILTIN_LABELS: dict[str, str] = {
     "model": "Модель авто",
     "sku": "Артикул",
     "description": "Описание",
-    "purchase_block": "Закуп",
+    "cny_price": "Закуп (¥)",
+    "delivery_block": "Доставка (₸, кг)",
+    "purchase_block": "Закуп и доставка",
     "sale_price": "Цена продажи",
     "quantity": "Количество",
     "supplier": "Поставщик",
@@ -136,6 +139,17 @@ def normalize_form_layout(
                 continue
             seen_locked.add(key)
         elif kind == "builtin":
+            if key == "purchase_block":
+                for split in (
+                    {"id": "cny", "kind": "builtin", "key": "cny_price", "width": width},
+                    {"id": "delivery", "kind": "builtin", "key": "delivery_block", "width": "full"},
+                ):
+                    sid = split["id"]
+                    if sid in seen_ids:
+                        continue
+                    seen_ids.add(sid)
+                    out.append(dict(split))
+                continue
             if key not in BUILTIN_LABELS:
                 continue
         elif kind == "attribute":

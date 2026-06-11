@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
-import { FiGrid, FiPlus, FiTrash2, FiEdit2, FiChevronDown, FiChevronRight, FiLayout } from 'react-icons/fi';
+import { FiChevronLeft, FiChevronRight, FiPlus, FiTrash2, FiEdit2, FiLayout, FiX, FiDownload } from 'react-icons/fi';
 import { categoryApi, getApiErrorMessage } from '../api/client';
 import CategoryFormLayoutEditor from './CategoryFormLayoutEditor';
 import { fieldsToFullSchema, slugFieldKey } from '../utils/formLayoutUtils';
@@ -31,9 +31,33 @@ function schemaToFields(schema) {
   }));
 }
 
+function fieldCount(schema) {
+  if (!schema) return 0;
+  const fields = schema.fields || schema;
+  return Array.isArray(fields) ? fields.length : 0;
+}
+
+function pluralCategories(n) {
+  const m = n % 10;
+  const m2 = n % 100;
+  if (m2 >= 11 && m2 <= 14) return 'категорий';
+  if (m === 1) return 'категория';
+  if (m >= 2 && m <= 4) return 'категории';
+  return 'категорий';
+}
+
+function pluralFields(n) {
+  const m = n % 10;
+  const m2 = n % 100;
+  if (m2 >= 11 && m2 <= 14) return 'полей';
+  if (m === 1) return 'поле';
+  if (m >= 2 && m <= 4) return 'поля';
+  return 'полей';
+}
+
 export default function SettingsCategoriesSection() {
   const qc = useQueryClient();
-  const [expanded, setExpanded] = useState({});
+  const [drillGroupId, setDrillGroupId] = useState(null);
   const [groupForm, setGroupForm] = useState({ name: '', icon: '📦' });
   const [subForm, setSubForm] = useState(null);
   const [editTarget, setEditTarget] = useState(null);
@@ -89,6 +113,7 @@ export default function SettingsCategoriesSection() {
   });
 
   const groups = useMemo(() => (Array.isArray(tree) ? tree : []), [tree]);
+  const drillGroup = drillGroupId != null ? groups.find((g) => g.id === drillGroupId) : null;
 
   const startAddSub = (groupId) => {
     setSubForm({
@@ -170,8 +195,8 @@ export default function SettingsCategoriesSection() {
   };
 
   const renderFieldEditor = (form, setForm) => (
-    <div style={{ display: 'grid', gap: 10, marginTop: 12 }}>
-      <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
+    <div className="settings-field-editor">
+      <label className="settings-field-editor__check">
         <input
           type="checkbox"
           checked={form.show_compatibility}
@@ -179,11 +204,11 @@ export default function SettingsCategoriesSection() {
         />
         Показывать «Совместим с авто» в форме товара
       </label>
-      <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-muted)' }}>Поля характеристик</div>
+      <div className="settings-field-editor__title">Поля характеристик</div>
       {(form.fields || []).map((field, idx) => (
-        <div key={idx} style={{ padding: 12, borderRadius: 12, border: '1px solid var(--border)', background: 'var(--ios-grouped-bg)', display: 'grid', gap: 8 }}>
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            <span style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 700 }}>#{idx + 1}</span>
+        <div key={idx} className="settings-field-editor__card">
+          <div className="settings-field-editor__card-head">
+            <span>#{idx + 1}</span>
             <button
               type="button"
               className="product-field-minus"
@@ -198,7 +223,7 @@ export default function SettingsCategoriesSection() {
             </button>
           </div>
           <input
-            className="ios-input"
+            className="settings-ios-add__input"
             placeholder="Название поля (Объём)"
             value={field.label}
             onChange={(e) => {
@@ -208,7 +233,7 @@ export default function SettingsCategoriesSection() {
             }}
           />
           <select
-            className="ios-input"
+            className="settings-ios-add__input settings-editor-select"
             value={field.type}
             onChange={(e) => {
               const fields = [...form.fields];
@@ -224,7 +249,7 @@ export default function SettingsCategoriesSection() {
           </select>
           {(field.type === 'select' || field.type === 'chip') && (
             <input
-              className="ios-input"
+              className="settings-ios-add__input"
               placeholder="Варианты: 1.1, 1.3, 1.5"
               value={field.options}
               onChange={(e) => {
@@ -235,7 +260,7 @@ export default function SettingsCategoriesSection() {
             />
           )}
           <input
-            className="ios-input"
+            className="settings-ios-add__input"
             placeholder="Подсказка в поле"
             value={field.placeholder}
             onChange={(e) => {
@@ -245,7 +270,7 @@ export default function SettingsCategoriesSection() {
             }}
           />
           <input
-            className="ios-input"
+            className="settings-ios-add__input"
             placeholder="Единица (л, мм, А)"
             value={field.unit}
             onChange={(e) => {
@@ -256,126 +281,247 @@ export default function SettingsCategoriesSection() {
           />
         </div>
       ))}
-      <button type="button" className="catalog-chip" onClick={() => setForm({ ...form, fields: [...(form.fields || []), emptyField()] })}>+ Поле</button>
+      <button type="button" className="settings-editor-btn settings-editor-btn--ghost" onClick={() => setForm({ ...form, fields: [...(form.fields || []), emptyField()] })}>+ Добавить поле</button>
     </div>
   );
 
-  return (
-    <div className="settings-section">
-      <div className="settings-section-title">
-        <FiGrid size={16} /> Категории товаров
-      </div>
-      <div className="settings-section-body">
-        <div className="ios-settings-block">
-        <p className="ios-form-section-footer settings-categories-intro">
-          Группы и подкатегории — на сервере. Карточку заполнения настраивайте для каждой подкатегории.
-        </p>
+  const closeEditor = () => {
+    setSubForm(null);
+    setEditTarget(null);
+  };
 
-        <button
-          type="button"
-          className="ios-btn-secondary"
-          style={{ width: '100%', marginBottom: 4 }}
-          disabled={seedMutation.isPending}
-          onClick={() => {
-            if (window.confirm('Загрузить каталог автозапчастей на сервер? Существующие категории обновятся.')) {
-              seedMutation.mutate();
-            }
-          }}
-        >
-          Загрузить каталог автозапчастей
-        </button>
-        </div>
+  const editorOpen = Boolean(subForm || editTarget);
 
-        {isLoading && <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>Загрузка…</div>}
-
-        {!isLoading && groups.map((g) => {
-          const open = expanded[g.id] !== false;
-          const childCount = (g.children || []).length;
-          return (
-            <div key={g.id} className="settings-category-group">
-              <div className="settings-category-group__head">
-                <button type="button" onClick={() => setExpanded((e) => ({ ...e, [g.id]: !open }))} style={{ border: 'none', background: 'transparent', cursor: 'pointer', display: 'flex', color: 'var(--text-muted)' }}>
-                  {open ? <FiChevronDown size={16} /> : <FiChevronRight size={16} />}
-                </button>
-                <span style={{ fontSize: 20 }}>{g.icon || '📦'}</span>
-                <strong style={{ flex: 1, fontSize: 14 }}>{g.name}</strong>
-                <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{childCount} подкат.</span>
-                <button type="button" className="topbar-theme-toggle" title="Редактировать" onClick={() => startEditGroup(g)}><FiEdit2 size={14} /></button>
-                <button type="button" className="topbar-theme-toggle" title="Удалить" onClick={() => { if (window.confirm(`Удалить группу «${g.name}»?`)) deleteMutation.mutate(g.id); }}><FiTrash2 size={14} /></button>
-              </div>
-              {open && (
-                <div className="settings-category-group__body">
-                  {(g.children || []).map((c) => (
-                    <div key={c.id} className="settings-subcategory-row">
-                      <div className="settings-subcategory-row__meta">
-                        <div><span>{c.icon || '⚙️'} </span><span style={{ fontSize: 13 }}>{c.name}</span></div>
-                        {c.has_form_layout ? (
-                          <span className="settings-layout-badge settings-layout-badge--ok">Карточка настроена</span>
-                        ) : (
-                          <span className="settings-layout-badge settings-layout-badge--default">По умолчанию</span>
-                        )}
-                      </div>
-                      <div className="settings-subcategory-row__actions">
-                        <button type="button" className="catalog-chip catalog-chip-active" style={{ padding: '6px 12px', fontSize: 12 }} onClick={() => openLayoutEditor(g, c)}>
-                          <FiLayout size={12} /> Карточка
-                        </button>
-                        <button type="button" className="topbar-theme-toggle" onClick={() => startEditSub(g, c)}><FiEdit2 size={13} /></button>
-                        <button type="button" className="topbar-theme-toggle" onClick={() => { if (window.confirm(`Удалить «${c.name}»?`)) deleteMutation.mutate(c.id); }}><FiTrash2 size={13} /></button>
-                      </div>
-                    </div>
-                  ))}
-                  <button type="button" className="catalog-chip" style={{ marginTop: 10 }} onClick={() => startAddSub(g.id)}>
-                    <FiPlus size={13} /> Подкатегория
-                  </button>
-                </div>
-              )}
-            </div>
-          );
-        })}
-
-        <div style={{ marginTop: 16, padding: 14, borderRadius: 14, border: '1px dashed var(--border)', background: 'var(--surface)' }}>
-          <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 10 }}>Добавить группу</div>
-          <div style={{ display: 'grid', gridTemplateColumns: '56px 1fr auto', gap: 8 }}>
-            <input className="ios-input" value={groupForm.icon} onChange={(e) => setGroupForm({ ...groupForm, icon: e.target.value })} maxLength={4} />
-            <input className="ios-input" placeholder="Название группы" value={groupForm.name} onChange={(e) => setGroupForm({ ...groupForm, name: e.target.value })} />
-            <button type="button" className="catalog-chip catalog-chip-active" onClick={saveGroup} disabled={createMutation.isPending}><FiPlus size={14} /></button>
+  const renderEditorPanel = () => {
+    if (subForm) {
+      return (
+        <div className="settings-editor-panel" role="dialog" aria-modal="true">
+          <div className="settings-editor-panel__head">
+            <h3 className="settings-editor-panel__title">Новая подкатегория</h3>
+            <button type="button" className="settings-editor-panel__close" onClick={closeEditor} aria-label="Закрыть">
+              <FiX size={18} />
+            </button>
           </div>
-        </div>
-
-        {subForm && (
-          <div style={{ marginTop: 16, padding: 14, borderRadius: 14, border: '1px solid var(--primary)', background: 'var(--primary-light)' }}>
-            <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 10 }}>Новая подкатегория</div>
-            <div style={{ display: 'grid', gridTemplateColumns: '56px 1fr', gap: 8, marginBottom: 8 }}>
-              <input className="ios-input" value={subForm.icon} onChange={(e) => setSubForm({ ...subForm, icon: e.target.value })} />
-              <input className="ios-input" placeholder="Название" value={subForm.name} onChange={(e) => setSubForm({ ...subForm, name: e.target.value })} />
+          <div className="settings-editor-panel__body">
+            <div className="settings-editor-panel__row">
+              <input className="settings-ios-add__icon" value={subForm.icon} onChange={(e) => setSubForm({ ...subForm, icon: e.target.value })} maxLength={4} aria-label="Иконка" />
+              <input className="settings-ios-add__input" placeholder="Название подкатегории" value={subForm.name} onChange={(e) => setSubForm({ ...subForm, name: e.target.value })} />
             </div>
             {renderFieldEditor(subForm, setSubForm)}
-            <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
-              <button type="button" className="catalog-chip" onClick={() => setSubForm(null)}>Отмена</button>
-              <button type="button" className="catalog-chip catalog-chip-active" onClick={saveSub}>Сохранить</button>
-            </div>
           </div>
-        )}
-
-        {editTarget && (
-          <div style={{ marginTop: 16, padding: 14, borderRadius: 14, border: '1px solid var(--border)', background: 'var(--ios-grouped-bg)' }}>
-            <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 10 }}>Редактирование</div>
-            <div style={{ display: 'grid', gridTemplateColumns: '56px 1fr', gap: 8, marginBottom: 8 }}>
-              <input className="ios-input" value={editTarget.icon} onChange={(e) => setEditTarget({ ...editTarget, icon: e.target.value })} />
-              <input className="ios-input" value={editTarget.name} onChange={(e) => setEditTarget({ ...editTarget, name: e.target.value })} />
+          <div className="settings-editor-panel__actions">
+            <button type="button" className="settings-editor-btn settings-editor-btn--secondary" onClick={closeEditor}>Отмена</button>
+            <button type="button" className="settings-editor-btn settings-editor-btn--primary" onClick={saveSub}>Сохранить</button>
+          </div>
+        </div>
+      );
+    }
+    if (editTarget) {
+      return (
+        <div className="settings-editor-panel" role="dialog" aria-modal="true">
+          <div className="settings-editor-panel__head">
+            <h3 className="settings-editor-panel__title">
+              {editTarget.type === 'group' ? 'Группа' : 'Подкатегория'}
+            </h3>
+            <button type="button" className="settings-editor-panel__close" onClick={closeEditor} aria-label="Закрыть">
+              <FiX size={18} />
+            </button>
+          </div>
+          <div className="settings-editor-panel__body">
+            <div className="settings-editor-panel__row">
+              <input className="settings-ios-add__icon" value={editTarget.icon} onChange={(e) => setEditTarget({ ...editTarget, icon: e.target.value })} maxLength={4} aria-label="Иконка" />
+              <input className="settings-ios-add__input" placeholder="Название" value={editTarget.name} onChange={(e) => setEditTarget({ ...editTarget, name: e.target.value })} />
             </div>
-            <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, marginBottom: 8 }}>
+            <label className="settings-field-editor__check">
               <input type="checkbox" checked={editTarget.is_active !== false} onChange={(e) => setEditTarget({ ...editTarget, is_active: e.target.checked })} />
               Активна (видна в формах)
             </label>
             {editTarget.type === 'sub' && renderFieldEditor(editTarget, setEditTarget)}
-            <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
-              <button type="button" className="catalog-chip" onClick={() => setEditTarget(null)}>Отмена</button>
-              <button type="button" className="catalog-chip catalog-chip-active" onClick={saveEdit}>Сохранить</button>
+          </div>
+          <div className="settings-editor-panel__actions">
+            <button type="button" className="settings-editor-btn settings-editor-btn--secondary" onClick={closeEditor}>Отмена</button>
+            <button type="button" className="settings-editor-btn settings-editor-btn--primary" onClick={saveEdit}>Сохранить</button>
+          </div>
+        </div>
+      );
+    }
+    return null;
+  };
+
+  return (
+    <div className="settings-catalog-panel">
+      {!drillGroup ? (
+        <>
+          <div className="settings-catalog-hero">
+            <div className="settings-catalog-hero__text">
+              <h2 className="settings-catalog-hero__title">Категории товаров</h2>
+              <p className="settings-catalog-hero__desc">
+                Группы и подкатегории. Для каждой подкатегории настройте карточку заполнения товара.
+              </p>
+            </div>
+            <button
+              type="button"
+              className="settings-catalog-hero__btn"
+              disabled={seedMutation.isPending}
+              onClick={() => {
+                if (window.confirm('Загрузить каталог автозапчастей? Существующие категории обновятся.')) {
+                  seedMutation.mutate();
+                }
+              }}
+            >
+              <FiDownload size={16} />
+              Загрузить каталог
+            </button>
+          </div>
+
+          {!isLoading && groups.length > 0 && (
+            <div className="settings-catalog-stats">
+              <span>{groups.length} {groups.length === 1 ? 'группа' : groups.length < 5 ? 'группы' : 'групп'}</span>
+              <span className="settings-catalog-stats__dot">·</span>
+              <span>
+                {groups.reduce((n, g) => n + (g.children || []).length, 0)} подкатегорий
+              </span>
+            </div>
+          )}
+
+          {isLoading && <p className="settings-catalog-empty">Загрузка…</p>}
+
+          {!isLoading && !groups.length && (
+            <div className="settings-catalog-empty">
+              <span className="settings-catalog-empty__icon">📦</span>
+              <p>Каталог пуст</p>
+              <span>Загрузите готовый каталог автозапчастей или добавьте группу вручную</span>
+            </div>
+          )}
+
+          {groups.length > 0 && (
+          <div className="settings-ios-group">
+            {groups.map((g) => {
+              const subCount = (g.children || []).length;
+              return (
+                <div key={g.id} className="settings-ios-row">
+                  <button
+                    type="button"
+                    className="settings-ios-row__main"
+                    onClick={() => setDrillGroupId(g.id)}
+                  >
+                    <span className="settings-ios-row__icon settings-ios-row__icon--emoji">{g.icon || '📦'}</span>
+                    <span className="settings-ios-row__text">
+                      <span className="settings-ios-row__title">{g.name}</span>
+                      <span className="settings-ios-row__meta">{subCount} {pluralCategories(subCount)}</span>
+                    </span>
+                  </button>
+                  <div className="settings-ios-row__tools">
+                    <button type="button" className="settings-ios-icon-btn" title="Редактировать" onClick={() => startEditGroup(g)}>
+                      <FiEdit2 size={15} />
+                    </button>
+                    <button
+                      type="button"
+                      className="settings-ios-icon-btn settings-ios-icon-btn--danger"
+                      title="Удалить"
+                      onClick={() => { if (window.confirm(`Удалить группу «${g.name}»?`)) deleteMutation.mutate(g.id); }}
+                    >
+                      <FiTrash2 size={15} />
+                    </button>
+                    <FiChevronRight size={17} className="settings-ios-row__chevron settings-ios-row__chevron--trail" aria-hidden />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          )}
+
+          <div className="settings-ios-group settings-ios-group--add">
+            <div className="settings-ios-add__label">Новая группа</div>
+            <div className="settings-ios-add__row settings-ios-add__row--inline">
+              <input
+                className="settings-ios-add__icon"
+                value={groupForm.icon}
+                onChange={(e) => setGroupForm({ ...groupForm, icon: e.target.value })}
+                maxLength={4}
+                aria-label="Иконка"
+              />
+              <input
+                className="settings-ios-add__input"
+                placeholder="Название группы"
+                value={groupForm.name}
+                onChange={(e) => setGroupForm({ ...groupForm, name: e.target.value })}
+                onKeyDown={(e) => { if (e.key === 'Enter') saveGroup(); }}
+              />
+              <button type="button" className="settings-ios-add__btn" disabled={createMutation.isPending} onClick={saveGroup} aria-label="Добавить">
+                <FiPlus size={18} />
+              </button>
             </div>
           </div>
-        )}
-      </div>
+        </>
+      ) : (
+        <>
+          <div className="settings-catalog-drill">
+            <button type="button" className="settings-catalog-drill__back" onClick={() => setDrillGroupId(null)}>
+              <FiChevronLeft size={20} />
+              Назад
+            </button>
+            <div className="settings-catalog-drill__head">
+              <span className="settings-catalog-drill__emoji">{drillGroup.icon || '📦'}</span>
+              <div>
+                <h3 className="settings-catalog-drill__title">{drillGroup.name}</h3>
+                <p className="settings-catalog-drill__meta">{(drillGroup.children || []).length} подкатегорий</p>
+              </div>
+              <button
+                type="button"
+                className="settings-catalog-drill__add"
+                title="Добавить подкатегорию"
+                onClick={() => startAddSub(drillGroup.id)}
+              >
+                <FiPlus size={18} />
+              </button>
+            </div>
+          </div>
+
+          <div className="settings-ios-group">
+            {(drillGroup.children || []).map((c) => {
+              const fc = fieldCount(c.attribute_schema);
+              const letter = (c.name || '?').charAt(0).toUpperCase();
+              return (
+                <div key={c.id} className="settings-ios-row settings-ios-row--sub">
+                  <div className="settings-ios-row__main settings-ios-row__main--static">
+                    <span className="settings-ios-row__icon settings-ios-row__icon--letter">{letter}</span>
+                    <span className="settings-ios-row__text">
+                      <span className="settings-ios-row__title">{c.name}</span>
+                      <span className="settings-ios-row__meta">
+                        {fc} {pluralFields(fc)}
+                        <span className="settings-ios-row__dot">·</span>
+                        {c.has_form_layout ? 'карточка' : 'по умолчанию'}
+                      </span>
+                    </span>
+                  </div>
+                  <div className="settings-ios-row__tools">
+                    <button type="button" className="settings-ios-icon-btn" title="Карточка" onClick={() => openLayoutEditor(drillGroup, c)}>
+                      <FiLayout size={15} />
+                    </button>
+                    <button type="button" className="settings-ios-icon-btn" title="Редактировать" onClick={() => startEditSub(drillGroup, c)}>
+                      <FiEdit2 size={15} />
+                    </button>
+                    <button
+                      type="button"
+                      className="settings-ios-icon-btn settings-ios-icon-btn--danger"
+                      title="Удалить"
+                      onClick={() => { if (window.confirm(`Удалить «${c.name}»?`)) deleteMutation.mutate(c.id); }}
+                    >
+                      <FiX size={15} />
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </>
+      )}
+
+      {editorOpen && (
+        <div className="settings-editor-backdrop" role="presentation" onClick={closeEditor} />
+      )}
+      {renderEditorPanel()}
 
       {layoutEditor && (
         <CategoryFormLayoutEditor

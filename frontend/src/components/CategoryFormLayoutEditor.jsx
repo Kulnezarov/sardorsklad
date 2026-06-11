@@ -7,6 +7,7 @@ import {
   fieldsToFullSchema,
   isLockedRow,
   layoutRowLabel,
+  groupLayoutRowsForDisplay,
   normalizeFormLayout,
   reorderFormLayout,
   slugFieldKey,
@@ -200,94 +201,127 @@ function CardTab({ state, setState }) {
   };
 
   const rows = normalizeFormLayout(state.form_layout, schema);
+  const rowIndex = (id) => rows.findIndex((r) => r.id === id);
   const availableAttrs = (state.fields || []).filter(
     (f) => f.key && !rows.some((r) => r.key === f.key && r.kind === 'attribute'),
   );
 
+  const renderLayoutRow = (row) => {
+    const idx = rowIndex(row.id);
+    return (
+      <div
+        key={row.id}
+        className={`form-layout-row form-layout-row--${row.width}${isLockedRow(row) ? ' form-layout-row--locked' : ''}`}
+        draggable={!isLockedRow(row)}
+        onDragStart={() => setDragIdx(idx)}
+        onDragOver={(e) => e.preventDefault()}
+        onDrop={() => {
+          if (dragIdx == null || isLockedRow(rows[dragIdx])) return;
+          setState({ ...state, form_layout: reorderFormLayout(rows, dragIdx, idx) });
+          setDragIdx(null);
+        }}
+      >
+        <div className="form-layout-row-head">
+          {!isLockedRow(row) ? (
+            <button type="button" className="form-layout-drag" aria-label="Переместить">
+              <FiMove size={14} />
+            </button>
+          ) : (
+            <span className="form-layout-lock" title="Нельзя удалить">
+              <FiLock size={13} />
+            </span>
+          )}
+          <span className="form-layout-row-label">{layoutRowLabel(row, schema)}</span>
+          <button
+            type="button"
+            className="catalog-chip form-layout-width-btn"
+            onClick={() => {
+              const next = rows.map((r, i) => (i === idx ? toggleRowWidth(r) : r));
+              setState({ ...state, form_layout: next });
+            }}
+            title={row.width === 'half' ? 'Половина ширины' : 'На всю ширину'}
+          >
+            {row.width === 'half' ? '½' : '□'}
+          </button>
+          {!isLockedRow(row) && (
+            <button
+              type="button"
+              className="product-field-minus"
+              onClick={() => setState({ ...state, form_layout: rows.filter((_, i) => i !== idx) })}
+            >
+              <FiMinus size={14} />
+            </button>
+          )}
+        </div>
+        {row.kind === 'attribute' && (
+          <div className="form-layout-row-preview">
+            {(() => {
+              const f = state.fields.find((x) => x.key === row.key);
+              if (f?.type === 'chip' && f.options) {
+                const opts = String(f.options).split(',').map((s) => s.trim()).filter(Boolean);
+                return (
+                  <div className="chip-field-group">
+                    {opts.map((o) => (
+                      <span key={o} className="catalog-chip">{o}</span>
+                    ))}
+                  </div>
+                );
+              }
+              return (
+                <span className="form-layout-placeholder">
+                  {row.placeholder || layoutRowLabel(row, schema)}
+                </span>
+              );
+            })()}
+          </div>
+        )}
+        {row.kind === 'builtin' && row.key === 'name' && (
+          <span className="form-layout-placeholder">{row.placeholder || 'Название товара'}</span>
+        )}
+        {row.kind === 'builtin' && row.key === 'cny_price' && (
+          <span className="form-layout-placeholder">¥ 0.00</span>
+        )}
+        {row.kind === 'builtin' && row.key === 'delivery_block' && (
+          <div className="form-layout-row-preview form-layout-row-preview--delivery">
+            <span className="catalog-chip catalog-chip-active">Обычная</span>
+            <span className="form-layout-placeholder">₸ · кг</span>
+          </div>
+        )}
+        {row.kind === 'builtin' && (row.key === 'sale_price' || row.key === 'quantity') && (
+          <span className="form-layout-placeholder">0</span>
+        )}
+        {row.kind === 'builtin' && row.key === 'supplier' && (
+          <span className="form-layout-placeholder">Поставщик</span>
+        )}
+        {row.kind === 'builtin' && row.key === 'description' && (
+          <span className="form-layout-placeholder">Текст…</span>
+        )}
+        {row.kind === 'compatibility' && (
+          <div className="chip-field-group">
+            <span className="catalog-chip">FAW Bestune</span>
+            <span className="catalog-chip">Changan CS35</span>
+          </div>
+        )}
+      </div>
+    );
+  };
+
   return (
     <div className="form-layout-editor-card">
       <p className="form-layout-editor-hint">
-        Перетащите ⋮⋮ · половинная ширина — два поля в ряд · − удалить (кроме фото и штрих-кода)
+        Перетащите ⋮⋮ · кнопка ½ — два поля в один ряд · − удалить (кроме фото и штрих-кода)
       </p>
       <div className="form-layout-preview-grid">
-        {rows.map((row, idx) => (
-          <div
-            key={row.id}
-            className={`form-layout-row form-layout-row--${row.width}${isLockedRow(row) ? ' form-layout-row--locked' : ''}`}
-            draggable={!isLockedRow(row)}
-            onDragStart={() => setDragIdx(idx)}
-            onDragOver={(e) => e.preventDefault()}
-            onDrop={() => {
-              if (dragIdx == null || isLockedRow(rows[dragIdx])) return;
-              setState({ ...state, form_layout: reorderFormLayout(rows, dragIdx, idx) });
-              setDragIdx(null);
-            }}
-          >
-            <div className="form-layout-row-head">
-              {!isLockedRow(row) ? (
-                <button type="button" className="form-layout-drag" aria-label="Переместить">
-                  <FiMove size={14} />
-                </button>
-              ) : (
-                <span className="form-layout-lock" title="Нельзя удалить">
-                  <FiLock size={13} />
-                </span>
-              )}
-              <span className="form-layout-row-label">{layoutRowLabel(row, schema)}</span>
-              <button
-                type="button"
-                className="catalog-chip"
-                style={{ padding: '2px 8px', fontSize: 11 }}
-                onClick={() => {
-                  const next = rows.map((r, i) => (i === idx ? toggleRowWidth(r) : r));
-                  setState({ ...state, form_layout: next });
-                }}
-              >
-                {row.width === 'half' ? '▯' : '□'}
-              </button>
-              {!isLockedRow(row) && (
-                <button
-                  type="button"
-                  className="product-field-minus"
-                  onClick={() => setState({ ...state, form_layout: rows.filter((_, i) => i !== idx) })}
-                >
-                  <FiMinus size={14} />
-                </button>
-              )}
-            </div>
-            {row.kind === 'attribute' && (
-              <div className="form-layout-row-preview">
-                {(() => {
-                  const f = state.fields.find((x) => x.key === row.key);
-                  if (f?.type === 'chip' && f.options) {
-                    const opts = String(f.options).split(',').map((s) => s.trim()).filter(Boolean);
-                    return (
-                      <div className="chip-field-group">
-                        {opts.map((o) => (
-                          <span key={o} className="catalog-chip">{o}</span>
-                        ))}
-                      </div>
-                    );
-                  }
-                  return (
-                    <span className="form-layout-placeholder">
-                      {row.placeholder || layoutRowLabel(row, schema)}
-                    </span>
-                  );
-                })()}
+        {groupLayoutRowsForDisplay(rows).map((block, bidx) => {
+          if (block.type === 'half-row') {
+            return (
+              <div key={`pair-${bidx}`} className="form-layout-row-pair">
+                {block.items.map((row) => renderLayoutRow(row))}
               </div>
-            )}
-            {row.kind === 'builtin' && row.key === 'name' && (
-              <span className="form-layout-placeholder">{row.placeholder || 'Название товара'}</span>
-            )}
-            {row.kind === 'compatibility' && (
-              <div className="chip-field-group">
-                <span className="catalog-chip">FAW Bestune</span>
-                <span className="catalog-chip">Changan CS35</span>
-              </div>
-            )}
-          </div>
-        ))}
+            );
+          }
+          return renderLayoutRow(block.row);
+        })}
       </div>
       <div className="form-layout-add-row">
         <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-muted)' }}>Добавить:</span>
