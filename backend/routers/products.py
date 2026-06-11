@@ -696,6 +696,9 @@ def create_product(
     payload["received_at"] = datetime.now(UTC)
     _apply_engine_code_defaults(db, payload)
 
+    if payload.get("category_id"):
+        payload["needs_category_refresh"] = False
+
     db_product = models.Product(**payload)
     db.add(db_product)
     db.flush()
@@ -812,6 +815,10 @@ def update_product(
 
     for field, value in update_data.items():
         setattr(db_product, field, value)
+
+    if db_product.category_id:
+        db_product.needs_category_refresh = False
+
     if "engine_code_id" in update_data:
         _apply_engine_code_defaults(db, update_data)
         if "brand" in update_data:

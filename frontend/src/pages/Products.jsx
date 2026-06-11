@@ -2501,9 +2501,9 @@ const Products = () => {
               schema={selectedSubcategorySchema || {}}
               formData={formData}
               onFormDataChange={(next) => { setFormData(next); setFieldErrors((e) => { const n = { ...e }; delete n.name; return n; }); }}
-              disabled={!formData.category_id}
+              disabled={false}
               fieldErrors={fieldErrors}
-              categoryName={selectedSubcategory?.name || ''}
+              categoryName={selectedSubcategory?.name || formData.category || ''}
               compatibilitySlot={
                 selectedSubcategorySchema?.vehicle_mode === 'compatibility' ? (
                   <VehicleCompatibilityPicker

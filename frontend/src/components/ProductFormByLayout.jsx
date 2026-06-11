@@ -188,6 +188,10 @@ export default function ProductFormByLayout({
   };
 
   const { vehicle_mode: vm } = resolveCategoryProfile(schema);
+  const catLower = String(categoryName || '').trim().toLowerCase();
+  const wantsBrandModel =
+    vm === 'brand_model'
+    || (vm === 'none' && (catLower.includes('трос') || catLower.includes('тяга')));
 
   const contentRows = [];
   layout.forEach((row) => {
@@ -195,8 +199,8 @@ export default function ProductFormByLayout({
     if (row.kind === 'builtin') {
       // name, brand, model — показываем в форме
       if (!['name', 'brand', 'model'].includes(row.key)) return;
-      // brand/model показываем только если vehicle_mode: brand_model
-      if ((row.key === 'brand' || row.key === 'model') && vm !== 'brand_model') return;
+      // brand/model — brand_model или тросы/тяги
+      if ((row.key === 'brand' || row.key === 'model') && !wantsBrandModel) return;
     }
     if (row.kind === 'compatibility') {
       contentRows.push({ type: 'compat', row });
@@ -224,6 +228,38 @@ export default function ProductFormByLayout({
     fieldBatch.push(item.row);
   });
   flushFields();
+
+  if (wantsBrandModel && vm !== 'brand_model') {
+    const hasBrand = rows.some((b) =>
+      (b.type === 'full' && b.row?.key === 'brand')
+      || (b.type === 'half-row' && b.items?.some((r) => r.key === 'brand')),
+    );
+    const hasModel = rows.some((b) =>
+      (b.type === 'full' && b.row?.key === 'model')
+      || (b.type === 'half-row' && b.items?.some((r) => r.key === 'model')),
+    );
+    let insertAt = 0;
+    for (let i = 0; i < rows.length; i += 1) {
+      const block = rows[i];
+      if (block.type === 'full' && block.row?.key === 'name') {
+        insertAt = i + 1;
+        break;
+      }
+    }
+    if (!hasBrand) {
+      rows.splice(insertAt, 0, {
+        type: 'full',
+        row: { id: 'brand', kind: 'builtin', key: 'brand', width: 'half', label: 'Марка авто' },
+      });
+      insertAt += 1;
+    }
+    if (!hasModel) {
+      rows.splice(insertAt, 0, {
+        type: 'full',
+        row: { id: 'model', kind: 'builtin', key: 'model', width: 'half', label: 'Модель авто' },
+      });
+    }
+  }
 
   if (compatibilitySlot && vm === 'compatibility' && !rows.some((b) => b.type === 'compat')) {
     let insertAt = 0;

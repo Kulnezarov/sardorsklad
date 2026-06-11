@@ -26,6 +26,11 @@ FORCE_COMPATIBILITY_NAMES = frozenset({
     "Генератор", "Стартер", "Турбина", "Помпа", "Аккумулятор",
 })
 
+# Тросы/тяги — марка+модель текстом (не полный пикер)
+BRAND_MODEL_CATEGORY_NAMES = frozenset({
+    "Трос", "Тросы", "Тросс", "Тяга", "Тяги",
+})
+
 
 def _parent_group_name(db: Session, cat: models.Category) -> str | None:
     if not cat.parent_id:
@@ -45,6 +50,12 @@ def _target_vehicle_mode(cat_name: str, group_name: str | None, schema: dict) ->
     if cat_name in FORCE_COMPATIBILITY_NAMES:
         if vm != "compatibility" or not show:
             return "compatibility", True
+        return None
+
+    name_cf = cat_name.casefold()
+    if cat_name in BRAND_MODEL_CATEGORY_NAMES or "трос" in name_cf or "тяга" in name_cf:
+        if vm != "brand_model" and not show:
+            return "brand_model", False
         return None
 
     if show and vm != "compatibility":

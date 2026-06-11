@@ -73,6 +73,12 @@ CATEGORY_TREE: list[tuple[str, str, list[tuple[str, dict]]]] = [
             _field("side", "Сторона", "chip", ["Левое", "Правое"]),
             _field("heat", "С обогревом", "chip", ["Да", "Нет"]),
         ], show_compatibility=True)),
+        ("Трос", _schema([
+            _field("naznachenie", "Назначение", "chip", [
+                "Сцепление", "Ручник", "Капот", "Багажник", "Дверь", "Сиденье", "Другое",
+            ], required=True),
+            _field("dlina", "Длина (мм)", "text"),
+        ])),
     ]),
     ("🔩", "Подвеска", [
         ("Амортизатор", _schema([
