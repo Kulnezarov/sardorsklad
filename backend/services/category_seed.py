@@ -78,7 +78,7 @@ CATEGORY_TREE: list[tuple[str, str, list[tuple[str, dict]]]] = [
                 "Сцепление", "Ручник", "Капот", "Багажник", "Дверь", "Сиденье", "Другое",
             ], required=True),
             _field("dlina", "Длина (мм)", "text"),
-        ])),
+        ], show_compatibility=True)),
     ]),
     ("🔩", "Подвеска", [
         ("Амортизатор", _schema([

@@ -2500,20 +2500,28 @@ const Products = () => {
             <ProductFormByLayout
               schema={selectedSubcategorySchema || {}}
               formData={formData}
-              onFormDataChange={(next) => { setFormData(next); setFieldErrors((e) => { const n = { ...e }; delete n.name; return n; }); }}
+              onFormDataChange={(updater) => {
+                setFormData((prev) => (typeof updater === 'function' ? updater(prev) : updater));
+                setFieldErrors((e) => { const n = { ...e }; delete n.name; return n; });
+              }}
               disabled={false}
               fieldErrors={fieldErrors}
               categoryName={selectedSubcategory?.name || formData.category || ''}
-              compatibilitySlot={
-                selectedSubcategorySchema?.vehicle_mode === 'compatibility' ? (
+              compatibilitySlot={(() => {
+                const catLabel = selectedSubcategory?.name || formData.category || '';
+                const vm = selectedSubcategorySchema?.vehicle_mode;
+                const ropeLike = /трос|тяга/i.test(catLabel);
+                const showPicker = vm === 'compatibility' || ropeLike;
+                if (!showPicker) return null;
+                return (
                   <VehicleCompatibilityPicker
                     brands={vehicleBrands}
                     models={vehicleModels}
                     selectedIds={formData.compatibility_vehicle_model_ids || []}
                     onChange={handleCompatibilityChange}
                   />
-                ) : null
-              }
+                );
+              })()}
             />
           </ProductFormSection>
 

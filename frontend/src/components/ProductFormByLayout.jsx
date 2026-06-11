@@ -1,6 +1,6 @@
 import React, { useCallback, useRef } from 'react';
 import { groupLayoutRowsForDisplay, layoutRowLabel, normalizeFormLayout, resolveCategoryProfile } from '../utils/formLayoutUtils';
-import { suggestProductName, generateProductName } from '../utils/productNameUtils';
+import { generateProductName } from '../utils/productNameUtils';
 
 function ProductAttrField({ label, children, prominent = false, className = '', error }) {
   return (
@@ -83,84 +83,6 @@ function AttributeField({ fieldDef, value, onChange, disabled, placeholder }) {
   );
 }
 
-function renderFieldControl(row, schema, fieldByKey, formData, onFormDataChange, disabled, setAttr) {
-  if (row.kind === 'builtin' && row.key === 'name') {
-    const canGenerate = (schema?.fields || []).some((f) => f.use_in_name) && categoryName;
-    const handleGenerate = () => {
-      const generated = generateProductName(
-        categoryName,
-        formData.attributes,
-        schema,
-        { brand: formData.brand, model: formData.model },
-      );
-      if (generated) {
-        nameTouchedRef.current = false;
-        onFormDataChange?.({ ...formData, name: generated });
-      }
-    };
-    return (
-      <div className="product-name-field-wrap">
-        <input
-          className="product-attr-field__input"
-          value={formData.name || ''}
-          disabled={disabled}
-          placeholder={row.placeholder || 'Название товара'}
-          onChange={(e) => {
-            nameTouchedRef.current = true;
-            onFormDataChange?.({ ...formData, name: e.target.value });
-          }}
-        />
-        {canGenerate && !disabled && (
-          <button
-            type="button"
-            className="product-name-generate-btn"
-            title="Сгенерировать название из категории и атрибутов"
-            onClick={handleGenerate}
-          >
-            ✨ Авто
-          </button>
-        )}
-      </div>
-    );
-  }
-  if (row.kind === 'builtin' && row.key === 'brand') {
-    return (
-      <input
-        className="product-attr-field__input"
-        value={formData.brand || ''}
-        disabled={disabled}
-        placeholder="Dongfeng, Changan…"
-        data-vehicle="brand"
-        onChange={(e) => onFormDataChange?.({ ...formData, brand: e.target.value })}
-      />
-    );
-  }
-  if (row.kind === 'builtin' && row.key === 'model') {
-    return (
-      <input
-        className="product-attr-field__input"
-        value={formData.model || ''}
-        disabled={disabled}
-        placeholder="H30, CS35…"
-        data-vehicle="model"
-        onChange={(e) => onFormDataChange?.({ ...formData, model: e.target.value })}
-      />
-    );
-  }
-  if (row.kind === 'attribute') {
-    return (
-      <AttributeField
-        fieldDef={fieldByKey[row.key]}
-        value={(formData.attributes || {})[row.key]}
-        onChange={(v) => setAttr(row.key, v)}
-        disabled={disabled}
-        placeholder={row.placeholder || layoutRowLabel(row, schema)}
-      />
-    );
-  }
-  return null;
-}
-
 /**
  * Рендер полей товара по form_layout категории (только ввод значений).
  */
@@ -180,26 +102,109 @@ export default function ProductFormByLayout({
     if (f?.key) fieldByKey[f.key] = f;
   });
 
-  const setAttr = (key, val) => {
-    onFormDataChange?.({
-      ...formData,
-      attributes: { ...(formData.attributes || {}), [key]: val },
-    });
-  };
+  const applyChange = useCallback((updater) => {
+    if (!onFormDataChange) return;
+    onFormDataChange((prev) => (typeof updater === 'function' ? updater(prev) : { ...prev, ...updater }));
+  }, [onFormDataChange]);
+
+  const setAttr = useCallback((key, val) => {
+    applyChange((prev) => ({
+      ...prev,
+      attributes: { ...(prev.attributes || {}), [key]: val },
+    }));
+  }, [applyChange]);
 
   const { vehicle_mode: vm } = resolveCategoryProfile(schema);
   const catLower = String(categoryName || '').trim().toLowerCase();
-  const wantsBrandModel =
-    vm === 'brand_model'
-    || (vm === 'none' && (catLower.includes('трос') || catLower.includes('тяга')));
+  const ropeLike = catLower.includes('трос') || catLower.includes('тяга');
+  const wantsCompatibility = vm === 'compatibility' || ropeLike;
+  const wantsBrandModel = vm === 'brand_model' && !ropeLike;
+
+  const renderFieldControl = (row) => {
+    if (row.kind === 'builtin' && row.key === 'name') {
+      const canGenerate = (schema?.fields || []).some((f) => f.use_in_name) && categoryName;
+      const handleGenerate = () => {
+        const generated = generateProductName(
+          categoryName,
+          formData.attributes,
+          schema,
+          { brand: formData.brand, model: formData.model },
+        );
+        if (generated) {
+          nameTouchedRef.current = false;
+          applyChange((prev) => ({ ...prev, name: generated }));
+        }
+      };
+      return (
+        <div className="product-name-field-wrap">
+          <input
+            className="product-attr-field__input"
+            value={formData.name || ''}
+            disabled={disabled}
+            placeholder={row.placeholder || 'Название товара'}
+            autoComplete="off"
+            onChange={(e) => {
+              nameTouchedRef.current = true;
+              const val = e.target.value;
+              applyChange((prev) => ({ ...prev, name: val }));
+            }}
+          />
+          {canGenerate && !disabled && (
+            <button
+              type="button"
+              className="product-name-generate-btn"
+              title="Сгенерировать название из категории и атрибутов"
+              onClick={handleGenerate}
+            >
+              ✨ Авто
+            </button>
+          )}
+        </div>
+      );
+    }
+    if (row.kind === 'builtin' && row.key === 'brand') {
+      return (
+        <input
+          className="product-attr-field__input"
+          value={formData.brand || ''}
+          disabled={disabled}
+          placeholder="Dongfeng, Changan…"
+          data-vehicle="brand"
+          onChange={(e) => applyChange((prev) => ({ ...prev, brand: e.target.value }))}
+        />
+      );
+    }
+    if (row.kind === 'builtin' && row.key === 'model') {
+      return (
+        <input
+          className="product-attr-field__input"
+          value={formData.model || ''}
+          disabled={disabled}
+          placeholder="H30, CS35…"
+          data-vehicle="model"
+          onChange={(e) => applyChange((prev) => ({ ...prev, model: e.target.value }))}
+        />
+      );
+    }
+    if (row.kind === 'attribute') {
+      return (
+        <AttributeField
+          fieldDef={fieldByKey[row.key]}
+          value={(formData.attributes || {})[row.key]}
+          onChange={(v) => setAttr(row.key, v)}
+          disabled={disabled}
+          placeholder={row.placeholder || layoutRowLabel(row, schema)}
+        />
+      );
+    }
+    return null;
+  };
 
   const contentRows = [];
   layout.forEach((row) => {
     if (row.kind === 'locked') return;
     if (row.kind === 'builtin') {
-      // name, brand, model — показываем в форме
       if (!['name', 'brand', 'model'].includes(row.key)) return;
-      // brand/model — brand_model или тросы/тяги
       if ((row.key === 'brand' || row.key === 'model') && !wantsBrandModel) return;
     }
     if (row.kind === 'compatibility') {
@@ -229,39 +234,7 @@ export default function ProductFormByLayout({
   });
   flushFields();
 
-  if (wantsBrandModel && vm !== 'brand_model') {
-    const hasBrand = rows.some((b) =>
-      (b.type === 'full' && b.row?.key === 'brand')
-      || (b.type === 'half-row' && b.items?.some((r) => r.key === 'brand')),
-    );
-    const hasModel = rows.some((b) =>
-      (b.type === 'full' && b.row?.key === 'model')
-      || (b.type === 'half-row' && b.items?.some((r) => r.key === 'model')),
-    );
-    let insertAt = 0;
-    for (let i = 0; i < rows.length; i += 1) {
-      const block = rows[i];
-      if (block.type === 'full' && block.row?.key === 'name') {
-        insertAt = i + 1;
-        break;
-      }
-    }
-    if (!hasBrand) {
-      rows.splice(insertAt, 0, {
-        type: 'full',
-        row: { id: 'brand', kind: 'builtin', key: 'brand', width: 'half', label: 'Марка авто' },
-      });
-      insertAt += 1;
-    }
-    if (!hasModel) {
-      rows.splice(insertAt, 0, {
-        type: 'full',
-        row: { id: 'model', kind: 'builtin', key: 'model', width: 'half', label: 'Модель авто' },
-      });
-    }
-  }
-
-  if (compatibilitySlot && vm === 'compatibility' && !rows.some((b) => b.type === 'compat')) {
+  if (compatibilitySlot && wantsCompatibility && !rows.some((b) => b.type === 'compat')) {
     let insertAt = 0;
     for (let i = 0; i < rows.length; i += 1) {
       const block = rows[i];
@@ -303,7 +276,7 @@ export default function ProductFormByLayout({
                     prominent={isNameRow(row)}
                     error={errMsg}
                   >
-                    {renderFieldControl(row, schema, fieldByKey, formData, onFormDataChange, disabled, setAttr)}
+                    {renderFieldControl(row)}
                   </ProductAttrField>
                 );
               })}
@@ -320,7 +293,7 @@ export default function ProductFormByLayout({
             prominent={isNameRow(row)}
             error={errMsg}
           >
-            {renderFieldControl(row, schema, fieldByKey, formData, onFormDataChange, disabled, setAttr)}
+            {renderFieldControl(row)}
           </ProductAttrField>
         );
       })}
