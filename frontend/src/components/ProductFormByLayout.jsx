@@ -94,6 +94,7 @@ export default function ProductFormByLayout({
   compatibilitySlot,
   fieldErrors = {},
   categoryName = '',
+  categoryGroupName = '',
 }) {
   const nameTouchedRef = useRef(false);
   const layout = normalizeFormLayout(schema?.form_layout, schema);
@@ -115,10 +116,9 @@ export default function ProductFormByLayout({
   }, [applyChange]);
 
   const { vehicle_mode: vm } = resolveCategoryProfile(schema);
-  const catLower = String(categoryName || '').trim().toLowerCase();
-  const ropeLike = catLower.includes('трос') || catLower.includes('тяга');
-  const wantsCompatibility = vm === 'compatibility' || ropeLike;
-  const wantsBrandModel = vm === 'brand_model' && !ropeLike;
+  const liquidsGroup = /жидкост/i.test(String(categoryGroupName || '').trim());
+  const wantsCompatibility = !liquidsGroup || vm !== 'none';
+  const wantsBrandModel = false;
 
   const renderFieldControl = (row) => {
     if (row.kind === 'builtin' && row.key === 'name') {

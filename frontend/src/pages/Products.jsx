@@ -517,10 +517,9 @@ const Products = () => {
   }, [vehicleModels]);
 
   const compatibilityPickerSlot = useMemo(() => {
-    const catLabel = selectedSubcategory?.name || formData.category || '';
     const vm = selectedSubcategorySchema?.vehicle_mode;
-    const ropeLike = /трос|тяга/i.test(catLabel);
-    const showPicker = vm === 'compatibility' || ropeLike;
+    const liquidsGroup = /жидкост/i.test(selectedCategoryGroup?.name || '');
+    const showPicker = !liquidsGroup || vm !== 'none';
     if (!showPicker) return null;
     return (
       <VehicleCompatibilityPicker
@@ -534,8 +533,7 @@ const Products = () => {
   }, [
     compatPickerKey,
     compatInitialIds,
-    selectedSubcategory?.name,
-    formData.category,
+    selectedCategoryGroup?.name,
     selectedSubcategorySchema?.vehicle_mode,
     vehicleBrands,
     vehicleModels,
@@ -2546,6 +2544,7 @@ const Products = () => {
               disabled={false}
               fieldErrors={fieldErrors}
               categoryName={selectedSubcategory?.name || formData.category || ''}
+              categoryGroupName={selectedCategoryGroup?.name || ''}
               compatibilitySlot={compatibilityPickerSlot}
             />
           </ProductFormSection>

@@ -122,8 +122,8 @@ export default function SettingsCategoriesSection() {
       parent_id: groupId,
       name: '',
       icon: '⚙️',
-      show_compatibility: false,
-      vehicle_mode: 'none',
+      show_compatibility: true,
+      vehicle_mode: 'compatibility',
       pricing_mode: 'import_cny',
       fields: [emptyField()],
     });

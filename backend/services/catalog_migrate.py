@@ -16,20 +16,8 @@ from services.form_layout import (
 
 logger = logging.getLogger(__name__)
 
-# Группы запчастей (не жидкости) — у подкатегорий должен быть хотя бы brand_model
-AUTO_PART_GROUP_NAMES = frozenset({
-    "Двигатель", "Кузов", "Подвеска", "Тормоза", "Фильтры", "Электрика",
-})
-
-# Крупные узлы без show_compatibility в старом сиде — нужен полный пикер марок/моделей
-FORCE_COMPATIBILITY_NAMES = frozenset({
-    "Генератор", "Стартер", "Турбина", "Помпа", "Аккумулятор",
-})
-
-# Тросы/тяги — полный пикер марок/моделей (как двери, амортизаторы)
-COMPATIBILITY_CATEGORY_NAMES = frozenset({
-    "Трос", "Тросы", "Тросс", "Тяга", "Тяги",
-})
+# Жидкости (масла, антифриз…) — без привязки к марке авто
+LIQUID_GROUP_NAMES = frozenset({"Жидкости"})
 
 
 def _parent_group_name(db: Session, cat: models.Category) -> str | None:
@@ -43,31 +31,20 @@ def _target_vehicle_mode(cat_name: str, group_name: str | None, schema: dict) ->
     """
     Целевой (vehicle_mode, show_compatibility) для апгрейда уже мигрированных категорий.
     None — не менять.
+
+    Правило: все подкатегории, кроме группы «Жидкости», получают полный пикер марок/моделей.
     """
     show = bool(schema.get("show_compatibility"))
     vm = str(schema.get("vehicle_mode") or "").strip()
 
-    if cat_name in FORCE_COMPATIBILITY_NAMES:
-        if vm != "compatibility" or not show:
-            return "compatibility", True
-        return None
-
-    name_cf = cat_name.casefold()
-    if cat_name in COMPATIBILITY_CATEGORY_NAMES or "трос" in name_cf or "тяга" in name_cf:
-        if vm != "compatibility" or not show:
-            return "compatibility", True
-        return None
-
-    if show and vm != "compatibility":
-        return "compatibility", True
-
-    if group_name == "Жидкости":
-        if vm != "none":
+    if group_name in LIQUID_GROUP_NAMES:
+        if vm != "none" or show:
             return "none", False
         return None
 
-    if group_name in AUTO_PART_GROUP_NAMES and vm == "none" and not show:
-        return "brand_model", False
+    # Любая запчасть (в т.ч. пользовательские группы вроде «Кузовные запчасти и Оптика»)
+    if vm != "compatibility" or not show:
+        return "compatibility", True
 
     return None
 

@@ -174,9 +174,20 @@ export default function IntakeLineModal({
     return { ...raw, ...profile, show_compatibility: profile.vehicle_mode === 'compatibility' };
   }, [categoryTree, form.category_id]);
 
+  const selectedCategoryGroup = useMemo(() => {
+    if (form.category_group_id) {
+      return categoryTree.find((g) => g.id === form.category_group_id) || null;
+    }
+    if (form.category_id) {
+      return categoryTree.find((g) => (g.children || []).some((c) => c.id === form.category_id)) || null;
+    }
+    return null;
+  }, [categoryTree, form.category_group_id, form.category_id]);
+
   const vehicleMode = selectedSubcategorySchema?.vehicle_mode || 'none';
-  const showCompatibilityBlock = vehicleMode === 'compatibility';
-  const showBrandModelBlock = vehicleMode === 'brand_model';
+  const liquidsGroup = /жидкост/i.test(selectedCategoryGroup?.name || '');
+  const showCompatibilityBlock = !liquidsGroup || vehicleMode !== 'none';
+  const showBrandModelBlock = false;
 
   const { data: vehicleBrands = [] } = useQuery({
     queryKey: ['compatibility', 'vehicle-brands'],
@@ -830,6 +841,8 @@ export default function IntakeLineModal({
                 formData={intakeFormData}
                 onFormDataChange={setIntakeFormData}
                 disabled={readonly}
+                categoryGroupName={selectedCategoryGroup?.name || ''}
+                categoryName={findCategoryInTree(categoryTree, form.category_id)?.name || form.category || ''}
                 compatibilitySlot={compatibilityPickerSlot}
               />
             </IntakeFormCard>
