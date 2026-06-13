@@ -35,7 +35,6 @@ export default function DebtCustomerPickModal({ isOpen, onClose, onSelect }) {
 
   useEffect(() => {
     if (isOpen) load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, search]);
 
   const createAndSelect = async () => {

@@ -14,15 +14,16 @@ function ProductAttrField({ label, children, prominent = false, className = '', 
   );
 }
 
-function ChipField({ field, value, onChange, disabled }) {
+function ChipField({ field, value, onChange, disabled, largeTouch = false }) {
   const opts = Array.isArray(field.options)
     ? field.options
     : String(field.options || '').split(',').map((s) => s.trim()).filter(Boolean);
   if (!opts.length) {
     return <p className="product-form-field-hint">Добавьте варианты в настройках категории</p>;
   }
+  const twoCol = largeTouch && opts.length === 2;
   return (
-    <div className="product-attr-chips">
+    <div className={`product-attr-chips${largeTouch ? ' product-attr-chips--large-touch' : ''}${twoCol ? ' product-attr-chips--pair' : ''}`}>
       {opts.map((opt) => (
         <button
           key={opt}
@@ -38,10 +39,10 @@ function ChipField({ field, value, onChange, disabled }) {
   );
 }
 
-function AttributeField({ fieldDef, value, onChange, disabled, placeholder }) {
+function AttributeField({ fieldDef, value, onChange, disabled, placeholder, largeTouch = false }) {
   const type = fieldDef?.type || 'text';
   if (type === 'chip') {
-    return <ChipField field={fieldDef} value={value} onChange={onChange} disabled={disabled} />;
+    return <ChipField field={fieldDef} value={value} onChange={onChange} disabled={disabled} largeTouch={largeTouch} />;
   }
   if (type === 'select') {
     const opts = fieldDef.options || [];
@@ -122,7 +123,7 @@ export default function ProductFormByLayout({
 
   const renderFieldControl = (row) => {
     if (row.kind === 'builtin' && row.key === 'name') {
-      const canGenerate = (schema?.fields || []).some((f) => f.use_in_name) && categoryName;
+      const canGenerate = Boolean(categoryName);
       const handleGenerate = () => {
         const generated = generateProductName(
           categoryName,
@@ -136,28 +137,35 @@ export default function ProductFormByLayout({
         }
       };
       return (
-        <div className="product-name-field-wrap">
-          <input
-            className="product-attr-field__input"
-            value={formData.name || ''}
-            disabled={disabled}
-            placeholder={row.placeholder || 'Название товара'}
-            autoComplete="off"
-            onChange={(e) => {
-              nameTouchedRef.current = true;
-              const val = e.target.value;
-              applyChange((prev) => ({ ...prev, name: val }));
-            }}
-          />
+        <div className="product-name-field-block">
+          <div className="product-name-field-wrap">
+            <input
+              className="product-attr-field__input"
+              value={formData.name || ''}
+              disabled={disabled}
+              placeholder={row.placeholder || 'Название товара'}
+              autoComplete="off"
+              onChange={(e) => {
+                nameTouchedRef.current = true;
+                const val = e.target.value;
+                applyChange((prev) => ({ ...prev, name: val }));
+              }}
+            />
+            {canGenerate && !disabled && (
+              <button
+                type="button"
+                className="product-name-generate-btn product-name-generate-btn--prominent"
+                title="Сгенерировать название из категории и атрибутов"
+                onClick={handleGenerate}
+              >
+                ✨ Авто-название
+              </button>
+            )}
+          </div>
           {canGenerate && !disabled && (
-            <button
-              type="button"
-              className="product-name-generate-btn"
-              title="Сгенерировать название из категории и атрибутов"
-              onClick={handleGenerate}
-            >
-              ✨ Авто
-            </button>
+            <p className="product-name-auto-hint">
+              Заполните характеристики (тип, сторона…) → нажмите «Авто-название»
+            </p>
           )}
         </div>
       );
@@ -193,6 +201,7 @@ export default function ProductFormByLayout({
           value={(formData.attributes || {})[row.key]}
           onChange={(v) => setAttr(row.key, v)}
           disabled={disabled}
+          largeTouch
           placeholder={row.placeholder || layoutRowLabel(row, schema)}
         />
       );

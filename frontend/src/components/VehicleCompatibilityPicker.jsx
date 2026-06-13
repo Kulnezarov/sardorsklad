@@ -1,5 +1,6 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { FiMinus, FiPlus } from 'react-icons/fi';
+import { getRecentBrandIds, getSuggestedBrandIds, rememberCompatBrand } from '../utils/recentCompatBrands';
 
 function idsKey(ids) {
   return (ids || []).slice().sort((a, b) => a - b).join(',');
@@ -78,6 +79,7 @@ export default function VehicleCompatibilityPicker({
 }) {
   const userEditedRef = useRef(false);
   const hydratedRef = useRef(false);
+  const [brandSearch, setBrandSearch] = useState('');
   const [rows, setRows] = useState(() => selectedIdsToRows(initialSelectedIds, models));
 
   const modelsByBrand = useMemo(() => {
@@ -149,6 +151,7 @@ export default function VehicleCompatibilityPicker({
 
   const onBrandChange = (rowIdx, brandId) => {
     const parsed = brandId ? Number(brandId) : null;
+    if (parsed) rememberCompatBrand(parsed);
     patchRows((prev) => {
       const next = prev.map((row, i) => {
         if (i !== rowIdx) return row;
@@ -171,6 +174,25 @@ export default function VehicleCompatibilityPicker({
   const totalModels = rowsToSelectedIds(rows).length;
   const brandCount = new Set(rows.filter((r) => (r.modelIds || []).length).map((r) => r.brandId)).size;
 
+  const recentBrandIds = useMemo(() => getRecentBrandIds(brands), [brands]);
+  const suggestedBrandIds = useMemo(
+    () => getSuggestedBrandIds(brands, recentBrandIds),
+    [brands, recentBrandIds],
+  );
+
+  const filteredBrands = useMemo(() => {
+    const q = brandSearch.trim().toLowerCase();
+    if (!q) return brands || [];
+    return (brands || []).filter((b) => String(b.name || '').toLowerCase().includes(q));
+  }, [brands, brandSearch]);
+
+  const pickSuggestedBrand = (brandId) => {
+    const idx = rows.findIndex((r) => !r.brandId);
+    const rowIdx = idx >= 0 ? idx : 0;
+    rememberCompatBrand(brandId);
+    onBrandChange(rowIdx, String(brandId));
+  };
+
   return (
     <div className="vehicle-compat-picker vehicle-compat-picker--rows">
       <div className="vehicle-compat-picker__head">
@@ -185,6 +207,39 @@ export default function VehicleCompatibilityPicker({
           )}
         </span>
       </div>
+
+      {(brands || []).length >= 5 && (
+        <input
+          type="search"
+          className="ios-input vehicle-compat-brand-search"
+          placeholder="Поиск марки…"
+          value={brandSearch}
+          disabled={disabled}
+          onChange={(e) => setBrandSearch(e.target.value)}
+        />
+      )}
+
+      {suggestedBrandIds.length > 0 && !disabled && (
+        <div className="vehicle-compat-quick-brands">
+          <span className="vehicle-compat-quick-brands__label">Быстрый выбор:</span>
+          <div className="vehicle-compat-quick-brands__list">
+            {suggestedBrandIds.map((bid) => {
+              const b = (brands || []).find((x) => x.id === bid);
+              if (!b) return null;
+              return (
+                <button
+                  key={bid}
+                  type="button"
+                  className="catalog-chip vehicle-compat-quick-brand"
+                  onClick={() => pickSuggestedBrand(bid)}
+                >
+                  {b.name}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       <div className="vehicle-compat-rows">
         {rows.map((row, idx) => {
@@ -213,7 +268,7 @@ export default function VehicleCompatibilityPicker({
                     onChange={(e) => onBrandChange(idx, e.target.value)}
                   >
                     <option value="">Выберите марку</option>
-                    {(brands || []).map((b) => (
+                    {filteredBrands.map((b) => (
                       <option key={b.id} value={b.id}>{b.name}</option>
                     ))}
                   </select>

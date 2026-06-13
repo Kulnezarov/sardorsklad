@@ -57,6 +57,50 @@ function pluralFields(n) {
   return 'полей';
 }
 
+function findSimilarSubcategories(name, tree, excludeId = null) {
+  const n = String(name || '').trim().toLowerCase();
+  if (!n) return [];
+  const out = [];
+  (tree || []).forEach((g) => {
+    (g.children || []).forEach((c) => {
+      if (excludeId && c.id === excludeId) return;
+      const cn = String(c.name || '').trim().toLowerCase();
+      if (!cn) return;
+      if (cn === n || cn.includes(n) || n.includes(cn)) {
+        out.push(`${g.name} → ${c.name}`);
+      }
+    });
+  });
+  return [...new Set(out)];
+}
+
+function CategoryTemplatePreview({ form }) {
+  const vm = form?.vehicle_mode || 'none';
+  const autoLabel = vm === 'compatibility'
+    ? 'Пикер марок и моделей'
+    : vm === 'brand_model'
+      ? 'Поля марка / модель'
+      : 'Без привязки к авто';
+  const fields = (form?.fields || []).filter((f) => f?.label?.trim());
+  return (
+    <div className="settings-category-template-preview">
+      <div className="settings-category-template-preview__title">Превью формы кладовщика</div>
+      <ul className="settings-category-template-preview__list">
+        <li>Название товара</li>
+        <li>{autoLabel}</li>
+        {fields.map((f, i) => (
+          <li key={f.key || i}>
+            {f.label}
+            {f.required ? ' *' : ''}
+            {f.type === 'chip' && f.options ? ` (${String(f.options).split(',').slice(0, 3).join(', ')}…)` : ''}
+          </li>
+        ))}
+        <li>Артикул, цены, количество</li>
+      </ul>
+    </div>
+  );
+}
+
 export default function SettingsCategoriesSection() {
   const qc = useQueryClient();
   const [drillGroupId, setDrillGroupId] = useState(null);
@@ -238,9 +282,9 @@ export default function SettingsCategoriesSection() {
         <span className="settings-profile-row__label">Авто</span>
         <div className="settings-profile-chips">
           {[
-            { value: 'none', label: 'Нет', sub: 'без авто-полей' },
+            { value: 'none', label: 'Без привязки к авто', sub: 'масла, жидкости' },
             { value: 'brand_model', label: 'Марка + модель', sub: 'текстовый ввод' },
-            { value: 'compatibility', label: 'Совместимость', sub: 'полный пикер авто' },
+            { value: 'compatibility', label: 'Нужны марки авто', sub: 'полный пикер совместимости' },
           ].map((opt) => (
             <button
               key={opt.value}
@@ -260,7 +304,6 @@ export default function SettingsCategoriesSection() {
       </div>
 
       <div className="settings-field-editor__title" style={{ marginTop: 16 }}>Поля характеристик</div>
-      <div className="settings-field-editor__title">Поля характеристик</div>
       {(form.fields || []).map((field, idx) => (
         <div key={idx} className="settings-field-editor__card">
           <div className="settings-field-editor__card-head">
@@ -364,6 +407,7 @@ export default function SettingsCategoriesSection() {
         </div>
       ))}
       <button type="button" className="settings-editor-btn settings-editor-btn--ghost" onClick={() => setForm({ ...form, fields: [...(form.fields || []), emptyField()] })}>+ Добавить поле</button>
+      <CategoryTemplatePreview form={form} />
     </div>
   );
 
@@ -389,6 +433,11 @@ export default function SettingsCategoriesSection() {
               <input className="settings-ios-add__icon" value={subForm.icon} onChange={(e) => setSubForm({ ...subForm, icon: e.target.value })} maxLength={4} aria-label="Иконка" />
               <input className="settings-ios-add__input" placeholder="Название подкатегории" value={subForm.name} onChange={(e) => setSubForm({ ...subForm, name: e.target.value })} />
             </div>
+            {findSimilarSubcategories(subForm.name, groups).length > 0 && (
+              <div className="settings-duplicate-warn">
+                Похожая категория уже есть: {findSimilarSubcategories(subForm.name, groups).join('; ')}
+              </div>
+            )}
             {renderFieldEditor(subForm, setSubForm)}
           </div>
           <div className="settings-editor-panel__actions">
@@ -418,6 +467,11 @@ export default function SettingsCategoriesSection() {
               <input type="checkbox" checked={editTarget.is_active !== false} onChange={(e) => setEditTarget({ ...editTarget, is_active: e.target.checked })} />
               Активна (видна в формах)
             </label>
+            {editTarget.type === 'sub' && findSimilarSubcategories(editTarget.name, groups, editTarget.id).length > 0 && (
+              <div className="settings-duplicate-warn">
+                Похожая категория уже есть: {findSimilarSubcategories(editTarget.name, groups, editTarget.id).join('; ')}
+              </div>
+            )}
             {editTarget.type === 'sub' && renderFieldEditor(editTarget, setEditTarget)}
           </div>
           <div className="settings-editor-panel__actions">

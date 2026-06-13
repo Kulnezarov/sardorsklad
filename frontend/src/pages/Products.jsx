@@ -15,8 +15,12 @@ import ProductStockFormSection from '../components/ProductStockFormSection';
 import { priceLayoutRows, resolveCategoryProfile } from '../utils/formLayoutUtils';
 import ProductFormSection, { ProductFormTemplateBadge } from '../components/ProductFormSection';
 import VehicleCompatibilityPicker from '../components/VehicleCompatibilityPicker';
+import ProductFormProgress from '../components/ProductFormProgress';
+import ProductStorefrontPreview from '../components/ProductStorefrontPreview';
 import { formatAttributePreview } from '../components/CategoryAttributeFields';
 import { compatibilityLabelsFromProduct, syncPrimaryVehicleFromSelection } from '../utils/productDisplayUtils';
+import { buildProductFormProgress } from '../utils/productFormProgress';
+import { buildStorefrontPreview, formatCompatibilityTableCell } from '../utils/storefrontPreview';
 import { importExcelStream } from '../api/importExcelStream';
 import { settingsApi } from '../api/settings';
 import { generateEAN13 } from '../utils/barcodeGen';
@@ -243,6 +247,7 @@ const Products = () => {
   const [selectedCategory, setSelectedCategory] = useState('');
   const [selectedCategoryId, setSelectedCategoryId] = useState(null);
   const [legacyOnlyFilter, setLegacyOnlyFilter] = useState(false);
+  const [needsRefreshFilter, setNeedsRefreshFilter] = useState(false);
   const [showStale, setShowStale] = useState(false);
   /** '' = все, 'on' = на витрине, 'off' = скрыто с сайта */
   const [storefrontFilter, setStorefrontFilter] = useState('');
@@ -317,6 +322,7 @@ const Products = () => {
   const importFileRef = useRef(null);
   const barcodeCanvasRef = useRef(null);
   const formRef = useRef(formData);
+  const undoSnapshotRef = useRef(null);
   const productsRef = useRef([]);
   const scanBufRef = useRef('');
   const scanLastRef = useRef(0);
@@ -516,11 +522,28 @@ const Products = () => {
     });
   }, [vehicleModels]);
 
-  const compatibilityPickerSlot = useMemo(() => {
+  const showCompatibilityPicker = useMemo(() => {
     const vm = selectedSubcategorySchema?.vehicle_mode;
     const liquidsGroup = /жидкост/i.test(selectedCategoryGroup?.name || '');
-    const showPicker = !liquidsGroup || vm !== 'none';
-    if (!showPicker) return null;
+    return !liquidsGroup || vm !== 'none';
+  }, [selectedCategoryGroup?.name, selectedSubcategorySchema?.vehicle_mode]);
+
+  const formProgress = useMemo(() => buildProductFormProgress({
+    formData,
+    schema: selectedSubcategorySchema,
+    showCompatibility: showCompatibilityPicker,
+  }), [formData, selectedSubcategorySchema, showCompatibilityPicker]);
+
+  const storefrontPreview = useMemo(() => buildStorefrontPreview({
+    formData,
+    schema: selectedSubcategorySchema,
+    categoryName: selectedSubcategory?.name || formData.category || '',
+    vehicleModels,
+    compatibilityIds: formData.compatibility_vehicle_model_ids,
+  }), [formData, selectedSubcategorySchema, selectedSubcategory?.name, vehicleModels]);
+
+  const compatibilityPickerSlot = useMemo(() => {
+    if (!showCompatibilityPicker) return null;
     return (
       <VehicleCompatibilityPicker
         key={`compat-${compatPickerKey}`}
@@ -531,10 +554,9 @@ const Products = () => {
       />
     );
   }, [
+    showCompatibilityPicker,
     compatPickerKey,
     compatInitialIds,
-    selectedCategoryGroup?.name,
-    selectedSubcategorySchema?.vehicle_mode,
     vehicleBrands,
     vehicleModels,
     handleCompatibilityChange,
@@ -712,9 +734,17 @@ const Products = () => {
   const sidePanelProduct = sideProductDetail || sideProduct;
 
   const displayProducts = useMemo(() => {
-    if (showStale) return products.filter(isStale);
-    return products;
-  }, [products, showStale]);
+    let list = showStale ? products.filter(isStale) : products;
+    if (needsRefreshFilter) {
+      list = list.filter((p) => p.needs_category_refresh || p.is_legacy_category);
+    }
+    return list;
+  }, [products, showStale, needsRefreshFilter]);
+
+  const needsRefreshCount = useMemo(
+    () => products.filter((p) => p.needs_category_refresh || p.is_legacy_category).length,
+    [products],
+  );
 
   const storefrontOnCount = useMemo(
     () => products.filter((p) => p.show_on_storefront !== false).length,
@@ -804,7 +834,51 @@ const Products = () => {
     },
     onSuccess: (res, vars) => {
       const wasEdit = Boolean(vars?.id) && !vars?._forceCreate;
-      toast.success(wasEdit ? '✓ Товар обновлён' : '✓ Товар создан');
+      const undoPayload = undoSnapshotRef.current;
+      undoSnapshotRef.current = null;
+
+      const showUndoToast = () => {
+        if (!wasEdit || !undoPayload || !vars?.id) {
+          toast.success(wasEdit ? '✓ Товар обновлён' : '✓ Товар создан');
+          return;
+        }
+        toast(
+          (t) => (
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+              ✓ Товар обновлён
+              <button
+                type="button"
+                onClick={async () => {
+                  toast.dismiss(t.id);
+                  try {
+                    const body = { ...undoPayload };
+                    delete body.id;
+                    await productApi.update(vars.id, body);
+                    queryClient.invalidateQueries({ queryKey: ['products'] });
+                    toast.success('Изменение отменено');
+                  } catch (err) {
+                    toast.error(getApiErrorMessage(err, 'Не удалось отменить'));
+                  }
+                }}
+                style={{
+                  background: 'var(--surface)',
+                  border: '1px solid var(--border)',
+                  borderRadius: 8,
+                  padding: '4px 10px',
+                  fontWeight: 700,
+                  fontSize: 12,
+                  cursor: 'pointer',
+                }}
+              >
+                Отменить
+              </button>
+            </span>
+          ),
+          { duration: 8000 },
+        );
+      };
+
+      showUndoToast();
       queryClient.invalidateQueries({ queryKey: ['products'] });
       queryClient.invalidateQueries({ queryKey: ['categories'] });
       const openAfter = skuOpenAfterSaveRef.current;
@@ -840,7 +914,21 @@ const Products = () => {
         toast.success('Товар сохранён — добавьте следующий');
         return;
       }
+      if (saveAndStay && wasEdit) {
+        setSaveAndStay(false);
+        if (res?.data) {
+          setFormData((prev) => ({
+            ...prev,
+            ...res.data,
+            cny_price: res.data.cny_price != null ? String(res.data.cny_price) : prev.cny_price,
+            delivery_cost_kzt: res.data.delivery_cost_kzt != null ? String(res.data.delivery_cost_kzt) : prev.delivery_cost_kzt,
+            delivery_weight_kg: res.data.delivery_weight_kg != null ? String(res.data.delivery_weight_kg) : prev.delivery_weight_kg,
+          }));
+        }
+        return;
+      }
       setSaveAndAddMore(false);
+      setSaveAndStay(false);
       resetForm();
     },
     onError: async (err, vars) => {
@@ -1194,7 +1282,7 @@ const Products = () => {
       wKg = kg != null ? String(kg) : '';
     }
     const galleryUrls = normalizeProductGallery(p);
-    setFormData({
+    const editForm = {
       ...emptyForm(),
       ...p,
       sku: p.sku || '',
@@ -1213,7 +1301,9 @@ const Products = () => {
       category_id: p.category_id || null,
       category_group_id: findGroupIdForCategory(categoryTree, p.category_id),
       attributes: p.attributes && typeof p.attributes === 'object' ? { ...p.attributes } : {},
-    });
+    };
+    setFormData(editForm);
+    undoSnapshotRef.current = buildPayload(editForm, cnyRate);
     setGalleryFocusIdx(0);
     setImageBlobUrl((prev) => {
       if (prev) URL.revokeObjectURL(prev);
@@ -1296,9 +1386,17 @@ const Products = () => {
 
   /** «Сохранить и ещё» — сохраняем, затем открываем форму с теми же категорией/ценами */
   const [saveAndAddMore, setSaveAndAddMore] = useState(false);
+  const [saveAndStay, setSaveAndStay] = useState(false);
 
   const handleSubmitAndMore = () => {
     setSaveAndAddMore(true);
+    setSaveAndStay(false);
+    handleSubmit();
+  };
+
+  const handleSubmitAndStay = () => {
+    setSaveAndStay(true);
+    setSaveAndAddMore(false);
     handleSubmit();
   };
 
@@ -1809,9 +1907,25 @@ const Products = () => {
         </div>
         <div className="catalog-chips-scroll">
           <button type="button" className={`catalog-chip ${selectedCategory === '' && !selectedCategoryId && !legacyOnlyFilter && !showStale && !storefrontFilter ? 'catalog-chip-active' : ''}`} onClick={() => { setSelectedCategory(''); setSelectedCategoryId(null); setLegacyOnlyFilter(false); setShowStale(false); setStorefrontFilter(''); }}>Все</button>
-          <button type="button" className={`catalog-chip ${legacyOnlyFilter ? 'catalog-chip-active' : ''}`} onClick={() => { setLegacyOnlyFilter((v) => !v); setSelectedCategory(''); setSelectedCategoryId(null); setShowStale(false); setStorefrontFilter(''); }}>
+          <button type="button" className={`catalog-chip ${legacyOnlyFilter ? 'catalog-chip-active' : ''}`} onClick={() => { setLegacyOnlyFilter((v) => !v); setNeedsRefreshFilter(false); setSelectedCategory(''); setSelectedCategoryId(null); setShowStale(false); setStorefrontFilter(''); }}>
             Не обновлённые
           </button>
+          {needsRefreshCount > 0 && (
+            <button
+              type="button"
+              className={`catalog-chip${needsRefreshFilter ? ' catalog-chip-active' : ''}`}
+              onClick={() => {
+                setNeedsRefreshFilter((v) => !v);
+                setLegacyOnlyFilter(false);
+                setSelectedCategory('');
+                setSelectedCategoryId(null);
+                setShowStale(false);
+                setStorefrontFilter('');
+              }}
+            >
+              Ждут категорию ({needsRefreshCount})
+            </button>
+          )}
           {(categoryTree || []).flatMap((g) => (g.children || []).map((c) => (
             <button key={c.id} type="button" className={`catalog-chip ${selectedCategoryId === c.id && !legacyOnlyFilter ? 'catalog-chip-active' : ''}`} onClick={() => { setSelectedCategoryId(c.id); setSelectedCategory(''); setLegacyOnlyFilter(false); setShowStale(false); setStorefrontFilter(''); }}>
               {c.icon ? `${c.icon} ` : ''}{c.name}
@@ -1856,7 +1970,7 @@ const Products = () => {
           <table className="products-catalog-table">
             <thead className="products-catalog-thead">
               <tr>
-                {['✓', 'Штрих-код', 'Название', 'Марка', 'Модель', 'Категория', 'Закуп', 'Продажа', 'Прибыль', 'Место', 'Остаток', 'Сайт', ''].map((h) => (
+                {['✓', 'Штрих-код', 'Название', 'Марка', 'Совместимость', 'Категория', 'Закуп', 'Продажа', 'Прибыль', 'Место', 'Остаток', 'Сайт', ''].map((h) => (
                   <th key={h}>{h}</th>
                 ))}
               </tr>
@@ -1898,31 +2012,30 @@ const Products = () => {
                     </td>
                     <td style={{ padding: '12px 14px', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>{row.brand || <span style={{ color: 'var(--text-muted)' }}>—</span>}</td>
                     <td style={{ padding: '12px 14px', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
-                      {row.model || Number(row.compatibility_extra_count) > 0 ? (
-                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, maxWidth: 160 }}>
-                          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{row.model || '—'}</span>
-                          {Number(row.compatibility_extra_count) > 0 && (
-                            <span
-                              title={`Ещё ${row.compatibility_extra_count} — откройте карточку для полного списка`}
-                              style={{
+                      {(() => {
+                        const cell = formatCompatibilityTableCell(row);
+                        if (!cell) return <span style={{ color: 'var(--text-muted)' }}>—</span>;
+                        return (
+                          <span className="products-compat-cell" title={cell.extra > 0 ? `Ещё ${cell.extra} совместимостей` : cell.primary}>
+                            <span aria-hidden>🚗</span>
+                            <span className="products-compat-cell__text">{cell.primary}</span>
+                            {cell.extra > 0 && (
+                              <span style={{
                                 flexShrink: 0,
-                                display: 'inline-flex',
                                 borderRadius: 999,
                                 padding: '1px 7px',
                                 fontSize: 10,
                                 fontWeight: 700,
                                 background: 'var(--primary-light)',
                                 color: 'var(--primary)',
-                                border: '1px solid color-mix(in srgb, var(--primary) 25%, var(--border))',
                               }}
-                            >
-                              +{row.compatibility_extra_count}
-                            </span>
-                          )}
-                        </span>
-                      ) : (
-                        <span style={{ color: 'var(--text-muted)' }}>—</span>
-                      )}
+                              >
+                                +{cell.extra}
+                              </span>
+                            )}
+                          </span>
+                        );
+                      })()}
                     </td>
                     <td style={{ padding: '12px 14px' }}>
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'flex-start' }}>
@@ -2157,7 +2270,20 @@ const Products = () => {
                 <button type="button" onClick={() => handleMigrateProduct(sidePanelProduct)} style={{ flex: '1 1 100%', padding: '12px', borderRadius: 14, border: '1px solid rgba(245,158,11,0.35)', background: 'rgba(245,158,11,0.1)', color: '#b45309', fontWeight: 700, fontSize: 14, cursor: 'pointer' }}>Обновить категорию</button>
               )}
               <button type="button" onClick={() => handleEdit(sidePanelProduct)} style={{ flex: 1, padding: '13px', borderRadius: 14, border: 'none', background: 'linear-gradient(135deg, #6366f1, #7c3aed)', color: '#fff', fontWeight: 700, fontSize: 14, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}><FiEdit2 size={16} />Редактировать</button>
-              <button type="button" onClick={() => openPrintForRow(sidePanelProduct)} style={{ padding: '13px 16px', borderRadius: 14, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-secondary)', fontWeight: 600, fontSize: 14, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8 }}><FiTag size={16} /></button>
+              <button
+                type="button"
+                title={sidePanelProduct.show_on_storefront !== false ? 'Скрыть с витрины' : 'Показать на витрине'}
+                disabled={toggleStorefrontMutation.isPending}
+                onClick={() => toggleStorefrontMutation.mutate({
+                  id: sidePanelProduct.id,
+                  value: sidePanelProduct.show_on_storefront === false,
+                })}
+                style={{ flex: 1, minWidth: 120, padding: '13px', borderRadius: 14, border: sidePanelProduct.show_on_storefront !== false ? '1px solid rgba(16,185,129,0.35)' : '1px solid var(--border)', background: sidePanelProduct.show_on_storefront !== false ? 'rgba(16,185,129,0.1)' : 'var(--surface)', color: sidePanelProduct.show_on_storefront !== false ? 'var(--success)' : 'var(--text-secondary)', fontWeight: 700, fontSize: 13, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}
+              >
+                <FiGlobe size={16} />
+                {sidePanelProduct.show_on_storefront !== false ? 'На сайте' : 'На сайт'}
+              </button>
+              <button type="button" onClick={() => openPrintForRow(sidePanelProduct)} title="Печать этикетки" style={{ padding: '13px 16px', borderRadius: 14, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-secondary)', fontWeight: 600, fontSize: 14, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8 }}><FiTag size={16} />Этикетка</button>
               <button type="button" onClick={(e) => openDeleteConfirm(sidePanelProduct, e)} style={{ padding: '13px 16px', borderRadius: 14, border: '1px solid #fecaca', background: '#fee2e2', color: 'var(--danger)', fontWeight: 600, fontSize: 14, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8 }}><FiTrash2 size={16} /></button>
             </div>
           </div>
@@ -2267,6 +2393,17 @@ const Products = () => {
             {showFillStep && (formData.id || formData.name || formData.barcode) && (
               <Button variant="secondary" onClick={handleCreateCopy}>Копия</Button>
             )}
+            {showFillStep && formData.id && (
+              <Button
+                variant="secondary"
+                onClick={handleSubmitAndStay}
+                loading={saveAndStay && (saveMutation.isPending || isSubmitting)}
+                disabled={isSubmitting}
+                title="Сохранить и остаться в форме"
+              >
+                Сохранить и остаться
+              </Button>
+            )}
             {showFillStep && !formData.id && (
               <Button
                 variant="secondary"
@@ -2351,9 +2488,13 @@ const Products = () => {
               )}
             </div>
           </div>
-        )}
+          )}
 
-        {showFillStep && (
+          {showFillStep && <ProductFormProgress progress={formProgress} />}
+
+          {showFillStep && (
+          <div className="product-form-main-grid">
+          <div className="product-form-main-grid__form">
         <form className="ios-form-stack product-form-flow product-form-modal" onSubmit={handleSubmit}>
           {!isEditingProduct && (
             <div className="product-wizard-steps product-wizard-steps--compact" aria-label="Шаги">
@@ -2573,6 +2714,11 @@ const Products = () => {
             num={num}
           />
         </form>
+          </div>
+          <div className="product-form-main-grid__aside">
+            <ProductStorefrontPreview preview={storefrontPreview} />
+          </div>
+          </div>
         )}
       </Modal>
 
