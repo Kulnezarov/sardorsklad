@@ -2,6 +2,7 @@ import React, { useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 import LabelPrint from '../components/LabelPrint';
+import { readStoredLabelLayout } from '../utils/labelPrintUtils';
 import SkuConflictModal from '../components/SkuConflictModal';
 import { productsApi } from '../api/products';
 import { resolveUploadedAssetUrl, getApiErrorMessage } from '../api/client';
@@ -75,7 +76,6 @@ const Warehouse = () => {
   const [showEditor, setShowEditor] = useState(false);
   const [showPrint, setShowPrint] = useState(false);
   const [barcodeLocked, setBarcodeLocked] = useState(true);
-  const [printType, setPrintType] = useState('barcode');
   const [formData, setFormData] = useState(emptyForm);
   const [imageUploading, setImageUploading] = useState(false);
   const [imageUploadPct, setImageUploadPct] = useState(null);
@@ -507,17 +507,6 @@ const Warehouse = () => {
               <span className="detail-label">ID товара</span>
               <strong>{formData.id || 'Будет присвоен автоматически'}</strong>
             </div>
-            <div className="detail-block">
-              <span className="detail-label">Формат печати</span>
-              <select
-                className="form-select"
-                value={printType}
-                onChange={(event) => setPrintType(event.target.value)}
-              >
-                <option value="barcode">Штрих-код</option>
-                <option value="qrcode">QR-код</option>
-              </select>
-            </div>
           </div>
 
           <div className="form-grid-two">
@@ -802,9 +791,8 @@ const Warehouse = () => {
         isOpen={showPrint}
         onClose={() => setShowPrint(false)}
         product={formData.id ? formData : null}
-        settings={settings}
-        initialLabelType={printType}
-        labelSize={settings?.label_size || 'small'}
+        initialLabelLayout={readStoredLabelLayout()}
+        labelSize="medium"
       />
       <CameraBarcodeScanner
         isOpen={showCameraScanner}

@@ -14,12 +14,17 @@ import SettingsVehicleBrandsSection from '../components/SettingsVehicleBrandsSec
 import SettingsCategoriesSection from '../components/SettingsCategoriesSection';
 import { useAuth } from '../auth/AuthContext';
 import { fetchCnyRate } from '../utils/cnyAutoRate';
+import {
+  LABEL_LAYOUT_OPTIONS,
+  readStoredLabelLayout,
+  storeLabelLayout,
+} from '../utils/labelPrintUtils';
 
 const defaultSettings = {
   store_name: 'SkladPro',
   scan_auto_increment: true,
   history_auto_clean_days: 30,
-  label_size: 'small',
+  label_size: 'medium',
   dark_mode: false,
   cny_rate: 65,
   low_stock_threshold: 5,
@@ -103,7 +108,7 @@ const Settings = () => {
   const { user, logout } = useAuth();
   const qc = useQueryClient();
   const [form, setForm] = useState(defaultSettings);
-  const [labelType, setLabelType] = useState(() => localStorage.getItem('label_type') || 'barcode');
+  const [labelLayout, setLabelLayout] = useState(readStoredLabelLayout);
   const [rateLoading, setRateLoading] = useState(false);
   const [showClearHistoryConfirm, setShowClearHistoryConfirm] = useState(false);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
@@ -138,7 +143,7 @@ const Settings = () => {
     store_name: f.store_name,
     scan_auto_increment: true,
     history_auto_clean_days: f.history_auto_clean_days,
-    label_size: f.label_size,
+    label_size: 'medium',
     dark_mode: f.dark_mode,
     cny_rate: Number(f.cny_rate) || 0,
     low_stock_threshold: Math.max(1, parseInt(f.low_stock_threshold, 10) || 1),
@@ -208,10 +213,9 @@ const Settings = () => {
     onError: (e) => toast.error(getApiErrorMessage(e, 'Ошибка')),
   });
 
-  /* ── Label type ── */
-  const handleLabelType = (t) => {
-    setLabelType(t);
-    localStorage.setItem('label_type', t);
+  const handleLabelLayout = (mode) => {
+    setLabelLayout(mode);
+    storeLabelLayout(mode);
     toast.success('Сохранено ✓', { duration: 1500 });
   };
 
@@ -366,27 +370,19 @@ const Settings = () => {
           </div>
           <div className="settings-section-body">
             <div className="ios-settings-block">
-              <div className="ios-settings-block__label">Размер этикетки</div>
-              <Pills
-                options={[
-                  { value: 'small', label: 'Маленький' },
-                  { value: 'medium', label: 'Средний' },
-                  { value: 'large', label: 'Большой' },
-                ]}
-                value={form.label_size}
-                onChange={(v) => handleChange('label_size', v)}
-              />
+              <div className="ios-settings-block__label">Бумага Xprinter</div>
+              <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 10 }}>
+                Фиксированный размер <strong>6×4 см</strong> (60×40 мм)
+              </div>
+              <input type="hidden" value={form.label_size || 'medium'} readOnly />
             </div>
 
             <div className="ios-settings-block">
-              <div className="ios-settings-block__label">Тип по умолчанию</div>
+              <div className="ios-settings-block__label">Состав этикетки по умолчанию</div>
               <Pills
-                options={[
-                  { value: 'barcode', label: 'Штрих-код' },
-                  { value: 'qr', label: 'QR-код' },
-                ]}
-                value={labelType}
-                onChange={handleLabelType}
+                options={LABEL_LAYOUT_OPTIONS}
+                value={labelLayout}
+                onChange={handleLabelLayout}
               />
             </div>
           </div>

@@ -500,7 +500,7 @@ function IntakeDetail() {
 
   const cnyRate = num(settingsRow?.cny_rate) || 65;
   const deliveryPerKg = num(settingsRow?.delivery_kzt_per_kg) || 800;
-  const labelSize = settingsRow?.label_size || 'small';
+  const labelSize = 'medium';
 
   const { data: invoices = [], isLoading } = useQuery({
     queryKey: ['intake-invoices'],

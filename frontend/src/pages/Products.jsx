@@ -21,6 +21,7 @@ import { formatAttributePreview } from '../components/CategoryAttributeFields';
 import { compatibilityLabelsFromProduct, syncPrimaryVehicleFromSelection } from '../utils/productDisplayUtils';
 import { buildProductFormProgress } from '../utils/productFormProgress';
 import { buildStorefrontPreview, formatCompatibilityTableCell } from '../utils/storefrontPreview';
+import { readStoredLabelLayout } from '../utils/labelPrintUtils';
 import { importExcelStream } from '../api/importExcelStream';
 import { settingsApi } from '../api/settings';
 import { generateEAN13 } from '../utils/barcodeGen';
@@ -279,7 +280,6 @@ const Products = () => {
 
   const [showPrint, setShowPrint] = useState(false);
   const [printProduct, setPrintProduct] = useState(null);
-  const [printType, setPrintType] = useState('barcode');
   const [deliveryMode, setDeliveryMode] = useState('normal');
   const [customDeliveryRate, setCustomDeliveryRate] = useState('800');
   const [showPrintSuggest, setShowPrintSuggest] = useState(false);
@@ -1687,7 +1687,7 @@ const Products = () => {
 
   const openPrintForRow = (product, e) => {
     e?.stopPropagation?.();
-    setPrintProduct(product); setPrintType('barcode'); setShowPrint(true);
+    setPrintProduct(product); setShowPrint(true);
   };
 
   const handleExportExcel = async () => {
@@ -2341,12 +2341,7 @@ const Products = () => {
             <div style={{ padding: '24px 22px 8px', textAlign: 'center' }}>
               <div style={{ fontSize: 32, marginBottom: 10 }}>🏷️</div>
               <div style={{ fontSize: 17, fontWeight: 800, color: 'var(--text)', marginBottom: 8 }}>Распечатать этикетку?</div>
-              <div style={{ fontSize: 14, color: 'var(--text-muted)', marginBottom: 16 }}>Товар «{savedProduct.name}» создан</div>
-              <div style={{ display: 'flex', gap: 10, justifyContent: 'center', marginBottom: 20 }}>
-                {[{ val: 'barcode', label: '■ Штрих-код' }, { val: 'qrcode', label: '⬛ QR-код' }].map((t) => (
-                  <button key={t.val} type="button" onClick={() => setPrintType(t.val)} style={{ padding: '8px 16px', borderRadius: 12, border: `2px solid ${printType === t.val ? 'var(--primary)' : 'var(--border)'}`, background: printType === t.val ? 'var(--primary-light)' : 'var(--surface)', color: printType === t.val ? 'var(--primary)' : 'var(--text-secondary)', fontWeight: 600, fontSize: 13, cursor: 'pointer' }}>{t.label}</button>
-                ))}
-              </div>
+              <div style={{ fontSize: 14, color: 'var(--text-muted)', marginBottom: 20 }}>Товар «{savedProduct.name}» создан. Этикетка 6×4 см.</div>
             </div>
             <div style={{ padding: '0 22px 22px', display: 'flex', gap: 10 }}>
               <button type="button" onClick={() => setShowPrintSuggest(false)} style={{ flex: 1, padding: '13px', borderRadius: 14, border: '1px solid var(--border)', background: 'var(--surface)', fontWeight: 600, fontSize: 14, cursor: 'pointer', color: 'var(--text-secondary)' }}>Пропустить</button>
@@ -2727,9 +2722,8 @@ const Products = () => {
         isOpen={showPrint}
         onClose={() => { setShowPrint(false); setPrintProduct(null); }}
         product={printProduct}
-        settings={settingsRow}
-        initialLabelType={printType}
-        labelSize={settingsRow?.label_size || 'small'}
+        initialLabelLayout={readStoredLabelLayout()}
+        labelSize="medium"
       />
       <Modal
         isOpen={bulkEditOpen}

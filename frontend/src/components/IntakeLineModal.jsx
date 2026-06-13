@@ -13,6 +13,7 @@ import {
 } from 'react-icons/fi';
 import { Button, Modal, TextArea } from './ui';
 import LabelPrint from './LabelPrint';
+import { readStoredLabelLayout } from '../utils/labelPrintUtils';
 import CameraBarcodeScanner from './CameraBarcodeScanner';
 import { productApi, categoryApi, compatibilityApi, resolveUploadedAssetUrl } from '../api/client';
 import CategoryPicker, { findGroupIdForCategory, findCategoryInTree } from './CategoryPicker';
@@ -147,7 +148,6 @@ export default function IntakeLineModal({
   const [lookingUp, setLookingUp] = useState(false);
   const [knownOnWarehouse, setKnownOnWarehouse] = useState(false);
   const [showPrint, setShowPrint] = useState(false);
-  const [printType, setPrintType] = useState('barcode');
   const [cnyHistory, setCnyHistory] = useState([]);
   const [photos, setPhotos] = useState([]);
   const [photoBusy, setPhotoBusy] = useState(false);
@@ -1047,22 +1047,6 @@ export default function IntakeLineModal({
           </IntakeFormCard>
           </div>
 
-          {!readonly && (
-            <IntakeFormCard title="Печать этикетки">
-              <div className="intake-form-print-type">
-                {['barcode', 'qrcode'].map((t) => (
-                  <button
-                    key={t}
-                    type="button"
-                    className={`intake-form-delivery-chip${printType === t ? ' intake-form-delivery-chip--active' : ''}`}
-                    onClick={() => setPrintType(t)}
-                  >
-                    {t === 'barcode' ? 'Штрих-код' : 'QR-код'}
-                  </button>
-                ))}
-              </div>
-            </IntakeFormCard>
-          )}
 
         </div>
       </Modal>
@@ -1084,8 +1068,8 @@ export default function IntakeLineModal({
         isOpen={showPrint}
         onClose={() => setShowPrint(false)}
         product={printProduct}
-        initialLabelType={printType}
-        labelSize={labelSize}
+        initialLabelLayout={readStoredLabelLayout()}
+        labelSize="medium"
       />
     </>
   );
