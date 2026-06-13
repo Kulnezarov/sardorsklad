@@ -1,14 +1,27 @@
 import React from 'react';
-import { FiGlobe } from 'react-icons/fi';
+import { FiGlobe, FiX } from 'react-icons/fi';
 
-export default function ProductStorefrontPreview({ preview }) {
+export default function ProductStorefrontPreview({ preview, onHide }) {
   if (!preview) return null;
 
   return (
     <aside className="product-storefront-preview" aria-label="Превью на витрине CHPARTS">
       <div className="product-storefront-preview__head">
-        <FiGlobe size={14} />
-        <span>Как на CHPARTS</span>
+        <div className="product-storefront-preview__head-title">
+          <FiGlobe size={14} />
+          <span>Как на CHPARTS</span>
+        </div>
+        {onHide && (
+          <button
+            type="button"
+            className="product-storefront-preview__hide"
+            onClick={onHide}
+            title="Скрыть превью"
+          >
+            <FiX size={14} />
+            Скрыть
+          </button>
+        )}
       </div>
       <div className="product-storefront-preview__card">
         <div className="product-storefront-preview__photo">📦</div>

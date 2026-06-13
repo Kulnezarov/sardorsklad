@@ -14,6 +14,7 @@ import ProductFormByLayout from '../components/ProductFormByLayout';
 import ProductStockFormSection from '../components/ProductStockFormSection';
 import { priceLayoutRows, resolveCategoryProfile } from '../utils/formLayoutUtils';
 import ProductFormSection, { ProductFormTemplateBadge } from '../components/ProductFormSection';
+import FormAccordionSection from '../components/FormAccordionSection';
 import VehicleCompatibilityPicker from '../components/VehicleCompatibilityPicker';
 import ProductFormProgress from '../components/ProductFormProgress';
 import ProductStorefrontPreview from '../components/ProductStorefrontPreview';
@@ -140,6 +141,8 @@ function getCatColor(cat) {
 }
 
 const EMPTY_COMPAT_IDS = Object.freeze([]);
+
+const STOREFRONT_PREVIEW_HIDDEN_KEY = 'skladpro:hide_storefront_preview';
 
 const emptyForm = () => ({
   id: null, name: '', sku: '', barcode: '', brand: '', model: '', category: '',
@@ -299,6 +302,31 @@ const Products = () => {
   /** Мгновенное превью выбранного файла до ответа сервера */
   const [imageBlobUrl, setImageBlobUrl] = useState('');
   const [galleryFocusIdx, setGalleryFocusIdx] = useState(0);
+  const [storefrontPreviewHidden, setStorefrontPreviewHidden] = useState(() => {
+    try {
+      return localStorage.getItem(STOREFRONT_PREVIEW_HIDDEN_KEY) === '1';
+    } catch {
+      return false;
+    }
+  });
+
+  const hideStorefrontPreview = useCallback(() => {
+    setStorefrontPreviewHidden(true);
+    try {
+      localStorage.setItem(STOREFRONT_PREVIEW_HIDDEN_KEY, '1');
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  const showStorefrontPreview = useCallback(() => {
+    setStorefrontPreviewHidden(false);
+    try {
+      localStorage.removeItem(STOREFRONT_PREVIEW_HIDDEN_KEY);
+    } catch {
+      /* ignore */
+    }
+  }, []);
 
   const [importReport, setImportReport] = useState(null);
   const [importOverlay, setImportOverlay] = useState(null);
@@ -2380,7 +2408,7 @@ const Products = () => {
             : (categoryChosen ? 'Новый товар' : 'Выберите категорию')
         }
         onClose={resetForm}
-        size="xl"
+        size={showFillStep ? 'product' : 'xl'}
         icon={formData.id ? FiEdit2 : FiPlus}
         actions={(
           <>
@@ -2485,11 +2513,19 @@ const Products = () => {
           </div>
           )}
 
-          {showFillStep && <ProductFormProgress progress={formProgress} />}
-
           {showFillStep && (
-          <div className="product-form-main-grid">
-          <div className="product-form-main-grid__form">
+          <div className={`product-form-shell${storefrontPreviewHidden ? ' product-form-shell--no-preview' : ''}`}>
+          <div className="product-form-shell__workspace">
+          {showFillStep && <ProductFormProgress progress={formProgress} />}
+          {storefrontPreviewHidden && (
+            <div className="product-form-shell__preview-toggle">
+              <button type="button" className="product-form-preview-show-btn" onClick={showStorefrontPreview}>
+                <FiGlobe size={15} />
+                Показать превью CHPARTS
+              </button>
+            </div>
+          )}
+          <div className="product-form-shell__card">
         <form className="ios-form-stack product-form-flow product-form-modal" onSubmit={handleSubmit}>
           {!isEditingProduct && (
             <div className="product-wizard-steps product-wizard-steps--compact" aria-label="Шаги">
@@ -2518,9 +2554,12 @@ const Products = () => {
             </div>
           )}
 
-          <ProductFormSection
+          <FormAccordionSection
             title="Фото товара"
-            footer="До 12 фото. Сначала сохраните товар, затем загружайте снимки."
+            subtitle="До 12 фото. Сначала сохраните товар, затем загружайте снимки."
+            icon={<FiImage size={17} />}
+            iconColor="var(--primary)"
+            initiallyExpanded
             className="product-form-photo-section"
           >
           <div className="product-form-photo-section__inner">
@@ -2664,11 +2703,14 @@ const Products = () => {
                 </div>
               )}
           </div>
-          </ProductFormSection>
+          </FormAccordionSection>
 
-          <ProductFormSection
+          <FormAccordionSection
             title="Характеристики"
-            footer="Заполните по шаблону категории"
+            subtitle="Заполните по шаблону категории"
+            icon={<FiPackage size={17} />}
+            iconColor="var(--primary)"
+            initiallyExpanded
           >
             <ProductFormByLayout
               schema={selectedSubcategorySchema || {}}
@@ -2683,7 +2725,7 @@ const Products = () => {
               categoryGroupName={selectedCategoryGroup?.name || ''}
               compatibilitySlot={compatibilityPickerSlot}
             />
-          </ProductFormSection>
+          </FormAccordionSection>
 
           <ProductStockFormSection
             formData={formData}
@@ -2710,9 +2752,12 @@ const Products = () => {
           />
         </form>
           </div>
-          <div className="product-form-main-grid__aside">
-            <ProductStorefrontPreview preview={storefrontPreview} />
           </div>
+          {!storefrontPreviewHidden && (
+            <aside className="product-form-shell__preview">
+              <ProductStorefrontPreview preview={storefrontPreview} onHide={hideStorefrontPreview} />
+            </aside>
+          )}
           </div>
         )}
       </Modal>

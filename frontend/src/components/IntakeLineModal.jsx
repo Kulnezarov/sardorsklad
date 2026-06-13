@@ -10,6 +10,10 @@ import {
   FiCamera,
   FiStar,
   FiCheckCircle,
+  FiPackage,
+  FiArchive,
+  FiTruck,
+  FiMoreHorizontal,
 } from 'react-icons/fi';
 import { Button, Modal, TextArea } from './ui';
 import LabelPrint from './LabelPrint';
@@ -119,17 +123,8 @@ function photosFromLine(line) {
   return items;
 }
 
-import { IosFormBlock, IosFormGroup } from './IosForm';
-
-function IntakeFormCard({ title, children, className = '', footer }) {
-  return (
-    <IosFormBlock title={title} footer={footer} className={`intake-form-card-wrap${className ? ` ${className}` : ''}`}>
-      <IosFormGroup padded className="intake-form-card">
-        {children}
-      </IosFormGroup>
-    </IosFormBlock>
-  );
-}
+import FormAccordionSection from './FormAccordionSection';
+import FormField from './FormField';
 
 export default function IntakeLineModal({
   isOpen,
@@ -706,31 +701,29 @@ export default function IntakeLineModal({
             </div>
           )}
 
-          <IntakeFormCard title="Фото">
-            <p className="intake-form-hint">
-              {photos.length} из {MAX_INTAKE_PHOTOS} · ⭐ первое фото = главное
-              {!readonly && ' · при «В склад» загрузятся на сервер'}
-            </p>
-            <div className="intake-form-photo-meta">
-              <span className="intake-form-photo-chip intake-form-photo-chip--local">
+          <div className="form-photo-panel">
+            <div className="form-photo-panel__meta">
+              <span>{photos.length} из {MAX_INTAKE_PHOTOS}</span>
+              <span className="form-photo-panel__chip form-photo-panel__chip--local">
                 Локально: {localPhotoCount}
               </span>
-              <span className="intake-form-photo-chip intake-form-photo-chip--wh">
+              <span className="form-photo-panel__chip form-photo-panel__chip--wh">
                 Склад: {warehousePhotoCount}
               </span>
+              <span>⭐ первое фото = главное</span>
             </div>
             {photos.length > 0 && (
-              <div className="intake-form-photo-strip">
+              <div className="form-photo-strip">
                 {photos.map((p, idx) => (
-                  <div key={p.id} className="intake-form-photo-item">
+                  <div key={p.id} className="form-photo-tile">
                     <img src={photoPreview(p)} alt="" />
-                    {idx === 0 && <span className="intake-form-photo-main">Главное</span>}
-                    {p.kind === 'warehouse' && <span className="intake-form-photo-badge">Склад</span>}
+                    {idx === 0 && <span className="form-photo-tile__main">Главное</span>}
+                    {p.kind === 'warehouse' && <span className="form-photo-tile__badge">Склад</span>}
                     {!readonly && (
                       <>
                         <button
                           type="button"
-                          className="intake-form-photo-star"
+                          className="form-photo-tile__star"
                           title={idx === 0 ? 'Главное фото' : 'Сделать главным'}
                           onClick={() => setMainPhoto(idx)}
                         >
@@ -738,7 +731,7 @@ export default function IntakeLineModal({
                         </button>
                         <button
                           type="button"
-                          className="intake-form-photo-remove"
+                          className="form-photo-tile__remove"
                           onClick={() => removePhoto(p.id)}
                           aria-label="Удалить"
                         >
@@ -751,58 +744,23 @@ export default function IntakeLineModal({
               </div>
             )}
             {!readonly && photos.length < MAX_INTAKE_PHOTOS && (
-              <div className="intake-form-photo-actions">
-                <label className="intake-form-photo-btn">
+              <div className="form-photo-actions">
+                <label className="form-photo-btn">
                   <FiImage size={18} />
                   {photoBusy ? 'Обработка…' : 'Загрузить с компьютера'}
                   <input type="file" accept="image/*" multiple disabled={photoBusy} onChange={handleAddPhotos} />
                 </label>
               </div>
             )}
-          </IntakeFormCard>
+          </div>
 
-          <IntakeFormCard title="Штрих-код">
-            <div className="intake-form-barcode-row">
-              <input
-                className="ios-input intake-form-input-mono"
-                value={form.barcode}
-                onChange={(e) => setField('barcode', e.target.value)}
-                placeholder="EAN-13"
-                readOnly={readonly}
-              />
-              {!readonly && (
-                <>
-                  <button
-                    type="button"
-                    className="intake-form-tool-btn"
-                    title="Новый штрих-код"
-                    onClick={() => {
-                      setField('barcode', generateEAN13());
-                      clearWarehouseLookup();
-                    }}
-                  >
-                    <FiRefreshCw size={18} />
-                  </button>
-                  <button
-                    type="button"
-                    className="intake-form-tool-btn intake-form-tool-btn--primary"
-                    title="Сканировать камерой"
-                    onClick={() => setShowScanner(true)}
-                  >
-                    <FiCamera size={18} />
-                  </button>
-                </>
-              )}
-            </div>
-            {lookingUp && <div className="intake-form-progress" />}
-            {knownOnWarehouse && !lookingUp && !readonly && (
-              <div className="intake-form-banner intake-form-banner--success">
-                Товар найден на складе — поля заполнены
-              </div>
-            )}
-          </IntakeFormCard>
-
-          <IntakeFormCard title="Категория">
+          <FormAccordionSection
+            title="Основное"
+            subtitle="Категория, характеристики и цена продажи"
+            icon={<FiPackage size={17} />}
+            iconColor="var(--primary)"
+            initiallyExpanded
+          >
             <CategoryPicker
               tree={categoryTree}
               groupId={form.category_group_id}
@@ -828,14 +786,11 @@ export default function IntakeLineModal({
               }}
             />
             {!form.category_id && !readonly && (
-              <p className="product-form-category-gate" style={{ marginTop: 12, marginBottom: 0 }}>
+              <p className="product-form-category-gate" style={{ margin: 0 }}>
                 Выберите подкатегорию — ниже появятся поля по шаблону. Цены и артикул можно заполнить уже сейчас.
               </p>
             )}
-          </IntakeFormCard>
-
-          {form.category_id && selectedSubcategorySchema && (
-            <IntakeFormCard title="Карточка товара">
+            {form.category_id && selectedSubcategorySchema && (
               <ProductFormByLayout
                 schema={selectedSubcategorySchema}
                 formData={intakeFormData}
@@ -845,55 +800,53 @@ export default function IntakeLineModal({
                 categoryName={findCategoryInTree(categoryTree, form.category_id)?.name || form.category || ''}
                 compatibilitySlot={compatibilityPickerSlot}
               />
-            </IntakeFormCard>
-          )}
+            )}
+            <FormField label="Продажа ₸" accent large hint="Перед загрузкой на склад">
+              <input
+                className="ios-input"
+                type="number"
+                value={form.sale_price}
+                onChange={(e) => setField('sale_price', e.target.value)}
+                placeholder="0"
+                readOnly={readonly}
+              />
+            </FormField>
+          </FormAccordionSection>
 
-          {(showBrandModelBlock || (!showCompatibilityBlock && form.category_id)) && (
-            <div className="intake-form-row-2">
-              <IntakeFormCard title="Марка">
-                <input
-                  className="ios-input"
-                  value={form.brand}
-                  onChange={(e) => setField('brand', e.target.value)}
-                  onBlur={() => capField('brand')}
-                  placeholder="FAW, Changan…"
-                  readOnly={readonly}
-                />
-              </IntakeFormCard>
-              <IntakeFormCard title="Модель">
-                <input
-                  className="ios-input"
-                  value={form.model}
-                  onChange={(e) => setField('model', e.target.value)}
-                  onBlur={() => capField('model')}
-                  placeholder="Bestune T77…"
-                  readOnly={readonly}
-                />
-              </IntakeFormCard>
-            </div>
-          )}
+          <FormAccordionSection
+            title="Склад"
+            subtitle="Количество перед загрузкой"
+            icon={<FiArchive size={17} />}
+            iconColor="var(--warning)"
+          >
+            <FormField label="Количество" hint="Сколько единиц добавить на склад">
+              <input
+                className="ios-input"
+                type="number"
+                value={form.quantity}
+                onChange={(e) => setField('quantity', e.target.value)}
+                placeholder="0"
+                readOnly={readonly}
+              />
+            </FormField>
+          </FormAccordionSection>
 
-          <div className="intake-form-prices-block">
-          <IntakeFormCard title="Артикул">
-            <input
-              className="ios-input"
-              value={form.sku}
-              onChange={(e) => setField('sku', e.target.value)}
-              onBlur={() => capField('sku')}
-              placeholder="OEM / внутренний код — подставит данные со склада"
-              readOnly={readonly}
-            />
-          </IntakeFormCard>
-
-          <IntakeFormCard title="Закуп (¥)">
-            <input
-              className="ios-input"
-              type="number"
-              value={form.cny_price}
-              onChange={(e) => setField('cny_price', e.target.value)}
-              placeholder="Цена в юанях"
-              readOnly={readonly}
-            />
+          <FormAccordionSection
+            title="Доставка и закуп"
+            subtitle="Юань, тариф и доставка в тenge"
+            icon={<FiTruck size={17} />}
+            iconColor="#0ea5e9"
+          >
+            <FormField label="Закуп ¥">
+              <input
+                className="ios-input"
+                type="number"
+                value={form.cny_price}
+                onChange={(e) => setField('cny_price', e.target.value)}
+                placeholder="Цена в юанях"
+                readOnly={readonly}
+              />
+            </FormField>
             {cnyHistory.length > 0 && !readonly && (
               <div className="intake-form-cny-history">
                 <span className="intake-form-cny-history-label">История закупа:</span>
@@ -912,110 +865,166 @@ export default function IntakeLineModal({
                 </div>
               </div>
             )}
-          </IntakeFormCard>
-
-          <IntakeFormCard title="Доставка">
             {!readonly && (
-              <div className="intake-form-delivery-chips">
-                {DELIVERY_MODES.map((m) => (
-                  <button
-                    key={m.key}
-                    type="button"
-                    className={`intake-form-delivery-chip${deliveryMode === m.key ? ' intake-form-delivery-chip--active' : ''}`}
-                    onClick={() => setDeliveryModeAndRecalc(m.key)}
-                  >
-                    <span>{m.label}</span>
-                    <small>{m.sub(deliveryPerKg)}</small>
-                  </button>
-                ))}
+              <div className="form-delivery-panel">
+                <div className="intake-form-delivery-chips">
+                  {DELIVERY_MODES.map((m) => (
+                    <button
+                      key={m.key}
+                      type="button"
+                      className={`intake-form-delivery-chip${deliveryMode === m.key ? ' intake-form-delivery-chip--active' : ''}`}
+                      onClick={() => setDeliveryModeAndRecalc(m.key)}
+                    >
+                      <span>{m.label}</span>
+                      <small>{m.sub(deliveryPerKg)}</small>
+                    </button>
+                  ))}
+                </div>
+                {deliveryMode === 'custom' && (
+                  <input
+                    className="ios-input intake-form-custom-rate"
+                    placeholder="Своя цена, ₸/кг"
+                    value={customRate}
+                    onChange={(e) => {
+                      setCustomRate(e.target.value);
+                      if (num(form.delivery_kg) > 0) onKgChanged(form.delivery_kg);
+                    }}
+                  />
+                )}
               </div>
             )}
-            {deliveryMode === 'custom' && !readonly && (
+            <FormField label="Доставка ₸">
               <input
-                className="ios-input intake-form-custom-rate"
-                placeholder="Своя цена, ₸/кг"
-                value={customRate}
+                className="ios-input"
+                type="number"
+                value={form.delivery_kzt}
                 onChange={(e) => {
-                  setCustomRate(e.target.value);
-                  if (num(form.delivery_kg) > 0) onKgChanged(form.delivery_kg);
+                  setField('delivery_kzt', e.target.value);
+                  if (!readonly) onKztChanged(e.target.value);
                 }}
+                readOnly={readonly}
               />
+            </FormField>
+            <FormField label="Вес (кг)">
+              <input
+                className="ios-input"
+                type="number"
+                value={form.delivery_kg}
+                onChange={(e) => {
+                  setField('delivery_kg', e.target.value);
+                  if (!readonly) onKgChanged(e.target.value);
+                }}
+                readOnly={readonly}
+              />
+            </FormField>
+            {purchasePreview > 0 && (
+              <div className="form-purchase-total">
+                <span className="form-purchase-total__label">Закуп ₸</span>
+                <strong className="form-purchase-total__value">
+                  {purchasePreview.toLocaleString('ru-RU')} ₸
+                </strong>
+              </div>
             )}
-            <div className="intake-form-row-2 intake-form-row-2--tight">
-              <label className="intake-form-inline-field">
-                <span>Доставка (кг)</span>
-                <input
-                  className="ios-input"
-                  type="number"
-                  value={form.delivery_kg}
-                  onChange={(e) => {
-                    setField('delivery_kg', e.target.value);
-                    if (!readonly) onKgChanged(e.target.value);
-                  }}
-                  readOnly={readonly}
-                />
-              </label>
-              <label className="intake-form-inline-field">
-                <span>Доставка (₸)</span>
-                <input
-                  className="ios-input"
-                  type="number"
-                  value={form.delivery_kzt}
-                  onChange={(e) => {
-                    setField('delivery_kzt', e.target.value);
-                    if (!readonly) onKztChanged(e.target.value);
-                  }}
-                  readOnly={readonly}
-                />
-              </label>
-            </div>
-          </IntakeFormCard>
+          </FormAccordionSection>
 
-          <div className="intake-form-row-2">
-            <IntakeFormCard title="Стоимость (₸)" className="intake-form-card--accent">
+          <FormAccordionSection
+            title="Дополнительно"
+            subtitle="Штрих-код, артикул, производитель"
+            icon={<FiMoreHorizontal size={17} />}
+            iconColor="#7c3aed"
+          >
+            <FormField label="Штрих-код" mono>
+              <div className="intake-form-barcode-row">
+                <input
+                  className="ios-input intake-form-input-mono"
+                  value={form.barcode}
+                  onChange={(e) => setField('barcode', e.target.value)}
+                  placeholder="EAN-13"
+                  readOnly={readonly}
+                />
+                {!readonly && (
+                  <>
+                    <button
+                      type="button"
+                      className="intake-form-tool-btn"
+                      title="Новый штрих-код"
+                      onClick={() => {
+                        setField('barcode', generateEAN13());
+                        clearWarehouseLookup();
+                      }}
+                    >
+                      <FiRefreshCw size={18} />
+                    </button>
+                    <button
+                      type="button"
+                      className="intake-form-tool-btn intake-form-tool-btn--primary"
+                      title="Сканировать камерой"
+                      onClick={() => setShowScanner(true)}
+                    >
+                      <FiCamera size={18} />
+                    </button>
+                  </>
+                )}
+              </div>
+            </FormField>
+            {lookingUp && <div className="intake-form-progress" />}
+            {knownOnWarehouse && !lookingUp && !readonly && (
+              <div className="intake-form-banner intake-form-banner--success">
+                Товар найден на складе — поля заполнены
+              </div>
+            )}
+            <FormField label="Артикул" hint="OEM / внутренний код — подставит данные со склада">
               <input
-                className="ios-input intake-form-input-large"
-                type="number"
-                value={form.sale_price}
-                onChange={(e) => setField('sale_price', e.target.value)}
-                placeholder="Перед загрузкой на склад"
+                className="ios-input"
+                value={form.sku}
+                onChange={(e) => setField('sku', e.target.value)}
+                onBlur={() => capField('sku')}
                 readOnly={readonly}
               />
-            </IntakeFormCard>
-            <IntakeFormCard title="Количество">
+            </FormField>
+            <FormField label="Производитель">
               <input
-                className="ios-input intake-form-input-large"
-                type="number"
-                value={form.quantity}
-                onChange={(e) => setField('quantity', e.target.value)}
-                placeholder="Перед загрузкой на склад"
+                className="ios-input"
+                value={form.manufacturer}
+                onChange={(e) => setField('manufacturer', e.target.value)}
+                onBlur={() => capField('manufacturer')}
+                placeholder="Завод, бренд OEM…"
                 readOnly={readonly}
               />
-            </IntakeFormCard>
-          </div>
+            </FormField>
+            <FormField label="Доп. информация">
+              <TextArea
+                value={form.extra_info}
+                onChange={(e) => setField('extra_info', e.target.value)}
+                placeholder="Примечание, комплектация…"
+                readOnly={readonly}
+                rows={3}
+              />
+            </FormField>
+          </FormAccordionSection>
 
           {positionTotalsPreview && (
-            <div className="intake-form-position-totals">
-              <div className="intake-form-position-totals-head">
-                <span className="intake-form-position-totals-title">По позиции</span>
-                <span className="intake-form-position-totals-qty">{positionTotalsPreview.qty} шт</span>
+            <div className="form-summary-card">
+              <div className="form-summary-card__head">
+                <span className="form-summary-card__title">По позиции</span>
+                <span className="form-summary-card__qty">{positionTotalsPreview.qty} шт</span>
               </div>
-              <div className="intake-form-position-totals-cols">
-                <div className="intake-form-position-stat intake-form-position-stat--purchase">
-                  <span className="intake-form-position-stat-label">Закуп</span>
-                  <span className="intake-form-position-stat-value">
+              <div className="form-summary-card__grid">
+                <div className="form-summary-stat">
+                  <span className="form-summary-stat__label">Закуп</span>
+                  <span className="form-summary-stat__value">
                     {positionTotalsPreview.unitPurchase.toLocaleString('ru-RU')} ₸
                   </span>
-                  <span className="intake-form-position-stat-unit">за 1 шт</span>
+                  <span className="form-summary-stat__unit">за 1 шт</span>
                 </div>
-                <div className="intake-form-position-stat intake-form-position-stat--sale">
-                  <span className="intake-form-position-stat-label">Продажа</span>
-                  <span className="intake-form-position-stat-value">
+                <div className="form-summary-stat form-summary-stat--sale">
+                  <span className="form-summary-stat__label">Продажа</span>
+                  <span className="form-summary-stat__value">
                     {positionTotalsPreview.unitSale > 0
                       ? `${positionTotalsPreview.unitSale.toLocaleString('ru-RU')} ₸`
                       : '—'}
                   </span>
-                  <span className="intake-form-position-stat-unit">
+                  <span className="form-summary-stat__unit">
                     {positionTotalsPreview.unitSale > 0 && positionTotalsPreview.saleTotal > 0
                       ? `всего ${positionTotalsPreview.saleTotal.toLocaleString('ru-RU')} ₸`
                       : 'за 1 шт'}
@@ -1024,30 +1033,6 @@ export default function IntakeLineModal({
               </div>
             </div>
           )}
-
-          <IntakeFormCard title="Производитель">
-            <input
-              className="ios-input"
-              value={form.manufacturer}
-              onChange={(e) => setField('manufacturer', e.target.value)}
-              onBlur={() => capField('manufacturer')}
-              placeholder="Завод, бренд OEM…"
-              readOnly={readonly}
-            />
-          </IntakeFormCard>
-
-          <IntakeFormCard title="Доп. информация">
-            <TextArea
-              value={form.extra_info}
-              onChange={(e) => setField('extra_info', e.target.value)}
-              placeholder="Примечание, комплектация…"
-              readOnly={readonly}
-              rows={3}
-            />
-          </IntakeFormCard>
-          </div>
-
-
         </div>
       </Modal>
 

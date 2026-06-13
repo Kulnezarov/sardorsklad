@@ -1,9 +1,9 @@
 import React, { useState } from 'react';
-import { FiGlobe, FiLock, FiUnlock, FiRefreshCw, FiMaximize2, FiChevronDown, FiChevronUp } from 'react-icons/fi';
+import { FiGlobe, FiLock, FiUnlock, FiRefreshCw, FiMaximize2, FiChevronDown, FiChevronUp, FiTruck } from 'react-icons/fi';
 import { QRCodeSVG } from 'qrcode.react';
 import { Input } from './ui';
 import ProductLayoutPriceFields from './ProductLayoutPriceFields';
-import ProductFormSection from './ProductFormSection';
+import FormAccordionSection from './FormAccordionSection';
 
 /**
  * Блок «Коды, цены и склад» в форме товара.
@@ -36,9 +36,12 @@ export default function ProductStockFormSection({
 
   return (
     <>
-      <ProductFormSection
+      <FormAccordionSection
         title="Коды, цены и склад"
-        footer="Штрих-код, закуп, продажа, количество"
+        subtitle="Штрих-код, закуп, продажа, количество"
+        icon={<FiTruck size={17} />}
+        iconColor="#0ea5e9"
+        initiallyExpanded
         className="product-stock-section"
       >
         <div className="product-stock-grid">
@@ -158,7 +161,7 @@ export default function ProductStockFormSection({
             style={highlightStyle}
           />
         </div>
-      </ProductFormSection>
+      </FormAccordionSection>
 
       <div className="product-profit-banner">
         <div className="product-profit-banner__main">
