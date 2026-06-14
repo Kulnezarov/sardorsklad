@@ -58,7 +58,12 @@ export function lineMoneyTotals(line) {
   };
 }
 
+export function isLineWarehouseSynced(line) {
+  return line?.warehouse_synced === true;
+}
+
 export function isLineWarehouseReady(line) {
+  if (isLineWarehouseSynced(line)) return true;
   const name = (line.name || '').trim();
   const qty = intakeLineQty(line);
   const sale = num(line.sale_price);
@@ -71,18 +76,51 @@ export function computeInvoiceSummary(lines) {
   let purchaseKzt = 0;
   let saleKzt = 0;
   let notReady = 0;
+  let synced = 0;
   for (const l of lines) {
     const t = lineMoneyTotals(l);
     purchaseKzt += t.purchaseTotal;
     saleKzt += t.saleTotal;
-    if (!isLineWarehouseReady(l)) notReady += 1;
+    if (isLineWarehouseSynced(l)) synced += 1;
+    else if (!isLineWarehouseReady(l)) notReady += 1;
   }
   return {
     positions: lines.length,
     purchaseKzt: roundMoney2(purchaseKzt),
     saleKzt: roundMoney2(saleKzt),
     notReadyCount: notReady,
+    syncedCount: synced,
   };
+}
+
+/** Пометить строки, уже лежащие на складе (по штрих-коду), чтобы не дублировать при повторной загрузке. */
+export async function reconcileInvoiceWarehouseSync(lines) {
+  const next = [];
+  let marked = 0;
+  for (const raw of lines) {
+    const l = raw;
+    if (isLineWarehouseSynced(l)) {
+      next.push(l);
+      continue;
+    }
+    const bc = String(l.barcode || '').trim();
+    if (bc.length < 4) {
+      next.push(l);
+      continue;
+    }
+    try {
+      const res = await productApi.getByBarcode(bc, { allow404: true });
+      if (res.status === 200 && res.data) {
+        next.push({ ...l, warehouse_synced: true });
+        marked += 1;
+      } else {
+        next.push(l);
+      }
+    } catch {
+      next.push(l);
+    }
+  }
+  return { lines: next, marked };
 }
 
 export function lineToProductForPrint(line) {
@@ -168,23 +206,30 @@ export async function addCnyHistory({ barcode, cny, deliveryKzt, productId }) {
 
 /** Загрузка позиций накладной на склад (как в мобильном приложении). */
 export async function uploadInvoiceLinesToWarehouse(lines, cnyRate) {
-  const report = { created: 0, updated: 0, photosUploaded: 0, errors: [] };
+  const report = { created: 0, updated: 0, photosUploaded: 0, skipped: 0, errors: [] };
   const updatedLines = [];
   for (const raw of lines) {
     const l = raw;
     const name = (l.name || '').trim();
+    if (isLineWarehouseSynced(l)) {
+      updatedLines.push(l);
+      continue;
+    }
     if (!name) {
       report.errors.push('Пустое название позиции');
+      report.skipped = (report.skipped || 0) + 1;
       updatedLines.push(l);
       continue;
     }
     if (!l.category_id) {
       report.errors.push(`${name}: не выбрана категория`);
+      report.skipped = (report.skipped || 0) + 1;
       updatedLines.push(l);
       continue;
     }
     if (l.needs_catalog_update && !l.catalog_updated) {
       report.errors.push(`${name}: товар не обновлён под новый каталог`);
+      report.skipped = (report.skipped || 0) + 1;
       updatedLines.push(l);
       continue;
     }
@@ -245,7 +290,7 @@ export async function uploadInvoiceLinesToWarehouse(lines, cnyRate) {
         });
       }
 
-      let nextLine = { ...l };
+      let nextLine = { ...l, warehouse_synced: true };
       const productId = product?.id;
       if (productId) {
         try {
@@ -320,6 +365,7 @@ export function copyIntakeLine(src) {
   delete copy.local_photo_paths;
   delete copy.warehouse_image_urls;
   delete copy.intake_photo_data;
+  delete copy.warehouse_synced;
   // category_id, attributes, category_group_id сохраняются — как в мобильном _copyLine
   return copy;
 }

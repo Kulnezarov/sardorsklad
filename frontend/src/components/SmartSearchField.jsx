@@ -76,7 +76,7 @@ export default function SmartSearchField({
           {loading ? <span className="smart-search-spinner" /> : <FiSearch size={18} />}
         </span>
         <input
-          type="search"
+          type="text"
           className={`${inputClassName} smart-search-field-input`}
           placeholder={placeholder}
           value={value}

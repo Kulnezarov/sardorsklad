@@ -35,12 +35,14 @@ import {
   intakeLineQty,
   invoiceDateLabel,
   isLineWarehouseReady,
+  isLineWarehouseSynced,
   lineMoneyTotals,
   newClientId,
   intakeLineMatchesSearch,
   matchesSmartSearch,
   newIntakeLineId,
   num,
+  reconcileInvoiceWarehouseSync,
   uploadInvoiceLinesToWarehouse,
   warehouseProductToIntakeLine,
 } from '../utils/intakeHelpers';
@@ -115,6 +117,9 @@ function IntakeLineThumb({ line, photoUrls }) {
 
 function IntakeLineChips({ line }) {
   const chips = [];
+  if (isLineWarehouseSynced(line)) {
+    chips.push({ key: 'sync', label: 'На складе', className: 'intake-chip intake-chip--synced' });
+  }
   if (line.barcode) chips.push({ key: 'bc', label: line.barcode });
   if (line.sku) chips.push({ key: 'sku', label: `SKU ${line.sku}` });
   const brandModel = [line.brand, line.model].filter(Boolean).join(' ');
@@ -123,7 +128,7 @@ function IntakeLineChips({ line }) {
   return (
     <div className="intake-line-chips">
       {chips.map((c) => (
-        <span key={c.key} className="intake-chip">
+        <span key={c.key} className={c.className || 'intake-chip'}>
           {c.label}
         </span>
       ))}
@@ -131,7 +136,7 @@ function IntakeLineChips({ line }) {
   );
 }
 
-function IntakeLineActions({ isUploaded, onPrint, onCopy, onDelete }) {
+function IntakeLineActions({ isUploaded, synced, onPrint, onCopy, onDelete, onMarkSynced }) {
   return (
     <div className="intake-line-actions" onClick={(e) => e.stopPropagation()}>
       <button type="button" className="intake-icon-btn" title="Печать этикетки" onClick={onPrint}>
@@ -139,6 +144,16 @@ function IntakeLineActions({ isUploaded, onPrint, onCopy, onDelete }) {
       </button>
       {!isUploaded && (
         <>
+          {!synced && (
+            <button
+              type="button"
+              className="intake-icon-btn intake-icon-btn-success"
+              title="Уже на складе — не загружать повторно"
+              onClick={onMarkSynced}
+            >
+              <FiCheckCircle size={14} />
+            </button>
+          )}
           <button type="button" className="intake-icon-btn" title="Копия" onClick={onCopy}>
             <FiCopy size={14} />
           </button>
@@ -156,7 +171,7 @@ function IntakeLineActions({ isUploaded, onPrint, onCopy, onDelete }) {
   );
 }
 
-function IntakeLineRow({ line, photoUrls, isUploaded, showWarn, onOpen, onPrint, onCopy, onDelete }) {
+function IntakeLineRow({ line, photoUrls, isUploaded, showWarn, onOpen, onPrint, onCopy, onDelete, onMarkSynced }) {
   const qty = parseInt(line.quantity, 10) || 0;
   const money = lineMoneyTotals(line);
   return (
@@ -202,12 +217,19 @@ function IntakeLineRow({ line, photoUrls, isUploaded, showWarn, onOpen, onPrint,
           <IntakeLineMoneyValue line={line} kind="sale" />
         </span>
       </div>
-      <IntakeLineActions isUploaded={isUploaded} onPrint={onPrint} onCopy={onCopy} onDelete={onDelete} />
+      <IntakeLineActions
+        isUploaded={isUploaded}
+        synced={isLineWarehouseSynced(line)}
+        onPrint={onPrint}
+        onCopy={onCopy}
+        onDelete={onDelete}
+        onMarkSynced={onMarkSynced}
+      />
     </div>
   );
 }
 
-function IntakeLineGridCard({ line, photoUrls, isUploaded, showWarn, onOpen, onPrint, onCopy, onDelete }) {
+function IntakeLineGridCard({ line, photoUrls, isUploaded, showWarn, onOpen, onPrint, onCopy, onDelete, onMarkSynced }) {
   const qty = parseInt(line.quantity, 10) || 0;
   const money = lineMoneyTotals(line);
   const thumb = getLineThumbSrc(line, photoUrls);
@@ -245,7 +267,14 @@ function IntakeLineGridCard({ line, photoUrls, isUploaded, showWarn, onOpen, onP
             {money.qty > 0 ? formatKzt(money.saleTotal) : formatKzt(line.sale_price)}
           </span>
         </div>
-        <IntakeLineActions isUploaded={isUploaded} onPrint={onPrint} onCopy={onCopy} onDelete={onDelete} />
+        <IntakeLineActions
+        isUploaded={isUploaded}
+        synced={isLineWarehouseSynced(line)}
+        onPrint={onPrint}
+        onCopy={onCopy}
+        onDelete={onDelete}
+        onMarkSynced={onMarkSynced}
+      />
       </div>
     </div>
   );
@@ -531,6 +560,33 @@ function IntakeDetail() {
     };
   }, [lines]);
 
+  useEffect(() => {
+    if (!invoice || isUploaded || lines.length === 0) return;
+    const needsReconcile = lines.some(
+      (l) => !isLineWarehouseSynced(l) && String(l.barcode || '').trim().length >= 4,
+    );
+    if (!needsReconcile) return;
+    let cancelled = false;
+    (async () => {
+      const { lines: nextLines, marked } = await reconcileInvoiceWarehouseSync(lines);
+      if (cancelled || marked === 0) return;
+      await intakeApi.upsert({
+        id: invoice.id,
+        number: invoice.number,
+        date: invoice.date,
+        lines: nextLines,
+        uploaded: invoice.uploaded,
+        pending_warehouse_upload: invoice.pending_warehouse_upload,
+        uploaded_at: invoice.uploaded_at,
+      });
+      queryClient.invalidateQueries({ queryKey: ['intake-invoices'] });
+      toast.success(`Сверка со складом: ${marked} поз. уже на складе — повторно не загрузятся`);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [invoice?.id, isUploaded, lines, queryClient]);
+
   const summary = useMemo(() => computeInvoiceSummary(lines), [lines]);
 
   const saveInvoice = async (nextLines) => {
@@ -554,6 +610,7 @@ function IntakeDetail() {
       if (report.errors.length && report.created === 0 && report.updated === 0) {
         throw new Error(report.errors[0]);
       }
+      const allSynced = nextLines.length > 0 && nextLines.every(isLineWarehouseSynced);
       const now = new Date();
       const uploadedAt = `${String(now.getDate()).padStart(2, '0')}.${String(now.getMonth() + 1).padStart(2, '0')}.${now.getFullYear()} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
       await intakeApi.upsert({
@@ -561,17 +618,18 @@ function IntakeDetail() {
         number: invoice.number,
         date: invoice.date,
         lines: nextLines,
-        uploaded: true,
-        pending_warehouse_upload: false,
-        uploaded_at: uploadedAt,
+        uploaded: allSynced,
+        pending_warehouse_upload: !allSynced && (report.created > 0 || report.updated > 0),
+        uploaded_at: allSynced ? uploadedAt : invoice.uploaded_at,
       });
       return report;
     },
     onSuccess: (report) => {
       queryClient.invalidateQueries({ queryKey: ['intake-invoices'] });
       const photoMsg = report.photosUploaded > 0 ? `, фото ${report.photosUploaded}` : '';
-      toast.success(`На склад: создано ${report.created}, обновлено ${report.updated}${photoMsg}`);
-      if (report.errors.length) toast.error(report.errors.join('; '));
+      const skipMsg = report.skipped > 0 ? `, пропущено ${report.skipped}` : '';
+      toast.success(`На склад: создано ${report.created}, обновлено ${report.updated}${photoMsg}${skipMsg}`);
+      if (report.errors.length) toast.error(report.errors.slice(0, 3).join('; '));
     },
     onError: (e) => toast.error(getApiErrorMessage(e, String(e.message || e))),
   });
@@ -702,8 +760,50 @@ function IntakeDetail() {
     toast.success('Позиция удалена');
   };
 
+  const handleMarkSynced = async (index) => {
+    if (isUploaded) return;
+    const line = lines[index];
+    if (!line || isLineWarehouseSynced(line)) return;
+    if (
+      !window.confirm(
+        `Позиция «${line.name || 'без названия'}» уже на складе?\n\nОтметим её, чтобы при повторной загрузке количество не удвоилось.`,
+      )
+    ) {
+      return;
+    }
+    const next = [...lines];
+    next[index] = { ...next[index], warehouse_synced: true };
+    await saveInvoice(next);
+    toast.success('Позиция отмечена «На складе»');
+  };
+
+  const handleUploadClick = () => {
+    if (!invoice || lines.length === 0) return;
+    const pending = lines.filter((l) => !isLineWarehouseSynced(l));
+    if (pending.length === 0) {
+      toast.error('Все позиции уже на складе');
+      return;
+    }
+    const ready = pending.filter(isLineWarehouseReady).length;
+    const notReady = pending.length - ready;
+    if (ready === 0) {
+      toast.error('Нет готовых позиций. Обновите категорию у строк с предупреждением.');
+      return;
+    }
+    if (notReady > 0) {
+      if (
+        !window.confirm(
+          `Частичная загрузка\n\nГотово к складу: ${ready} из ${pending.length}.\n${notReady} поз. пропустят (категория не обновлена или не заполнена).\n\nЗагрузить только готовые?`,
+        )
+      ) {
+        return;
+      }
+    }
+    uploadMutation.mutate();
+  };
+
   const renderLine = ({ line: l, index }) => {
-    const showWarn = !isUploaded && !isLineWarehouseReady(l);
+    const showWarn = !isUploaded && !isLineWarehouseSynced(l) && !isLineWarehouseReady(l);
     const handlers = {
       onOpen: () => openLine(index, isUploaded),
       onPrint: (e) => {
@@ -718,6 +818,10 @@ function IntakeDetail() {
       onDelete: (e) => {
         e?.stopPropagation?.();
         handleDeleteLine(index);
+      },
+      onMarkSynced: (e) => {
+        e?.stopPropagation?.();
+        handleMarkSynced(index);
       },
     };
 
@@ -783,7 +887,7 @@ function IntakeDetail() {
           {!isUploaded && lines.length > 0 && (
             <Button
               icon={FiUpload}
-              onClick={() => uploadMutation.mutate()}
+              onClick={handleUploadClick}
               loading={uploadMutation.isPending}
             >
               В склад
@@ -818,6 +922,12 @@ function IntakeDetail() {
               {formatKzt(summary.saleKzt)}
             </div>
           </div>
+          {summary.syncedCount > 0 && !isUploaded && (
+            <div className="intake-summary-item intake-summary-item--done">
+              <div className="intake-summary-label">На складе</div>
+              <div className="intake-summary-value intake-summary-value-done">{summary.syncedCount}</div>
+            </div>
+          )}
           {summary.notReadyCount > 0 && !isUploaded && (
             <div className="intake-summary-item intake-summary-item--warn">
               <div className="intake-summary-label">Не готово к складу</div>

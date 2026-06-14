@@ -5859,6 +5859,9 @@ textarea {
 }
 
 .smart-search-field-input {
+  /* type=search в Safari рисует вторую кнопку «×» — оставляем только нашу */
+  -webkit-appearance: none;
+  appearance: none;
   flex: 1;
   min-width: 0;
   border: none !important;
@@ -5867,6 +5870,11 @@ textarea {
   padding: 11px 0 !important;
   font-size: 15px;
   font-weight: 600;
+}
+
+.smart-search-field-input::-webkit-search-cancel-button {
+  -webkit-appearance: none;
+  display: none;
 }
 
 .smart-search-field-input:focus {
@@ -6533,6 +6541,15 @@ textarea {
   background: rgba(245, 158, 11, 0.05);
 }
 
+.intake-summary-item--done {
+  border-left-color: var(--success);
+  background: rgba(34, 197, 94, 0.06);
+}
+
+.intake-summary-value-done {
+  color: var(--success);
+}
+
 .intake-summary-label {
   font-size: 11px;
   font-weight: 700;
@@ -6645,6 +6662,12 @@ textarea {
   border-color: var(--danger);
   color: var(--danger);
   background: rgba(239, 68, 68, 0.08);
+}
+
+.intake-icon-btn-success:hover {
+  border-color: var(--success);
+  color: var(--success);
+  background: rgba(34, 197, 94, 0.08);
 }
 
 .intake-line-thumb {
@@ -6779,6 +6802,13 @@ textarea {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.intake-chip--synced {
+  background: rgba(34, 197, 94, 0.1);
+  border-color: rgba(34, 197, 94, 0.35);
+  color: var(--success);
+}
 }
 
 .intake-line-meta-muted {
