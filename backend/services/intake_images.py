@@ -3,10 +3,7 @@ import os
 import re
 from pathlib import Path
 
-from PIL import UnidentifiedImageError
-
 from services.image_encode import (
-    MAX_IMAGE_DIMENSION,
     bytes_to_avif,
     intake_image_basename,
     is_safe_intake_image_name,
@@ -18,10 +15,6 @@ MAX_IMAGE_SIZE_BYTES = 5 * 1024 * 1024
 MAX_INTAKE_LINE_IMAGES = 12
 
 _SAFE_SEGMENT = re.compile(r"[^a-zA-Z0-9_-]+")
-_SAFE_INTAKE_BASENAME = re.compile(
-    r"^u\d+_[0-9a-zA-Z_-]{1,64}_[0-9a-zA-Z_-]{1,64}_[0-9a-f]{32}\.(?:avif|webp)$",
-    re.IGNORECASE,
-)
 
 
 def sanitize_segment(value: str, max_len: int = 48) -> str:
