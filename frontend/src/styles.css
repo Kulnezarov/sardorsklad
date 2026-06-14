@@ -11112,6 +11112,12 @@ textarea {
 .form-accordion--open {
   border-color: color-mix(in srgb, var(--primary) 18%, var(--border));
 }
+.form-accordion--always-open {
+  border-color: color-mix(in srgb, var(--primary) 12%, var(--border));
+}
+.form-accordion__head--static {
+  cursor: default;
+}
 .form-accordion__head {
   width: 100%;
   display: flex;

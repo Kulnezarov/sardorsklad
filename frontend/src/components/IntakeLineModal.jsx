@@ -892,11 +892,11 @@ export default function IntakeLineModal({
           </div>
 
           <FormAccordionSection
+            alwaysOpen
             title="Основное"
             subtitle="Название, марка и модель авто"
             icon={<FiPackage size={17} />}
             iconColor="var(--primary)"
-            initiallyExpanded
           >
             {form.category_id && selectedSubcategorySchema && (
               <ProductFormByLayout
@@ -914,11 +914,11 @@ export default function IntakeLineModal({
 
           {form.category_id && selectedSubcategorySchema && (
             <FormAccordionSection
+              alwaysOpen
               title="Характеристики"
               subtitle="Поля по выбранной категории"
               icon={<FiLayers size={17} />}
               iconColor="var(--primary)"
-              initiallyExpanded
             >
               <ProductFormByLayout
                 schema={selectedSubcategorySchema}
@@ -933,6 +933,7 @@ export default function IntakeLineModal({
           )}
 
           <FormAccordionSection
+            alwaysOpen
             title="Дополнительно"
             subtitle="Штрих-код, артикул, производитель"
             icon={<FiMoreHorizontal size={17} />}
@@ -1015,11 +1016,11 @@ export default function IntakeLineModal({
           </FormAccordionSection>
 
           <FormAccordionSection
+            alwaysOpen
             title="Закуп и продажа"
             subtitle="Юань, доставка и цена продажи"
             icon={<FiTruck size={17} />}
             iconColor="#0ea5e9"
-            initiallyExpanded
           >
             <FormField label="Закуп ¥">
               <input
@@ -1114,6 +1115,7 @@ export default function IntakeLineModal({
           </FormAccordionSection>
 
           <FormAccordionSection
+            alwaysOpen
             title="Склад"
             subtitle="Количество перед загрузкой"
             icon={<FiArchive size={17} />}
