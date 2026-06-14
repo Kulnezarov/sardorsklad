@@ -898,6 +898,16 @@ export default function IntakeLineModal({
             icon={<FiPackage size={17} />}
             iconColor="var(--primary)"
           >
+            <FormField label="Название" accent large hint="Как будет на складе и на этикетке">
+              <input
+                className="ios-input"
+                value={form.name}
+                onChange={(e) => setField('name', e.target.value)}
+                onBlur={() => capField('name')}
+                placeholder="Название товара"
+                readOnly={readonly}
+              />
+            </FormField>
             {form.category_id && selectedSubcategorySchema && (
               <ProductFormByLayout
                 schema={selectedSubcategorySchema}

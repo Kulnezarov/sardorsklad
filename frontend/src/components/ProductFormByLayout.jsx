@@ -216,6 +216,7 @@ export default function ProductFormByLayout({
     if (row.kind === 'locked') return;
     if (layoutSection === 'main') {
       if (row.kind === 'attribute') return;
+      if (row.kind === 'builtin' && row.key === 'name') return;
     } else if (layoutSection === 'attributes') {
       if (row.kind === 'builtin' || row.kind === 'compatibility') return;
     }
