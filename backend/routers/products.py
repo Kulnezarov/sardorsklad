@@ -4,8 +4,6 @@ import logging
 import os
 import re
 import threading
-import uuid
-from io import BytesIO
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -14,7 +12,7 @@ from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from fastapi.responses import JSONResponse, StreamingResponse
-from PIL import Image, ImageOps, UnidentifiedImageError
+from PIL import UnidentifiedImageError
 from sqlalchemy import func, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -45,6 +43,11 @@ from services.category_attributes import (
 )
 from services.form_layout import display_layout_from_form_layout, normalize_form_layout
 from services.product_display import sync_custom_fields_to_attributes
+from services.image_encode import (
+    bytes_to_avif,
+    is_safe_product_image_name,
+    product_image_basename,
+)
 
 router = APIRouter(
     prefix="/api/v1/products",
@@ -61,11 +64,8 @@ def build_generated_sku(db: Session) -> str:
 UPLOAD_DIR = Path(os.getenv("UPLOAD_DIR", "uploads")).resolve()
 PRODUCT_IMAGE_DIR = UPLOAD_DIR / "products"
 MAX_IMAGE_SIZE_BYTES = 5 * 1024 * 1024
-ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp"}
-MAX_IMAGE_DIMENSION = 1600
-WEBP_QUALITY = 78
+ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp", "image/avif"}
 MAX_PRODUCT_IMAGES = 12
-_SAFE_WEBP_BASENAME = re.compile(r"^\d+_[0-9a-f]{32}\.webp$", re.IGNORECASE)
 
 
 def _normalize_vehicle_text(value: str | None) -> str | None:
@@ -86,7 +86,7 @@ def _normalize_vehicle_text(value: str | None) -> str | None:
 
 
 def _delete_old_product_image_file(old_url: str | None) -> None:
-    """Удаляет WebP с диска по image_url: /uploads/products/... или /api/v1/media/product-images/..."""
+    """Удаляет AVIF/WebP с диска по image_url."""
     if not old_url or not isinstance(old_url, str):
         return
     p = (old_url or "").strip()
@@ -96,7 +96,7 @@ def _delete_old_product_image_file(old_url: str | None) -> None:
         name = p.rsplit("/", 1)[-1]
     else:
         return
-    if not _SAFE_WEBP_BASENAME.match(name):
+    if not is_safe_product_image_name(name):
         return
     path = (PRODUCT_IMAGE_DIR / name).resolve()
     try:
@@ -200,29 +200,6 @@ def _apply_engine_code_defaults(db: Session, payload: dict) -> None:
         payload["model"] = _normalize_vehicle_text(first_match.model)
 
 
-def _prepare_for_webp(img: Image.Image) -> Image.Image:
-    """JPEG/PNG/WebP → режим, с которым Pillow стабильно пишет WEBP."""
-    mode = img.mode
-    if mode == "CMYK":
-        return img.convert("RGB")
-    if mode == "P":
-        # Палитра: с прозрачностью → RGBA, иначе RGB
-        if "transparency" in img.info:
-            return img.convert("RGBA")
-        return img.convert("RGB")
-    if mode == "PA":
-        return img.convert("RGBA")
-    if mode == "L":
-        return img.convert("RGB")
-    if mode == "LA":
-        return img.convert("RGBA")
-    if mode in ("RGB", "RGBA"):
-        return img
-    has_a = "A" in (img.getbands() or ())
-    tr = bool(getattr(img, "has_transparency_data", False) or has_a)
-    return img.convert("RGBA" if tr else "RGB")
-
-
 def _product_gallery_urls(p: models.Product) -> list[str]:
     raw = getattr(p, "image_urls", None)
     urls: list[str] = []
@@ -254,24 +231,6 @@ def _persist_product_gallery(db_product: models.Product, urls: list[str]) -> Non
         clean.append(s)
     db_product.image_urls = clean if clean else None
     db_product.image_url = clean[0] if clean else None
-
-
-def _bytes_to_webp(data: bytes) -> tuple[bytes, int, int]:
-    with Image.open(BytesIO(data)) as img:
-        img = ImageOps.exif_transpose(img)
-        img = _prepare_for_webp(img)
-        img.thumbnail((MAX_IMAGE_DIMENSION, MAX_IMAGE_DIMENSION), Image.Resampling.LANCZOS)
-        w, h = int(img.size[0] or 0), int(img.size[1] or 0)
-        out = BytesIO()
-        img.save(
-            out,
-            format="WEBP",
-            quality=WEBP_QUALITY,
-            method=6,
-            lossless=False,
-            optimize=True,
-        )
-        return out.getvalue(), w, h
 
 
 def _inject_product_gallery(r: schemas.ProductResponse, p: models.Product) -> schemas.ProductResponse:
@@ -601,7 +560,7 @@ def product_images_health(
     limit: int = Query(5000, ge=1, le=20_000),
 ):
     """
-    Проверка, что file:// для image_url (локальный WebP) существует на диске.
+    Проверка, что file:// для image_url (локальный AVIF/WebP) существует на диске.
     Возвращает список битых ссылок для диагностики.
     """
     rows = (
@@ -630,7 +589,7 @@ def product_images_health(
                 ok_count += 1
                 continue
             name = u.rsplit("/", 1)[-1]
-            if not _SAFE_WEBP_BASENAME.match(name):
+            if not is_safe_product_image_name(name):
                 ok_count += 1
                 continue
             path = (PRODUCT_IMAGE_DIR / name).resolve()
@@ -972,7 +931,7 @@ async def upload_product_image(
     content_type = (file.content_type or "").lower()
     if content_type and not content_type.startswith("image/") and content_type != "application/octet-stream":
         logging.error("Unsupported upload content type: %s", content_type)
-        raise HTTPException(status_code=400, detail="Ожидается изображение JPG, PNG или WEBP")
+        raise HTTPException(status_code=400, detail="Ожидается изображение JPG, PNG, WebP или AVIF")
 
     cur = _product_gallery_urls(db_product)
     if len(cur) >= MAX_PRODUCT_IMAGES:
@@ -982,16 +941,19 @@ async def upload_product_image(
         )
 
     try:
-        encoded, w, h = _bytes_to_webp(data)
+        encoded, w, h = bytes_to_avif(data)
     except UnidentifiedImageError as e:
         logging.error("Unsupported image format for product %s: %s", product_id, e, exc_info=True)
         raise HTTPException(status_code=400, detail="Неподдерживаемый формат изображения")
+    except RuntimeError as e:
+        logging.getLogger(__name__).error("AVIF encoder unavailable: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail="Сервер не настроен для AVIF (pillow-avif-plugin)")
     except Exception as e:
         logging.getLogger(__name__).error("image upload failed: %s", e, exc_info=True)
         raise HTTPException(status_code=400, detail="Не удалось обработать изображение (проверьте формат PNG/JPEG/WebP)")
 
     PRODUCT_IMAGE_DIR.mkdir(parents=True, exist_ok=True)
-    file_name = f"{product_id}_{uuid.uuid4().hex}.webp"
+    file_name = product_image_basename(product_id)
     file_path = PRODUCT_IMAGE_DIR / file_name
     file_path.write_bytes(encoded)
 
@@ -1034,9 +996,9 @@ def delete_product_gallery_image(
     file_name: str,
     db: Session = Depends(get_db),
 ):
-    """Удалить одно фото галереи по имени файла (напр. 12_a1b2....webp)."""
+    """Удалить одно фото галереи по имени файла (напр. 12_a1b2....avif)."""
     base = (file_name or "").strip().rsplit("/", 1)[-1]
-    if not _SAFE_WEBP_BASENAME.match(base) or not base.lower().startswith(f"{product_id}_".lower()):
+    if not is_safe_product_image_name(base) or not base.lower().startswith(f"{product_id}_".lower()):
         raise HTTPException(status_code=400, detail="Некорректное имя файла")
     db_product = db.query(models.Product).filter(models.Product.id == product_id).first()
     if not db_product:
@@ -1110,7 +1072,7 @@ def delete_product(
                 raise HTTPException(status_code=500, detail="Не удалось освободить barcode/sku у архивного товара")
         return JSONResponse({"ok": True, "already_inactive": True, "released_unique_fields": changed})
 
-    # При архивировании удаляем локальные WebP галереи.
+    # При архивировании удаляем локальные AVIF/WebP галереи.
     for u in _product_gallery_urls(db_product):
         _delete_old_product_image_file(u)
     _persist_product_gallery(db_product, [])

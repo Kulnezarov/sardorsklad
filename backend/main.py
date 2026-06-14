@@ -360,10 +360,10 @@ def api_info():
 # Публичная раздача фото товаров под /api/v1/... (тот же префикс, что и API — Caddy: handle /api* → backend).
 # Браузер в <img> не шлёт JWT; путь /uploads/... часто уходит в nginx SPA и картинка «битая».
 _PRODUCT_IMG_DIR = (Path(os.getenv("UPLOAD_DIR", "uploads")).resolve() / "products")
-_SAFE_PRODUCT_IMG = re.compile(r"^\d+_[0-9a-f]{32}\.webp$", re.IGNORECASE)
 
 
 from services.intake_images import resolve_intake_image_path  # noqa: E402
+from services.image_encode import is_safe_product_image_name, media_type_for_filename  # noqa: E402
 
 
 @app.get("/api/v1/media/intake-images/{file_name}", include_in_schema=False)
@@ -374,15 +374,15 @@ def serve_intake_image_public(file_name: str):
         raise StarletteHTTPException(status_code=404, detail="Not found")
     return FileResponse(
         path,
-        media_type="image/webp",
+        media_type=media_type_for_filename(file_name),
         headers={"Cache-Control": "public, max-age=86400"},
     )
 
 
 @app.get("/api/v1/media/product-images/{file_name}", include_in_schema=False)
 def serve_product_image_public(file_name: str):
-    """WebP-файлы из uploads/products. Без авторизации (и витрина, и склад)."""
-    if not file_name or not _SAFE_PRODUCT_IMG.match(file_name):
+    """AVIF/WebP-файлы из uploads/products. Без авторизации (и витрина, и склад)."""
+    if not file_name or not is_safe_product_image_name(file_name):
         raise HTTPException(status_code=404, detail="Not found")
     path = (_PRODUCT_IMG_DIR / file_name).resolve()
     try:
@@ -393,7 +393,7 @@ def serve_product_image_public(file_name: str):
         raise HTTPException(status_code=404, detail="Not found")
     return FileResponse(
         path,
-        media_type="image/webp",
+        media_type=media_type_for_filename(file_name),
         headers={"Cache-Control": "public, max-age=86400"},
     )
 

@@ -624,7 +624,7 @@ const Warehouse = () => {
               Фото товара
             </div>
             <div className="muted-text" style={{ fontSize: 12, marginBottom: 10 }}>
-              До {MAX_PRODUCT_PHOTOS} снимков · на сервере WebP · сначала сохраните карточку
+              До {MAX_PRODUCT_PHOTOS} снимков · на сервере AVIF · сначала сохраните карточку
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10, maxWidth: 440 }}>
               <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start', flexWrap: 'wrap' }}>
