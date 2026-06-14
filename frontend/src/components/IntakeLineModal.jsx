@@ -149,6 +149,7 @@ export default function IntakeLineModal({
   const [showScanner, setShowScanner] = useState(false);
   const [compatPickerKey, setCompatPickerKey] = useState(0);
   const [compatInitialIds, setCompatInitialIds] = useState(EMPTY_COMPAT_IDS);
+  const [changeCategoryMode, setChangeCategoryMode] = useState(false);
 
   const resetCompatPicker = useCallback((ids = EMPTY_COMPAT_IDS) => {
     setCompatInitialIds(ids?.length ? [...ids] : EMPTY_COMPAT_IDS);
@@ -178,6 +179,15 @@ export default function IntakeLineModal({
     }
     return null;
   }, [categoryTree, form.category_group_id, form.category_id]);
+
+  const selectedSubcategory = useMemo(
+    () => findCategoryInTree(categoryTree, form.category_id),
+    [categoryTree, form.category_id],
+  );
+
+  const categoryChosen = Boolean(form.category_id);
+  const showCategoryStep = !readonly && (!categoryChosen || changeCategoryMode);
+  const showFillStep = readonly || (categoryChosen && !changeCategoryMode);
 
   const vehicleMode = selectedSubcategorySchema?.vehicle_mode || 'none';
   const liquidsGroup = /жидкост/i.test(selectedCategoryGroup?.name || '');
@@ -235,6 +245,7 @@ export default function IntakeLineModal({
 
   useEffect(() => {
     if (!isOpen) return;
+    setChangeCategoryMode(false);
     setDeliveryMode('normal');
     setCustomRate('');
     setKnownOnWarehouse(false);
@@ -589,9 +600,37 @@ export default function IntakeLineModal({
     }
   };
 
+  const handleCategoryChange = ({ groupId, categoryId }) => {
+    const sub = findCategoryInTree(categoryTree, categoryId);
+    setForm((prev) => {
+      const catChanged = categoryId && categoryId !== prev.category_id;
+      if (catChanged) resetCompatPicker([]);
+      return {
+        ...prev,
+        category_group_id: groupId,
+        category_id: categoryId,
+        category: sub?.name || prev.category,
+        attributes: catChanged && prev.category_id ? {} : (prev.attributes || {}),
+        compatibility_vehicle_model_ids:
+          catChanged && prev.category_id ? [] : prev.compatibility_vehicle_model_ids,
+        brand: catChanged && prev.category_id ? '' : prev.brand,
+        model: catChanged && prev.category_id ? '' : prev.model,
+      };
+    });
+    if (categoryId) setChangeCategoryMode(false);
+  };
+
+  const handleRequestCategoryChange = () => {
+    setChangeCategoryMode(true);
+  };
+
   const handleSave = async () => {
     if (readonly) {
       onClose();
+      return;
+    }
+    if (!form.category_id) {
+      toast.error('Сначала выберите группу и подкатегорию');
       return;
     }
     capField('name');
@@ -662,7 +701,17 @@ export default function IntakeLineModal({
       <Modal
         isOpen={isOpen}
         onClose={onClose}
-        title={readonly ? 'Просмотр позиции' : line ? 'Редактировать товар' : 'Новый товар'}
+        title={
+          readonly
+            ? 'Просмотр позиции'
+            : showCategoryStep
+              ? line
+                ? 'Выберите категорию'
+                : 'Новый товар'
+              : line
+                ? 'Редактировать товар'
+                : 'Новый товар'
+        }
         size="intake"
         actions={
           readonly ? (
@@ -672,6 +721,20 @@ export default function IntakeLineModal({
               </Button>
               <Button variant="secondary" onClick={onClose}>
                 Закрыть
+              </Button>
+            </>
+          ) : showCategoryStep ? (
+            <>
+              <Button
+                variant="secondary"
+                icon={FiPrinter}
+                onClick={() => setShowPrint(true)}
+                disabled={!form.barcode.trim()}
+              >
+                Печать
+              </Button>
+              <Button variant="secondary" onClick={onClose}>
+                Отмена
               </Button>
             </>
           ) : (
@@ -698,6 +761,91 @@ export default function IntakeLineModal({
           {readonly && (
             <div className="intake-form-banner intake-form-banner--readonly">
               Накладная на складе — только просмотр
+            </div>
+          )}
+
+          {showCategoryStep && (
+            <div className="product-wizard product-form-modal">
+              <div className="product-wizard-steps" aria-label="Шаги">
+                <div className="product-wizard-step product-wizard-step--active">
+                  <span className="product-wizard-step__num">1</span>
+                  <span className="product-wizard-step__label">Категория</span>
+                </div>
+                <div className="product-wizard-step__line" aria-hidden />
+                <div className="product-wizard-step product-wizard-step--pending">
+                  <span className="product-wizard-step__num">2</span>
+                  <span className="product-wizard-step__label">Заполнение</span>
+                </div>
+              </div>
+              <div className="product-wizard-panel">
+                <CategoryPicker
+                  key={line ? `intake-cat-${line.local_id}` : 'intake-new-category'}
+                  tree={categoryTree}
+                  groupId={form.category_group_id}
+                  categoryId={form.category_id}
+                  legacyCategoryText={line && !categoryChosen ? form.category || '' : ''}
+                  disabled={readonly}
+                  onChange={handleCategoryChange}
+                  stepCaption={line ? 'Позиция накладной' : 'Новый товар'}
+                  stepTitle="Выберите группу"
+                />
+                <p className="product-wizard-hint">
+                  {line && !categoryChosen
+                    ? 'Выберите группу и подкатегорию — шаблон полей подстроится под категорию.'
+                    : 'Сначала группа, затем подкатегория. Поля позиции откроются после выбора.'}
+                </p>
+                {line && !categoryChosen && form.category && (
+                  <div className="product-form-legacy-banner">
+                    Позиция по старой схеме. Выберите категорию — цены и количество сохранятся.
+                  </div>
+                )}
+                {changeCategoryMode && (
+                  <button
+                    type="button"
+                    className="product-wizard-cancel-change"
+                    onClick={() => setChangeCategoryMode(false)}
+                  >
+                    Отмена — оставить текущую категорию
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+
+          {showFillStep && (
+            <>
+          {!readonly && !line && (
+            <div className="product-wizard-steps product-wizard-steps--compact" aria-label="Шаги">
+              <div className="product-wizard-step product-wizard-step--done">
+                <span className="product-wizard-step__num">✓</span>
+                <span className="product-wizard-step__label">Категория</span>
+              </div>
+              <div className="product-wizard-step__line product-wizard-step__line--done" aria-hidden />
+              <div className="product-wizard-step product-wizard-step--active">
+                <span className="product-wizard-step__num">2</span>
+                <span className="product-wizard-step__label">Заполнение</span>
+              </div>
+            </div>
+          )}
+
+          {selectedCategoryGroup && selectedSubcategory && (
+            <div className="product-category-summary">
+              <span className="product-category-summary__emoji">{selectedCategoryGroup.icon || '📦'}</span>
+              <div className="product-category-summary__text">
+                <span className="product-category-summary__caption">Категория</span>
+                <strong>
+                  {selectedCategoryGroup.name} → {selectedSubcategory.name}
+                </strong>
+              </div>
+              {!readonly && (
+                <button
+                  type="button"
+                  className="product-category-summary__change"
+                  onClick={handleRequestCategoryChange}
+                >
+                  Изменить
+                </button>
+              )}
             </div>
           )}
 
@@ -761,35 +909,6 @@ export default function IntakeLineModal({
             iconColor="var(--primary)"
             initiallyExpanded
           >
-            <CategoryPicker
-              tree={categoryTree}
-              groupId={form.category_group_id}
-              categoryId={form.category_id}
-              legacyCategoryText={!form.category_id ? (form.category || '') : ''}
-              disabled={readonly}
-              onChange={({ groupId, categoryId }) => {
-                const sub = findCategoryInTree(categoryTree, categoryId);
-                setForm((prev) => {
-                  const catChanged = categoryId && categoryId !== prev.category_id;
-                  if (catChanged) resetCompatPicker([]);
-                  return {
-                    ...prev,
-                    category_group_id: groupId,
-                    category_id: categoryId,
-                    category: sub?.name || prev.category,
-                    attributes: catChanged && prev.category_id ? {} : (prev.attributes || {}),
-                    compatibility_vehicle_model_ids: catChanged && prev.category_id ? [] : prev.compatibility_vehicle_model_ids,
-                    brand: catChanged && prev.category_id ? '' : prev.brand,
-                    model: catChanged && prev.category_id ? '' : prev.model,
-                  };
-                });
-              }}
-            />
-            {!form.category_id && !readonly && (
-              <p className="product-form-category-gate" style={{ margin: 0 }}>
-                Выберите подкатегорию — ниже появятся поля по шаблону. Цены и артикул можно заполнить уже сейчас.
-              </p>
-            )}
             {form.category_id && selectedSubcategorySchema && (
               <ProductFormByLayout
                 schema={selectedSubcategorySchema}
@@ -797,7 +916,7 @@ export default function IntakeLineModal({
                 onFormDataChange={setIntakeFormData}
                 disabled={readonly}
                 categoryGroupName={selectedCategoryGroup?.name || ''}
-                categoryName={findCategoryInTree(categoryTree, form.category_id)?.name || form.category || ''}
+                categoryName={selectedSubcategory?.name || form.category || ''}
                 compatibilitySlot={compatibilityPickerSlot}
               />
             )}
@@ -1032,6 +1151,8 @@ export default function IntakeLineModal({
                 </div>
               </div>
             </div>
+          )}
+            </>
           )}
         </div>
       </Modal>
