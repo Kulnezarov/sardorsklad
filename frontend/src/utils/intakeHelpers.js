@@ -62,7 +62,9 @@ export function isLineWarehouseReady(line) {
   const name = (line.name || '').trim();
   const qty = intakeLineQty(line);
   const sale = num(line.sale_price);
-  return Boolean(name && qty > 0 && sale > 0);
+  const categoryOk = Boolean(line.category_id);
+  const catalogOk = !line.needs_catalog_update || line.catalog_updated;
+  return Boolean(name && qty > 0 && sale > 0 && categoryOk && catalogOk);
 }
 
 export function computeInvoiceSummary(lines) {
@@ -173,6 +175,16 @@ export async function uploadInvoiceLinesToWarehouse(lines, cnyRate) {
     const name = (l.name || '').trim();
     if (!name) {
       report.errors.push('Пустое название позиции');
+      updatedLines.push(l);
+      continue;
+    }
+    if (!l.category_id) {
+      report.errors.push(`${name}: не выбрана категория`);
+      updatedLines.push(l);
+      continue;
+    }
+    if (l.needs_catalog_update && !l.catalog_updated) {
+      report.errors.push(`${name}: товар не обновлён под новый каталог`);
       updatedLines.push(l);
       continue;
     }

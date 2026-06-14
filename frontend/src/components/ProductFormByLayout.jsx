@@ -96,6 +96,8 @@ export default function ProductFormByLayout({
   fieldErrors = {},
   categoryName = '',
   categoryGroupName = '',
+  /** all | main (name, brand, model, compat) | attributes (template fields only) */
+  layoutSection = 'all',
 }) {
   const nameTouchedRef = useRef(false);
   const layout = normalizeFormLayout(schema?.form_layout, schema);
@@ -212,11 +214,17 @@ export default function ProductFormByLayout({
   const contentRows = [];
   layout.forEach((row) => {
     if (row.kind === 'locked') return;
+    if (layoutSection === 'main') {
+      if (row.kind === 'attribute') return;
+    } else if (layoutSection === 'attributes') {
+      if (row.kind === 'builtin' || row.kind === 'compatibility') return;
+    }
     if (row.kind === 'builtin') {
       if (!['name', 'brand', 'model'].includes(row.key)) return;
       if ((row.key === 'brand' || row.key === 'model') && !wantsBrandModel) return;
     }
     if (row.kind === 'compatibility') {
+      if (layoutSection === 'attributes') return;
       contentRows.push({ type: 'compat', row });
       return;
     }
@@ -243,7 +251,12 @@ export default function ProductFormByLayout({
   });
   flushFields();
 
-  if (compatibilitySlot && wantsCompatibility && !rows.some((b) => b.type === 'compat')) {
+  if (
+    layoutSection !== 'attributes'
+    && compatibilitySlot
+    && wantsCompatibility
+    && !rows.some((b) => b.type === 'compat')
+  ) {
     let insertAt = 0;
     for (let i = 0; i < rows.length; i += 1) {
       const block = rows[i];

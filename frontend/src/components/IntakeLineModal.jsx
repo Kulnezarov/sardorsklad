@@ -14,6 +14,8 @@ import {
   FiArchive,
   FiTruck,
   FiMoreHorizontal,
+  FiAlertCircle,
+  FiLayers,
 } from 'react-icons/fi';
 import { Button, Modal, TextArea } from './ui';
 import LabelPrint from './LabelPrint';
@@ -150,6 +152,8 @@ export default function IntakeLineModal({
   const [compatPickerKey, setCompatPickerKey] = useState(0);
   const [compatInitialIds, setCompatInitialIds] = useState(EMPTY_COMPAT_IDS);
   const [changeCategoryMode, setChangeCategoryMode] = useState(false);
+  const [needsCatalogUpdate, setNeedsCatalogUpdate] = useState(false);
+  const [catalogUpdated, setCatalogUpdated] = useState(false);
 
   const resetCompatPicker = useCallback((ids = EMPTY_COMPAT_IDS) => {
     setCompatInitialIds(ids?.length ? [...ids] : EMPTY_COMPAT_IDS);
@@ -186,8 +190,9 @@ export default function IntakeLineModal({
   );
 
   const categoryChosen = Boolean(form.category_id);
-  const showCategoryStep = !readonly && (!categoryChosen || changeCategoryMode);
-  const showFillStep = readonly || (categoryChosen && !changeCategoryMode);
+  const showCategoryStep = !readonly && !categoryChosen;
+  const showFillStep = readonly || categoryChosen;
+  const showCategoryPickerExpanded = changeCategoryMode;
 
   const vehicleMode = selectedSubcategorySchema?.vehicle_mode || 'none';
   const liquidsGroup = /жидкост/i.test(selectedCategoryGroup?.name || '');
@@ -246,6 +251,8 @@ export default function IntakeLineModal({
   useEffect(() => {
     if (!isOpen) return;
     setChangeCategoryMode(false);
+    setNeedsCatalogUpdate(Boolean(line?.needs_catalog_update));
+    setCatalogUpdated(Boolean(line?.catalog_updated || (line?.category_id && !line?.needs_catalog_update)));
     setDeliveryMode('normal');
     setCustomRate('');
     setKnownOnWarehouse(false);
@@ -404,6 +411,9 @@ export default function IntakeLineModal({
       const history = await fetchCnyHistory(bc);
       setCnyHistory(history);
       setKnownOnWarehouse(true);
+      const legacyProduct = Boolean(p.is_legacy_category || p.needs_category_refresh);
+      setNeedsCatalogUpdate(legacyProduct);
+      setCatalogUpdated(!legacyProduct);
       let syncDelKzt = null;
       setForm((f) => {
         const next = { ...f };
@@ -617,7 +627,10 @@ export default function IntakeLineModal({
         model: catChanged && prev.category_id ? '' : prev.model,
       };
     });
-    if (categoryId) setChangeCategoryMode(false);
+    if (categoryId) {
+      setChangeCategoryMode(false);
+      if (needsCatalogUpdate) setCatalogUpdated(true);
+    }
   };
 
   const handleRequestCategoryChange = () => {
@@ -631,6 +644,10 @@ export default function IntakeLineModal({
     }
     if (!form.category_id) {
       toast.error('Сначала выберите группу и подкатегорию');
+      return;
+    }
+    if (needsCatalogUpdate && !catalogUpdated) {
+      toast.error('Обновите категорию — без этого загрузка на склад запрещена');
       return;
     }
     capField('name');
@@ -677,6 +694,8 @@ export default function IntakeLineModal({
       purchase_kzt: roundMoney2(purchasePreview),
       sale_price: roundMoney2(num(form.sale_price)) > 0 ? roundMoney2(num(form.sale_price)) : null,
       quantity: form.quantity.trim() ? parseInt(form.quantity, 10) || null : null,
+      needs_catalog_update: needsCatalogUpdate,
+      catalog_updated: catalogUpdated || (!needsCatalogUpdate && Boolean(form.category_id)),
     };
     const wh = photos.filter((p) => p.kind === 'warehouse').map((p) => p.url);
     const pending = photos.filter((p) => p.kind === 'pending').map((p) => p.src);
@@ -799,15 +818,6 @@ export default function IntakeLineModal({
                     Позиция по старой схеме. Выберите категорию — цены и количество сохранятся.
                   </div>
                 )}
-                {changeCategoryMode && (
-                  <button
-                    type="button"
-                    className="product-wizard-cancel-change"
-                    onClick={() => setChangeCategoryMode(false)}
-                  >
-                    Отмена — оставить текущую категорию
-                  </button>
-                )}
               </div>
             </div>
           )}
@@ -825,27 +835,6 @@ export default function IntakeLineModal({
                 <span className="product-wizard-step__num">2</span>
                 <span className="product-wizard-step__label">Заполнение</span>
               </div>
-            </div>
-          )}
-
-          {selectedCategoryGroup && selectedSubcategory && (
-            <div className="product-category-summary">
-              <span className="product-category-summary__emoji">{selectedCategoryGroup.icon || '📦'}</span>
-              <div className="product-category-summary__text">
-                <span className="product-category-summary__caption">Категория</span>
-                <strong>
-                  {selectedCategoryGroup.name} → {selectedSubcategory.name}
-                </strong>
-              </div>
-              {!readonly && (
-                <button
-                  type="button"
-                  className="product-category-summary__change"
-                  onClick={handleRequestCategoryChange}
-                >
-                  Изменить
-                </button>
-              )}
             </div>
           )}
 
@@ -904,7 +893,7 @@ export default function IntakeLineModal({
 
           <FormAccordionSection
             title="Основное"
-            subtitle="Категория, характеристики и цена продажи"
+            subtitle="Название, марка и модель авто"
             icon={<FiPackage size={17} />}
             iconColor="var(--primary)"
             initiallyExpanded
@@ -915,46 +904,122 @@ export default function IntakeLineModal({
                 formData={intakeFormData}
                 onFormDataChange={setIntakeFormData}
                 disabled={readonly}
+                layoutSection="main"
                 categoryGroupName={selectedCategoryGroup?.name || ''}
                 categoryName={selectedSubcategory?.name || form.category || ''}
                 compatibilitySlot={compatibilityPickerSlot}
               />
             )}
-            <FormField label="Продажа ₸" accent large hint="Перед загрузкой на склад">
-              <input
-                className="ios-input"
-                type="number"
-                value={form.sale_price}
-                onChange={(e) => setField('sale_price', e.target.value)}
-                placeholder="0"
-                readOnly={readonly}
-              />
-            </FormField>
           </FormAccordionSection>
 
+          {form.category_id && selectedSubcategorySchema && (
+            <FormAccordionSection
+              title="Характеристики"
+              subtitle="Поля по выбранной категории"
+              icon={<FiLayers size={17} />}
+              iconColor="var(--primary)"
+              initiallyExpanded
+            >
+              <ProductFormByLayout
+                schema={selectedSubcategorySchema}
+                formData={intakeFormData}
+                onFormDataChange={setIntakeFormData}
+                disabled={readonly}
+                layoutSection="attributes"
+                categoryGroupName={selectedCategoryGroup?.name || ''}
+                categoryName={selectedSubcategory?.name || form.category || ''}
+              />
+            </FormAccordionSection>
+          )}
+
           <FormAccordionSection
-            title="Склад"
-            subtitle="Количество перед загрузкой"
-            icon={<FiArchive size={17} />}
-            iconColor="var(--warning)"
+            title="Дополнительно"
+            subtitle="Штрих-код, артикул, производитель"
+            icon={<FiMoreHorizontal size={17} />}
+            iconColor="#7c3aed"
           >
-            <FormField label="Количество" hint="Сколько единиц добавить на склад">
+            <FormField label="Штрих-код" mono>
+              <div className="intake-form-barcode-row">
+                <input
+                  className="ios-input intake-form-input-mono"
+                  value={form.barcode}
+                  onChange={(e) => setField('barcode', e.target.value)}
+                  placeholder="EAN-13"
+                  readOnly={readonly}
+                />
+                {!readonly && (
+                  <>
+                    <button
+                      type="button"
+                      className="intake-form-tool-btn"
+                      title="Новый штрих-код"
+                      onClick={() => {
+                        setField('barcode', generateEAN13());
+                        clearWarehouseLookup();
+                      }}
+                    >
+                      <FiRefreshCw size={18} />
+                    </button>
+                    <button
+                      type="button"
+                      className="intake-form-tool-btn intake-form-tool-btn--primary"
+                      title="Сканировать камерой"
+                      onClick={() => setShowScanner(true)}
+                    >
+                      <FiCamera size={18} />
+                    </button>
+                  </>
+                )}
+              </div>
+            </FormField>
+            {lookingUp && <div className="intake-form-progress" />}
+            {knownOnWarehouse && !lookingUp && !readonly && !needsCatalogUpdate && (
+              <div className="intake-form-banner intake-form-banner--success">
+                Товар найден на складе — поля заполнены
+              </div>
+            )}
+            {knownOnWarehouse && needsCatalogUpdate && !catalogUpdated && !readonly && (
+              <div className="intake-form-banner intake-form-banner--warn">
+                <FiAlertCircle size={16} style={{ flexShrink: 0 }} />
+                Товар на складе не обновлён — выберите категорию внизу, иначе загрузка запрещена
+              </div>
+            )}
+            <FormField label="Артикул" hint="OEM / внутренний код — подставит данные со склада">
               <input
                 className="ios-input"
-                type="number"
-                value={form.quantity}
-                onChange={(e) => setField('quantity', e.target.value)}
-                placeholder="0"
+                value={form.sku}
+                onChange={(e) => setField('sku', e.target.value)}
+                onBlur={() => capField('sku')}
                 readOnly={readonly}
+              />
+            </FormField>
+            <FormField label="Производитель">
+              <input
+                className="ios-input"
+                value={form.manufacturer}
+                onChange={(e) => setField('manufacturer', e.target.value)}
+                onBlur={() => capField('manufacturer')}
+                placeholder="Завод, бренд OEM…"
+                readOnly={readonly}
+              />
+            </FormField>
+            <FormField label="Доп. информация">
+              <TextArea
+                value={form.extra_info}
+                onChange={(e) => setField('extra_info', e.target.value)}
+                placeholder="Примечание, комплектация…"
+                readOnly={readonly}
+                rows={3}
               />
             </FormField>
           </FormAccordionSection>
 
           <FormAccordionSection
-            title="Доставка и закуп"
-            subtitle="Юань, тариф и доставка в тenge"
+            title="Закуп и продажа"
+            subtitle="Юань, доставка и цена продажи"
             icon={<FiTruck size={17} />}
             iconColor="#0ea5e9"
+            initiallyExpanded
           >
             <FormField label="Закуп ¥">
               <input
@@ -1036,91 +1101,93 @@ export default function IntakeLineModal({
                 readOnly={readonly}
               />
             </FormField>
-            {purchasePreview > 0 && (
-              <div className="form-purchase-total">
-                <span className="form-purchase-total__label">Закуп ₸</span>
-                <strong className="form-purchase-total__value">
-                  {purchasePreview.toLocaleString('ru-RU')} ₸
-                </strong>
-              </div>
-            )}
+            <FormField label="Продажа ₸" accent large hint="Перед загрузкой на склад">
+              <input
+                className="ios-input"
+                type="number"
+                value={form.sale_price}
+                onChange={(e) => setField('sale_price', e.target.value)}
+                placeholder="0"
+                readOnly={readonly}
+              />
+            </FormField>
           </FormAccordionSection>
 
           <FormAccordionSection
-            title="Дополнительно"
-            subtitle="Штрих-код, артикул, производитель"
-            icon={<FiMoreHorizontal size={17} />}
-            iconColor="#7c3aed"
+            title="Склад"
+            subtitle="Количество перед загрузкой"
+            icon={<FiArchive size={17} />}
+            iconColor="var(--warning)"
           >
-            <FormField label="Штрих-код" mono>
-              <div className="intake-form-barcode-row">
-                <input
-                  className="ios-input intake-form-input-mono"
-                  value={form.barcode}
-                  onChange={(e) => setField('barcode', e.target.value)}
-                  placeholder="EAN-13"
-                  readOnly={readonly}
-                />
-                {!readonly && (
-                  <>
-                    <button
-                      type="button"
-                      className="intake-form-tool-btn"
-                      title="Новый штрих-код"
-                      onClick={() => {
-                        setField('barcode', generateEAN13());
-                        clearWarehouseLookup();
-                      }}
-                    >
-                      <FiRefreshCw size={18} />
-                    </button>
-                    <button
-                      type="button"
-                      className="intake-form-tool-btn intake-form-tool-btn--primary"
-                      title="Сканировать камерой"
-                      onClick={() => setShowScanner(true)}
-                    >
-                      <FiCamera size={18} />
-                    </button>
-                  </>
-                )}
-              </div>
-            </FormField>
-            {lookingUp && <div className="intake-form-progress" />}
-            {knownOnWarehouse && !lookingUp && !readonly && (
-              <div className="intake-form-banner intake-form-banner--success">
-                Товар найден на складе — поля заполнены
-              </div>
-            )}
-            <FormField label="Артикул" hint="OEM / внутренний код — подставит данные со склада">
+            <FormField label="Количество" hint="Сколько единиц добавить на склад">
               <input
                 className="ios-input"
-                value={form.sku}
-                onChange={(e) => setField('sku', e.target.value)}
-                onBlur={() => capField('sku')}
+                type="number"
+                value={form.quantity}
+                onChange={(e) => setField('quantity', e.target.value)}
+                placeholder="0"
                 readOnly={readonly}
-              />
-            </FormField>
-            <FormField label="Производитель">
-              <input
-                className="ios-input"
-                value={form.manufacturer}
-                onChange={(e) => setField('manufacturer', e.target.value)}
-                onBlur={() => capField('manufacturer')}
-                placeholder="Завод, бренд OEM…"
-                readOnly={readonly}
-              />
-            </FormField>
-            <FormField label="Доп. информация">
-              <TextArea
-                value={form.extra_info}
-                onChange={(e) => setField('extra_info', e.target.value)}
-                placeholder="Примечание, комплектация…"
-                readOnly={readonly}
-                rows={3}
               />
             </FormField>
           </FormAccordionSection>
+
+          <div className="intake-form-category-foot">
+            {showCategoryPickerExpanded && !readonly ? (
+              <div className="intake-form-category-foot__picker">
+                <CategoryPicker
+                  key={`intake-foot-${line?.local_id || 'new'}-${form.category_id || 'none'}`}
+                  tree={categoryTree}
+                  groupId={form.category_group_id}
+                  categoryId={form.category_id}
+                  legacyCategoryText={form.category || ''}
+                  disabled={readonly}
+                  onChange={handleCategoryChange}
+                  stepCaption={needsCatalogUpdate && !catalogUpdated ? 'Обновление' : 'Категория'}
+                  stepTitle={needsCatalogUpdate && !catalogUpdated ? 'Выберите новую категорию' : 'Изменить категорию'}
+                />
+                {changeCategoryMode && categoryChosen && (
+                  <button
+                    type="button"
+                    className="product-wizard-cancel-change"
+                    onClick={() => setChangeCategoryMode(false)}
+                  >
+                    Свернуть — оставить текущую категорию
+                  </button>
+                )}
+              </div>
+            ) : selectedCategoryGroup && selectedSubcategory ? (
+              <div className="product-category-summary product-category-summary--compact">
+                <span className="product-category-summary__emoji">{selectedCategoryGroup.icon || '📦'}</span>
+                <div className="product-category-summary__text">
+                  <span className="product-category-summary__caption">Категория</span>
+                  <strong>
+                    {selectedCategoryGroup.name} → {selectedSubcategory.name}
+                  </strong>
+                </div>
+                {!readonly && (
+                  <>
+                    {needsCatalogUpdate && !catalogUpdated ? (
+                      <button
+                        type="button"
+                        className="product-category-summary__change product-category-summary__change--warn"
+                        onClick={() => setChangeCategoryMode(true)}
+                      >
+                        Обновить
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        className="product-category-summary__change"
+                        onClick={handleRequestCategoryChange}
+                      >
+                        Изменить
+                      </button>
+                    )}
+                  </>
+                )}
+              </div>
+            ) : null}
+          </div>
 
           {positionTotalsPreview && (
             <div className="form-summary-card">
