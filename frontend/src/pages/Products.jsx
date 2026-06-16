@@ -739,9 +739,32 @@ const Products = () => {
 
   useEffect(() => {
     const pid = searchParams.get('product');
-    if (!pid || !products.length) return;
-    const p = products.find((x) => String(x.id) === pid);
-    if (p) { setSideProduct(p); setSearchParams((prev) => { const n = new URLSearchParams(prev); n.delete('product'); return n; }, { replace: true }); }
+    if (!pid) return;
+    const found = products.find((x) => String(x.id) === pid);
+    if (found) {
+      setSideProduct(found);
+      setSearchParams((prev) => {
+        const n = new URLSearchParams(prev);
+        n.delete('product');
+        return n;
+      }, { replace: true });
+      return;
+    }
+    if (!products.length) return;
+    let cancelled = false;
+    productApi.getById(pid)
+      .then(({ data }) => {
+        if (!cancelled && data) {
+          setSideProduct(data);
+          setSearchParams((prev) => {
+            const n = new URLSearchParams(prev);
+            n.delete('product');
+            return n;
+          }, { replace: true });
+        }
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
   }, [products, searchParams, setSearchParams]);
 
   useEffect(() => {

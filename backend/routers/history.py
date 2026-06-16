@@ -2,8 +2,8 @@ from datetime import UTC, datetime, timedelta
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import desc
-from sqlalchemy.orm import Session
+from sqlalchemy import String, cast, desc, or_
+from sqlalchemy.orm import Session, joinedload
 
 import models
 import schemas
@@ -25,8 +25,9 @@ def list_history(
     operation_type: Optional[str] = Query(None),
     product_id: Optional[int] = Query(None),
     reference_type: Optional[str] = Query(None),
+    search: Optional[str] = Query(None, min_length=1, max_length=200),
 ):
-    query = db.query(models.History)
+    query = db.query(models.History).options(joinedload(models.History.product))
 
     if operation_type:
         query = query.filter(models.History.operation_type == operation_type)
@@ -34,6 +35,26 @@ def list_history(
         query = query.filter(models.History.product_id == product_id)
     if reference_type:
         query = query.filter(models.History.reference_type == reference_type)
+
+    if search and search.strip():
+        term = f"%{search.strip()}%"
+        product_match = (
+            db.query(models.Product.id)
+            .filter(
+                or_(
+                    models.Product.name.ilike(term),
+                    models.Product.sku.ilike(term),
+                    models.Product.barcode.ilike(term),
+                )
+            )
+            .subquery()
+        )
+        query = query.filter(
+            or_(
+                models.History.product_id.in_(product_match),
+                cast(models.History.details, String).ilike(term),
+            )
+        )
 
     return query.order_by(desc(models.History.created_at)).offset(skip).limit(limit).all()
 

@@ -672,6 +672,19 @@ class AcceptToStockPayload(BaseModel):
 
 
 # ── HistoryResponse ───────────────────────────────────────────────────────────
+class HistoryProductSnippet(BaseModel):
+    id: int
+    name: str
+    sku: Optional[str] = None
+    barcode: Optional[str] = None
+    quantity: int = 0
+    sale_price: Optional[Money10_2] = None
+    purchase_price: Optional[Money10_2] = None
+    image_url: Optional[str] = None
+
+    model_config = {"from_attributes": True}
+
+
 class HistoryResponse(BaseModel):
     id: int
     product_id: Optional[int]
@@ -681,6 +694,7 @@ class HistoryResponse(BaseModel):
     reference_id: Optional[int]
     details: Optional[Any]
     created_at: datetime
+    product: Optional[HistoryProductSnippet] = None
 
     model_config = {"from_attributes": True}
 

@@ -1,15 +1,17 @@
-import React, { useState, useMemo, useCallback } from 'react';
+import React, { useState, useMemo, useCallback, useEffect } from 'react';
 import { createPortal } from 'react-dom';
+import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 import {
   FiPlus, FiEdit2, FiTrash2, FiPackage, FiDownload,
   FiX, FiRotateCcw, FiTag, FiDollarSign, FiClipboard,
   FiSearch, FiCheck, FiChevronDown, FiAlertTriangle,
-  FiClock, FiArchive, FiShoppingBag,
+  FiClock, FiArchive, FiShoppingBag, FiExternalLink,
 } from 'react-icons/fi';
 import { historyApi } from '../api/history';
 import { salesApi } from '../api/sales';
+import { resolveUploadedAssetUrl } from '../api/client';
 
 /* ── operation config ── */
 const OP = {
@@ -103,10 +105,33 @@ function downloadCSV(filename, headers, rows) {
   URL.revokeObjectURL(url);
 }
 
+function getEditDiff(details) {
+  if (!details) return null;
+  const oldValues = details.old_values || details.before;
+  const newValues = details.new_values || details.after;
+  if (!oldValues || !newValues) return null;
+  return { oldValues, newValues };
+}
+
+const FIELD_LABELS = {
+  name: 'Название',
+  sku: 'Артикул',
+  barcode: 'Штрих-код',
+  quantity: 'Количество',
+  sale_price: 'Продажа',
+  purchase_price: 'Закуп',
+  cny_price: 'Закуп ¥',
+  delivery_cost_kzt: 'Доставка',
+};
+
+function humanFieldLabel(key) {
+  return FIELD_LABELS[key] || key.replace(/_/g, ' ');
+}
+
 function getOpDescription(item) {
   if (item.details?.message) return item.details.message;
   const op = OP[item.operation_type];
-  const name = item.details?.product_name || item.details?.name || '';
+  const name = item.product?.name || item.details?.product_name || item.details?.name || '';
   if (name) return `${op?.label || item.operation_type}: ${name}`;
   return op?.label || item.operation_type;
 }
@@ -153,10 +178,13 @@ function Field({ label, children }) {
 ═══════════════════════════════════════════════ */
 const History = () => {
   const qc = useQueryClient();
+  const navigate = useNavigate();
 
   /* ── state ── */
   const [mainTab, setMainTab] = useState('logistics');
   const [opFilter, setOpFilter] = useState('all');
+  const [logisticsSearchInput, setLogisticsSearchInput] = useState('');
+  const [logisticsSearch, setLogisticsSearch] = useState('');
   const [salesPeriod, setSalesPeriod] = useState('today');
   const [salesSearch, setSalesSearch] = useState('');
   const [selectedIds, setSelectedIds] = useState(new Set());
@@ -168,11 +196,18 @@ const History = () => {
   const [exportType, setExportType] = useState('logistics');
   const [exportPeriod, setExportPeriod] = useState('all');
 
+  useEffect(() => {
+    const timer = setTimeout(() => setLogisticsSearch(logisticsSearchInput.trim()), 300);
+    return () => clearTimeout(timer);
+  }, [logisticsSearchInput]);
+
   /* ── queries ── */
   const { data: historyItems = [], isLoading: hLoading } = useQuery({
-    queryKey: ['history'],
+    queryKey: ['history', logisticsSearch],
     queryFn: async () => {
-      const r = await historyApi.getHistory();
+      const params = { limit: 500 };
+      if (logisticsSearch) params.search = logisticsSearch;
+      const r = await historyApi.getHistory(params);
       return r.data;
     },
   });
@@ -386,6 +421,24 @@ const History = () => {
               })}
             </div>
 
+            <div className="history-sales-toolbar" style={{ marginBottom: 16 }}>
+              <div style={{ position: 'relative', flex: 1 }}>
+                <FiSearch
+                  size={15}
+                  style={{
+                    position: 'absolute', left: 12, top: '50%',
+                    transform: 'translateY(-50%)', color: 'var(--text-muted)',
+                  }}
+                />
+                <input
+                  placeholder="Поиск по товару, артикулу, штрих-коду..."
+                  value={logisticsSearchInput}
+                  onChange={(e) => setLogisticsSearchInput(e.target.value)}
+                  style={{ ...inputStyle, paddingLeft: 36 }}
+                />
+              </div>
+            </div>
+
             {/* Timeline */}
             {hLoading ? (
               <div className="reserve-empty">
@@ -422,6 +475,11 @@ const History = () => {
                           </div>
                           <div className="history-entry-body">
                             <div className="history-entry-text">{getOpDescription(item)}</div>
+                            {item.product?.name && item.product.name !== getOpDescription(item) && (
+                              <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>
+                                {item.product.sku ? `${item.product.sku} · ` : ''}{item.product.name}
+                              </div>
+                            )}
                             {item.quantity_change != null && item.quantity_change !== 0 && (
                               <span
                                 className="history-qty-badge"
@@ -682,6 +740,14 @@ const History = () => {
                   label: sideItem.operation_type, color: '#888',
                   bg: 'rgba(0,0,0,0.06)', emoji: '•',
                 };
+                const product = sideItem.product;
+                const editDiff = sideItem.operation_type === 'edited'
+                  ? getEditDiff(sideItem.details)
+                  : null;
+                const productImage = product?.image_url
+                  ? resolveUploadedAssetUrl(String(product.image_url).split('?')[0].trim())
+                  : '';
+
                 return (
                   <>
                     {/* Type badge */}
@@ -705,6 +771,79 @@ const History = () => {
                     <div style={{ fontWeight: 700, fontSize: 17, color: 'var(--text)', marginBottom: 20 }}>
                       {getOpDescription(sideItem)}
                     </div>
+
+                    {/* Product card */}
+                    {product && (
+                      <div
+                        style={{
+                          display: 'flex', gap: 14, padding: 14, marginBottom: 20,
+                          borderRadius: 16, border: '1px solid var(--border)',
+                          background: 'var(--bg-secondary)',
+                        }}
+                      >
+                        {productImage ? (
+                          <img
+                            src={productImage}
+                            alt={product.name}
+                            style={{
+                              width: 72, height: 72, borderRadius: 12,
+                              objectFit: 'cover', flexShrink: 0,
+                              border: '1px solid var(--border)',
+                            }}
+                          />
+                        ) : (
+                          <div
+                            style={{
+                              width: 72, height: 72, borderRadius: 12,
+                              background: 'var(--surface)', flexShrink: 0,
+                              display: 'flex', alignItems: 'center', justifyContent: 'center',
+                              fontSize: 28, border: '1px solid var(--border)',
+                            }}
+                          >
+                            📦
+                          </div>
+                        )}
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontWeight: 800, fontSize: 15, color: 'var(--text)', marginBottom: 6 }}>
+                            {product.name}
+                          </div>
+                          {product.sku && (
+                            <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 2 }}>
+                              Артикул: {product.sku}
+                            </div>
+                          )}
+                          {product.barcode && (
+                            <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 8 }}>
+                              Штрих-код: {product.barcode}
+                            </div>
+                          )}
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, fontSize: 13 }}>
+                            <span>Остаток: <b>{product.quantity ?? 0} шт.</b></span>
+                            {product.sale_price != null && (
+                              <span>Продажа: <b>₸ {money(product.sale_price)}</b></span>
+                            )}
+                            {product.purchase_price != null && (
+                              <span>Закуп: <b>₸ {money(product.purchase_price)}</b></span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {(product?.id || sideItem.product_id) && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const pid = product?.id || sideItem.product_id;
+                          setSideItem(null);
+                          navigate(`/products?product=${pid}`);
+                        }}
+                        className="reserve-primary-btn"
+                        style={{ width: '100%', marginBottom: 20, justifyContent: 'center' }}
+                      >
+                        <FiExternalLink size={16} /> Открыть товар
+                      </button>
+                    )}
 
                     {/* Properties grid */}
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 20 }}>
@@ -746,9 +885,7 @@ const History = () => {
                     </div>
 
                     {/* Diff view for edited items */}
-                    {sideItem.operation_type === 'edited' &&
-                      sideItem.details?.old_values &&
-                      sideItem.details?.new_values && (
+                    {editDiff && (
                         <div style={{ marginBottom: 20 }}>
                           <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 10, color: 'var(--text)' }}>
                             Было / Стало
@@ -761,9 +898,9 @@ const History = () => {
                               }}
                             >
                               <div style={{ fontSize: 11, fontWeight: 700, color: '#ef4444', marginBottom: 8 }}>БЫЛО</div>
-                              {Object.entries(sideItem.details.old_values).map(([k, v]) => (
+                              {Object.entries(editDiff.oldValues).map(([k, v]) => (
                                 <div key={k} style={{ fontSize: 13, marginBottom: 4 }}>
-                                  <span style={{ color: 'var(--text-muted)' }}>{k}: </span>
+                                  <span style={{ color: 'var(--text-muted)' }}>{humanFieldLabel(k)}: </span>
                                   <span style={{ textDecoration: 'line-through', color: '#ef4444' }}>{String(v)}</span>
                                 </div>
                               ))}
@@ -775,9 +912,9 @@ const History = () => {
                               }}
                             >
                               <div style={{ fontSize: 11, fontWeight: 700, color: '#22c55e', marginBottom: 8 }}>СТАЛО</div>
-                              {Object.entries(sideItem.details.new_values).map(([k, v]) => (
+                              {Object.entries(editDiff.newValues).map(([k, v]) => (
                                 <div key={k} style={{ fontSize: 13, marginBottom: 4 }}>
-                                  <span style={{ color: 'var(--text-muted)' }}>{k}: </span>
+                                  <span style={{ color: 'var(--text-muted)' }}>{humanFieldLabel(k)}: </span>
                                   <span style={{ fontWeight: 600, color: '#22c55e' }}>{String(v)}</span>
                                 </div>
                               ))}
