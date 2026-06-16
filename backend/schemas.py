@@ -180,6 +180,38 @@ class ProductCategoryUpdate(BaseModel):
         return v
 
 
+class ProductCategoryBulkUpdate(BaseModel):
+    """Массовое обновление категории без изменения цен и остатка."""
+    product_ids: List[int] = Field(..., min_length=1)
+    subcategory_id: int = Field(..., ge=1, description="ID подкатегории (Category с parent_id)")
+    attributes: Optional[dict[str, Any]] = None
+    car_compatibility: Optional[dict[str, list[str]]] = None
+    compatibility_vehicle_model_ids: Optional[List[int]] = None
+    update_compatibility: bool = Field(
+        False,
+        description="Если true — применить совместимость ко всем; иначе оставить у каждого товара свою",
+    )
+
+    @field_validator("product_ids", mode="before")
+    @classmethod
+    def _bulk_nonempty_ids(cls, v):
+        ids = [int(x) for x in (v or []) if int(x) > 0]
+        if not ids:
+            raise ValueError("Укажите хотя бы один товар")
+        return ids
+
+    @field_validator("compatibility_vehicle_model_ids", mode="before")
+    @classmethod
+    def _bulk_cat_empty_ids(cls, v):
+        if v == [] or v is None:
+            return None
+        return v
+
+
+class ProductCategoryBulkResponse(BaseModel):
+    updated: int
+
+
 # ── Справочник авто-совместимости (CRUD) ──────────────────────────────────
 
 

@@ -213,6 +213,8 @@ export const productApi = {
   },
   create: (data) => apiClient.post('/api/v1/products', data),
   update: (id, data) => apiClient.put(`/api/v1/products/${id}`, data),
+  updateCategory: (id, data) => apiClient.patch(`/api/v1/products/${id}/update-category`, data),
+  bulkUpdateCategory: (data) => apiClient.post('/api/v1/products/bulk/update-category', data),
   setStorefrontBulk: (productIds, showOnStorefront) =>
     apiClient.post('/api/v1/products/storefront/bulk', {
       product_ids: productIds,

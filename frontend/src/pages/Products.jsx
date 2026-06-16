@@ -29,6 +29,7 @@ import { generateEAN13 } from '../utils/barcodeGen';
 import { productMatchesSearch } from '../utils/smartSearch';
 import LabelPrint from '../components/LabelPrint';
 import SkuConflictModal from '../components/SkuConflictModal';
+import BulkCategoryUpdateModal from '../components/BulkCategoryUpdateModal';
 import JsBarcode from 'jsbarcode';
 
 const MAX_PRODUCT_PHOTOS = 12;
@@ -240,6 +241,10 @@ function isStale(p) {
   return now - stockDate > STALE_MS;
 }
 
+function isLegacyProduct(p) {
+  return Boolean(p?.is_legacy_category || p?.needs_category_refresh);
+}
+
 /* ── component ── */
 const Products = () => {
   const location = useLocation();
@@ -336,6 +341,7 @@ const Products = () => {
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [selectedIds, setSelectedIds] = useState([]);
   const [bulkEditOpen, setBulkEditOpen] = useState(false);
+  const [bulkCategoryOpen, setBulkCategoryOpen] = useState(false);
   const [bulkForm, setBulkForm] = useState({
     name: '',
     brand: '',
@@ -1516,11 +1522,30 @@ const Products = () => {
     () => displayProducts.filter((p) => selectedIds.includes(p.id)),
     [displayProducts, selectedIds],
   );
-  const canBulkEdit = useMemo(() => {
+  const selectedLegacyProducts = useMemo(
+    () => selectedProducts.filter(isLegacyProduct),
+    [selectedProducts],
+  );
+  const canBulkCategoryUpdate = selectedLegacyProducts.length > 0;
+  const canBulkPricesEdit = useMemo(() => {
     if (selectedProducts.length < 2) return false;
+    if (selectedProducts.some(isLegacyProduct)) return false;
+    const catId = selectedProducts[0]?.category_id;
+    if (catId) return selectedProducts.every((p) => p.category_id === catId);
     const cat = selectedProducts[0]?.category || '';
     return selectedProducts.every((p) => (p.category || '') === cat);
   }, [selectedProducts]);
+
+  const legacyGroups = useMemo(() => {
+    const map = new Map();
+    for (const p of displayProducts) {
+      if (!isLegacyProduct(p)) continue;
+      const key = (p.category || '').trim() || 'Без категории';
+      if (!map.has(key)) map.set(key, []);
+      map.get(key).push(p.id);
+    }
+    return [...map.entries()].sort((a, b) => b[1].length - a[1].length);
+  }, [displayProducts]);
 
   const bulkMutation = useMutation({
     mutationFn: async () => {
@@ -1754,6 +1779,13 @@ const Products = () => {
   );
   const totalPurchaseValue = Number(productsStats?.warehouse_value ?? pagedPurchaseValue);
   const totalCatalog = productsStats?.total_products != null ? Number(productsStats.total_products) : null;
+  const migrationStats = useMemo(() => {
+    const legacy = Number(productsStats?.needs_refresh_count ?? needsRefreshCount) || 0;
+    const total = totalCatalog ?? (legacy + (products.length - needsRefreshCount));
+    const updated = Math.max(0, total - legacy);
+    const pct = total > 0 ? Math.round((updated / total) * 100) : 100;
+    return { legacy, total, updated, pct };
+  }, [productsStats, totalCatalog, needsRefreshCount, products.length]);
 
   const handleRefreshCatalog = useCallback(async () => {
     await Promise.all([
@@ -1820,6 +1852,9 @@ const Products = () => {
           <p style={{ margin: '5px 0 0', fontSize: 13, color: 'var(--text-muted)', fontWeight: 500 }}>
             {products.length} из {totalCatalog != null ? totalCatalog : '…'} в каталоге
             {storefrontFilter ? ` · фильтр витрины` : ` · на сайте ${storefrontOnCount}`}
+            {migrationStats.legacy > 0 && (
+              <> · обновлено {migrationStats.updated} из {migrationStats.total} ({migrationStats.pct}%)</>
+            )}
             {showStale && displayProducts.length !== products.length ? ` · показано ${displayProducts.length}` : ''}
             {' · '}
             {Math.round(totalPurchaseValue).toLocaleString('ru-RU')} ₸
@@ -1846,17 +1881,22 @@ const Products = () => {
               </button>
               <button
                 type="button"
-                onClick={() => {
-                  if (!canBulkEdit) {
-                    toast.error('Для массового редактирования выберите товары одной категории');
-                    return;
-                  }
-                  setBulkEditOpen(true);
-                }}
-                style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '9px 14px', borderRadius: 12, border: '1px solid var(--border)', background: 'var(--surface)', fontWeight: 600, fontSize: 13 }}
+                onClick={() => setBulkCategoryOpen(true)}
+                disabled={!canBulkCategoryUpdate}
+                title={canBulkCategoryUpdate ? 'Перевести выбранные на новую категорию' : 'Выберите товары со старой категорией'}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '9px 14px', borderRadius: 12, border: '1px solid rgba(245,158,11,0.35)', background: 'rgba(245,158,11,0.1)', fontWeight: 600, fontSize: 13, color: '#b45309', opacity: canBulkCategoryUpdate ? 1 : 0.45, cursor: canBulkCategoryUpdate ? 'pointer' : 'not-allowed' }}
               >
-                Массово ({selectedIds.length})
+                Обновить категорию ({selectedLegacyProducts.length})
               </button>
+              {canBulkPricesEdit && (
+                <button
+                  type="button"
+                  onClick={() => setBulkEditOpen(true)}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '9px 14px', borderRadius: 12, border: '1px solid var(--border)', background: 'var(--surface)', fontWeight: 600, fontSize: 13 }}
+                >
+                  Цены и остаток ({selectedIds.length})
+                </button>
+              )}
             </>
           )}
           <button
@@ -1970,6 +2010,22 @@ const Products = () => {
             <FiClock size={13} style={{ marginRight: 5 }} />Залежалось {staleCount > 0 && <span style={{ marginLeft: 4, background: showStale ? '#fbbf24' : '#fde047', border: '1px solid', borderColor: showStale ? '#d97706' : '#f59e0b', borderRadius: 8, padding: '1px 6px', fontSize: 11 }}>{staleCount}</span>}
           </button>
         </div>
+        {(legacyOnlyFilter || needsRefreshFilter) && legacyGroups.length > 0 && (
+          <div style={{ marginTop: 10, display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+            <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-muted)' }}>Группы:</span>
+            {legacyGroups.slice(0, 8).map(([name, ids]) => (
+              <button
+                key={name}
+                type="button"
+                className="catalog-chip"
+                onClick={() => setSelectedIds(ids)}
+                title={`Выбрать все «${name}» (${ids.length})`}
+              >
+                {name} ({ids.length})
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* ── Table (виртуальный скролл: в DOM только видимые строки + буфер) ── */}
@@ -2773,7 +2829,7 @@ const Products = () => {
       <Modal
         isOpen={bulkEditOpen}
         onClose={() => setBulkEditOpen(false)}
-        title="Массовое редактирование"
+        title="Массово: цены и остаток"
         size="md"
         actions={(
           <>
@@ -2783,7 +2839,7 @@ const Products = () => {
         )}
       >
         <p style={{ marginTop: 0, color: 'var(--text-muted)', fontSize: 13 }}>
-          Только товары одной категории. Пустое поле не изменяет текущее значение.
+          Только для товаров с новой категорией, одной подкатегории. Пустое поле не изменяет текущее значение.
         </p>
         <div style={{ display: 'grid', gap: 10 }}>
           <Input label="Название" value={bulkForm.name} onChange={(e) => setBulkForm((p) => ({ ...p, name: e.target.value }))} />
@@ -2794,6 +2850,20 @@ const Products = () => {
           <Input label="Количество" type="number" value={bulkForm.quantity} onChange={(e) => setBulkForm((p) => ({ ...p, quantity: e.target.value }))} />
         </div>
       </Modal>
+
+      <BulkCategoryUpdateModal
+        isOpen={bulkCategoryOpen}
+        onClose={() => setBulkCategoryOpen(false)}
+        products={selectedLegacyProducts}
+        categoryTree={categoryTree}
+        vehicleBrands={vehicleBrands}
+        vehicleModels={vehicleModels}
+        onSuccess={() => {
+          queryClient.invalidateQueries({ queryKey: ['products'] });
+          queryClient.invalidateQueries({ queryKey: ['products-stats'] });
+          setSelectedIds([]);
+        }}
+      />
 
       {/* ── Диалог подтверждения смены категории ── */}
       {confirmCategoryChange && (

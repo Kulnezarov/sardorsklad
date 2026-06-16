@@ -546,11 +546,26 @@ def get_product_stats(db: Session = Depends(get_db)):
         func.sum(models.Product.purchase_price * models.Product.quantity)
     ).filter(models.Product.is_active == True).scalar() or 0
 
+    legacy_count = db.query(func.count(models.Product.id)).filter(
+        models.Product.is_active == True,
+        models.Product.category_id.is_(None),
+    ).scalar() or 0
+
+    needs_refresh_count = db.query(func.count(models.Product.id)).filter(
+        models.Product.is_active == True,
+        or_(
+            models.Product.category_id.is_(None),
+            models.Product.needs_category_refresh.is_(True),
+        ),
+    ).scalar() or 0
+
     return {
         "total_products": total,
         "low_stock_count": low_stock,
         "stale_count": stale,
         "warehouse_value": float(total_value),
+        "legacy_count": int(legacy_count),
+        "needs_refresh_count": int(needs_refresh_count),
     }
 
 
@@ -850,6 +865,100 @@ def update_product(
     return _product_to_response(db, db_product)
 
 
+def _apply_product_category_update(
+    db: Session,
+    db_product: models.Product,
+    *,
+    subcategory_id: int,
+    attributes: Optional[dict] = None,
+    car_compatibility: Optional[dict] = None,
+    compatibility_vehicle_model_ids: Optional[List[int]] = None,
+    update_compatibility: bool = True,
+    strict: bool = True,
+) -> None:
+    sub = db.query(models.Category).filter(models.Category.id == subcategory_id).first()
+    if not sub or not sub.parent_id:
+        raise HTTPException(status_code=400, detail="Выберите подкатегорию, а не группу")
+
+    prev_cat = db_product.category_id
+    if subcategory_id != prev_cat:
+        attrs = attributes if attributes is not None else {}
+    else:
+        attrs = attributes if attributes is not None else db_product.attributes
+
+    merged = {"category_id": subcategory_id, "attributes": attrs}
+    _apply_product_category_fields(db, merged, strict=strict)
+    db_product.category_id = merged.get("category_id")
+    db_product.attributes = merged.get("attributes")
+    if merged.get("display_layout") is not None:
+        db_product.display_layout = merged["display_layout"]
+    db_product.category = sub.name
+    db_product.needs_category_refresh = False
+
+    if not update_compatibility:
+        return
+
+    v_ids = compatibility_vehicle_model_ids
+    if v_ids is None and car_compatibility:
+        v_ids = resolve_car_compatibility_to_model_ids(db, car_compatibility)
+    if car_compatibility is not None:
+        db_product.car_compatibility = car_compatibility
+    elif v_ids:
+        db_product.car_compatibility = build_car_compatibility_from_model_ids(db, v_ids)
+
+    if v_ids is not None:
+        apply_product_compatibility(db, db_product, vehicle_model_ids=v_ids, engine_family_ids=None)
+
+
+@router.post("/bulk/update-category", response_model=schemas.ProductCategoryBulkResponse)
+def bulk_update_product_category(
+    body: schemas.ProductCategoryBulkUpdate,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_manager_or_admin),
+):
+    """Массово обновить категорию, характеристики и (опционально) совместимость."""
+    ids = list(dict.fromkeys(body.product_ids))
+    rows = db.query(models.Product).filter(models.Product.id.in_(ids)).all()
+    if not rows:
+        raise HTTPException(status_code=404, detail="Товары не найдены")
+
+    attrs = body.attributes
+    if attrs is not None:
+        attrs = {k: v for k, v in attrs.items() if v is not None and str(v).strip() != ""}
+        if not attrs:
+            attrs = None
+
+    for db_product in rows:
+        _apply_product_category_update(
+            db,
+            db_product,
+            subcategory_id=body.subcategory_id,
+            attributes=attrs,
+            car_compatibility=body.car_compatibility,
+            compatibility_vehicle_model_ids=body.compatibility_vehicle_model_ids,
+            update_compatibility=body.update_compatibility,
+            strict=False,
+        )
+
+    write_audit_log(
+        db,
+        user_id=current_user.id,
+        action="BULK_UPDATE_PRODUCT_CATEGORY",
+        entity_type="product",
+        entity_id=None,
+        payload={"product_ids": ids, "subcategory_id": body.subcategory_id, "count": len(rows)},
+    )
+    try:
+        db.commit()
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="Не удалось массово обновить категорию")
+    return schemas.ProductCategoryBulkResponse(updated=len(rows))
+
+
 @router.patch("/{product_id}/update-category", response_model=schemas.ProductResponse)
 @router.patch("/{product_id}/update-category/", response_model=schemas.ProductResponse)
 def update_product_category(
@@ -863,35 +972,16 @@ def update_product_category(
     if not db_product:
         raise HTTPException(status_code=404, detail="Product not found")
 
-    sub = db.query(models.Category).filter(models.Category.id == payload.subcategory_id).first()
-    if not sub or not sub.parent_id:
-        raise HTTPException(status_code=400, detail="Выберите подкатегорию, а не группу")
-
-    prev_cat = db_product.category_id
-    if payload.subcategory_id != prev_cat:
-        attrs = payload.attributes if payload.attributes is not None else {}
-    else:
-        attrs = payload.attributes if payload.attributes is not None else db_product.attributes
-
-    merged = {"category_id": payload.subcategory_id, "attributes": attrs}
-    _apply_product_category_fields(db, merged, strict=True)
-    db_product.category_id = merged.get("category_id")
-    db_product.attributes = merged.get("attributes")
-    if merged.get("display_layout") is not None:
-        db_product.display_layout = merged["display_layout"]
-    db_product.category = sub.name
-    db_product.needs_category_refresh = False
-
-    v_ids = payload.compatibility_vehicle_model_ids
-    if v_ids is None and payload.car_compatibility:
-        v_ids = resolve_car_compatibility_to_model_ids(db, payload.car_compatibility)
-    if payload.car_compatibility is not None:
-        db_product.car_compatibility = payload.car_compatibility
-    elif v_ids:
-        db_product.car_compatibility = build_car_compatibility_from_model_ids(db, v_ids)
-
-    if v_ids is not None:
-        apply_product_compatibility(db, db_product, vehicle_model_ids=v_ids, engine_family_ids=None)
+    _apply_product_category_update(
+        db,
+        db_product,
+        subcategory_id=payload.subcategory_id,
+        attributes=payload.attributes,
+        car_compatibility=payload.car_compatibility,
+        compatibility_vehicle_model_ids=payload.compatibility_vehicle_model_ids,
+        update_compatibility=True,
+        strict=True,
+    )
 
     write_audit_log(
         db,
@@ -903,6 +993,9 @@ def update_product_category(
     )
     try:
         db.commit()
+    except HTTPException:
+        db.rollback()
+        raise
     except Exception:
         db.rollback()
         raise HTTPException(status_code=500, detail="Не удалось обновить категорию товара")
