@@ -72,6 +72,35 @@ export function isLineWarehouseReady(line) {
   return Boolean(name && qty > 0 && sale > 0 && categoryOk && catalogOk);
 }
 
+/** Можно ли загрузить накладную на склад (все позиции готовы, ничего не загружено ранее). */
+export function canUploadInvoiceToWarehouse(lines, { uploaded = false } = {}) {
+  if (uploaded) {
+    return { ok: false, message: 'Накладная уже на складе — сначала отмените загрузку' };
+  }
+  if (!lines.length) {
+    return { ok: false, message: 'Накладная пуста' };
+  }
+  if (lines.some(isLineWarehouseSynced)) {
+    return { ok: false, message: 'Часть позиций уже на складе — нажмите «Отменить загрузку»' };
+  }
+  const notReady = lines.filter((l) => !isLineWarehouseReady(l)).length;
+  if (notReady > 0) {
+    return {
+      ok: false,
+      message: `Не все позиции готовы к складу (${notReady} из ${lines.length})`,
+    };
+  }
+  return { ok: true };
+}
+
+/** Накладная была загружена (полностью или частично) — можно отменить. */
+export function canRevertInvoiceWarehouse(invoice, lines) {
+  if (!invoice) return false;
+  if (invoice.uploaded === true) return true;
+  if (invoice.pending_warehouse_upload === true) return true;
+  return lines.some(isLineWarehouseSynced);
+}
+
 export function computeInvoiceSummary(lines) {
   let purchaseKzt = 0;
   let saleKzt = 0;
@@ -91,36 +120,6 @@ export function computeInvoiceSummary(lines) {
     notReadyCount: notReady,
     syncedCount: synced,
   };
-}
-
-/** Пометить строки, уже лежащие на складе (по штрих-коду), чтобы не дублировать при повторной загрузке. */
-export async function reconcileInvoiceWarehouseSync(lines) {
-  const next = [];
-  let marked = 0;
-  for (const raw of lines) {
-    const l = raw;
-    if (isLineWarehouseSynced(l)) {
-      next.push(l);
-      continue;
-    }
-    const bc = String(l.barcode || '').trim();
-    if (bc.length < 4) {
-      next.push(l);
-      continue;
-    }
-    try {
-      const res = await productApi.getByBarcode(bc, { allow404: true });
-      if (res.status === 200 && res.data) {
-        next.push({ ...l, warehouse_synced: true });
-        marked += 1;
-      } else {
-        next.push(l);
-      }
-    } catch {
-      next.push(l);
-    }
-  }
-  return { lines: next, marked };
 }
 
 export function lineToProductForPrint(line) {
@@ -204,35 +203,18 @@ export async function addCnyHistory({ barcode, cny, deliveryKzt, productId }) {
   });
 }
 
-/** Загрузка позиций накладной на склад (как в мобильном приложении). */
+/** Загрузка позиций накладной на склад — только если все строки готовы. */
 export async function uploadInvoiceLinesToWarehouse(lines, cnyRate) {
-  const report = { created: 0, updated: 0, photosUploaded: 0, skipped: 0, errors: [] };
+  const check = canUploadInvoiceToWarehouse(lines);
+  if (!check.ok) {
+    throw new Error(check.message);
+  }
+
+  const report = { created: 0, updated: 0, photosUploaded: 0, errors: [] };
   const updatedLines = [];
   for (const raw of lines) {
     const l = raw;
     const name = (l.name || '').trim();
-    if (isLineWarehouseSynced(l)) {
-      updatedLines.push(l);
-      continue;
-    }
-    if (!name) {
-      report.errors.push('Пустое название позиции');
-      report.skipped = (report.skipped || 0) + 1;
-      updatedLines.push(l);
-      continue;
-    }
-    if (!l.category_id) {
-      report.errors.push(`${name}: не выбрана категория`);
-      report.skipped = (report.skipped || 0) + 1;
-      updatedLines.push(l);
-      continue;
-    }
-    if (l.needs_catalog_update && !l.catalog_updated) {
-      report.errors.push(`${name}: товар не обновлён под новый каталог`);
-      report.skipped = (report.skipped || 0) + 1;
-      updatedLines.push(l);
-      continue;
-    }
     try {
       const barcode = String(l.barcode || '').trim();
       const body = {

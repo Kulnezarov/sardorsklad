@@ -16,6 +16,7 @@ from services.intake_images import (
     MAX_INTAKE_LINE_IMAGES,
     save_intake_line_image,
 )
+from services.intake_warehouse_revert import revert_intake_warehouse_upload
 
 router = APIRouter(
     tags=["intake_invoices"],
@@ -127,6 +128,41 @@ def upsert_intake_invoice(
     db.commit()
     db.refresh(row)
     return _to_response(row)
+
+
+@router.post(
+    "/api/v1/intake-invoices/client/{client_id}/revert-warehouse",
+    response_model=schemas.IntakeInvoiceRevertWarehouseResponse,
+)
+def revert_intake_invoice_warehouse(
+    client_id: str,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(require_manager_or_admin),
+):
+    """Снять загруженные позиции со склада и вернуть накладную в редактирование."""
+    cid = client_id.strip()
+    row = (
+        db.query(models.IntakeInvoice)
+        .filter(
+            models.IntakeInvoice.user_id == user.id,
+            models.IntakeInvoice.client_id == cid,
+        )
+        .first()
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+    try:
+        report = revert_intake_warehouse_upload(db, row, user.id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return schemas.IntakeInvoiceRevertWarehouseResponse(
+        removed=report.get("removed", 0),
+        updated=report.get("updated", 0),
+        skipped=report.get("skipped", 0),
+        warnings=list(report.get("warnings") or []),
+        errors=list(report.get("errors") or []),
+        invoice=_to_response(row),
+    )
 
 
 @router.post("/api/v1/intake-invoices/client/{client_id}/lines/{line_local_id}/image")

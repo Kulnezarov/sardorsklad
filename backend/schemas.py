@@ -1207,3 +1207,12 @@ class IntakeInvoiceResponse(BaseModel):
 
 class IntakeInvoiceNextNumberResponse(BaseModel):
     next: int
+
+
+class IntakeInvoiceRevertWarehouseResponse(BaseModel):
+    removed: int = 0
+    updated: int = 0
+    skipped: int = 0
+    warnings: List[str] = Field(default_factory=list)
+    errors: List[str] = Field(default_factory=list)
+    invoice: IntakeInvoiceResponse

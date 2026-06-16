@@ -6597,6 +6597,12 @@ textarea {
   color: var(--success);
 }
 
+.intake-alert-warn {
+  background: rgba(245, 158, 11, 0.1);
+  border: 1px solid rgba(245, 158, 11, 0.28);
+  color: var(--warning);
+}
+
 .intake-empty {
   display: flex;
   flex-direction: column;

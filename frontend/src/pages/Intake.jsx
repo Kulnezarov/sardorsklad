@@ -18,6 +18,7 @@ import {
   FiCheckCircle,
   FiClock,
   FiAlertCircle,
+  FiRotateCcw,
 } from 'react-icons/fi';
 import { Button, LoadingSpinner, Modal } from '../components/ui';
 import IntakeAddFab from '../components/IntakeAddFab';
@@ -30,6 +31,8 @@ import { generateEAN13 } from '../utils/barcodeGen';
 import {
   computeInvoiceSummary,
   copyIntakeLine,
+  canRevertInvoiceWarehouse,
+  canUploadInvoiceToWarehouse,
   fetchLinePhotoUrlsByBarcode,
   getLineThumbSrc,
   intakeLineQty,
@@ -42,7 +45,6 @@ import {
   matchesSmartSearch,
   newIntakeLineId,
   num,
-  reconcileInvoiceWarehouseSync,
   uploadInvoiceLinesToWarehouse,
   warehouseProductToIntakeLine,
 } from '../utils/intakeHelpers';
@@ -136,7 +138,7 @@ function IntakeLineChips({ line }) {
   );
 }
 
-function IntakeLineActions({ isUploaded, synced, onPrint, onCopy, onDelete, onMarkSynced }) {
+function IntakeLineActions({ isUploaded, onPrint, onCopy, onDelete }) {
   return (
     <div className="intake-line-actions" onClick={(e) => e.stopPropagation()}>
       <button type="button" className="intake-icon-btn" title="Печать этикетки" onClick={onPrint}>
@@ -144,16 +146,6 @@ function IntakeLineActions({ isUploaded, synced, onPrint, onCopy, onDelete, onMa
       </button>
       {!isUploaded && (
         <>
-          {!synced && (
-            <button
-              type="button"
-              className="intake-icon-btn intake-icon-btn-success"
-              title="Уже на складе — не загружать повторно"
-              onClick={onMarkSynced}
-            >
-              <FiCheckCircle size={14} />
-            </button>
-          )}
           <button type="button" className="intake-icon-btn" title="Копия" onClick={onCopy}>
             <FiCopy size={14} />
           </button>
@@ -171,7 +163,7 @@ function IntakeLineActions({ isUploaded, synced, onPrint, onCopy, onDelete, onMa
   );
 }
 
-function IntakeLineRow({ line, photoUrls, isUploaded, showWarn, onOpen, onPrint, onCopy, onDelete, onMarkSynced }) {
+function IntakeLineRow({ line, photoUrls, isUploaded, showWarn, onOpen, onPrint, onCopy, onDelete }) {
   const qty = parseInt(line.quantity, 10) || 0;
   const money = lineMoneyTotals(line);
   return (
@@ -217,19 +209,12 @@ function IntakeLineRow({ line, photoUrls, isUploaded, showWarn, onOpen, onPrint,
           <IntakeLineMoneyValue line={line} kind="sale" />
         </span>
       </div>
-      <IntakeLineActions
-        isUploaded={isUploaded}
-        synced={isLineWarehouseSynced(line)}
-        onPrint={onPrint}
-        onCopy={onCopy}
-        onDelete={onDelete}
-        onMarkSynced={onMarkSynced}
-      />
+      <IntakeLineActions isUploaded={isUploaded} onPrint={onPrint} onCopy={onCopy} onDelete={onDelete} />
     </div>
   );
 }
 
-function IntakeLineGridCard({ line, photoUrls, isUploaded, showWarn, onOpen, onPrint, onCopy, onDelete, onMarkSynced }) {
+function IntakeLineGridCard({ line, photoUrls, isUploaded, showWarn, onOpen, onPrint, onCopy, onDelete }) {
   const qty = parseInt(line.quantity, 10) || 0;
   const money = lineMoneyTotals(line);
   const thumb = getLineThumbSrc(line, photoUrls);
@@ -267,14 +252,7 @@ function IntakeLineGridCard({ line, photoUrls, isUploaded, showWarn, onOpen, onP
             {money.qty > 0 ? formatKzt(money.saleTotal) : formatKzt(line.sale_price)}
           </span>
         </div>
-        <IntakeLineActions
-        isUploaded={isUploaded}
-        synced={isLineWarehouseSynced(line)}
-        onPrint={onPrint}
-        onCopy={onCopy}
-        onDelete={onDelete}
-        onMarkSynced={onMarkSynced}
-      />
+        <IntakeLineActions isUploaded={isUploaded} onPrint={onPrint} onCopy={onCopy} onDelete={onDelete} />
       </div>
     </div>
   );
@@ -560,34 +538,15 @@ function IntakeDetail() {
     };
   }, [lines]);
 
-  useEffect(() => {
-    if (!invoice || isUploaded || lines.length === 0) return;
-    const needsReconcile = lines.some(
-      (l) => !isLineWarehouseSynced(l) && String(l.barcode || '').trim().length >= 4,
-    );
-    if (!needsReconcile) return;
-    let cancelled = false;
-    (async () => {
-      const { lines: nextLines, marked } = await reconcileInvoiceWarehouseSync(lines);
-      if (cancelled || marked === 0) return;
-      await intakeApi.upsert({
-        id: invoice.id,
-        number: invoice.number,
-        date: invoice.date,
-        lines: nextLines,
-        uploaded: invoice.uploaded,
-        pending_warehouse_upload: invoice.pending_warehouse_upload,
-        uploaded_at: invoice.uploaded_at,
-      });
-      queryClient.invalidateQueries({ queryKey: ['intake-invoices'] });
-      toast.success(`Сверка со складом: ${marked} поз. уже на складе — повторно не загрузятся`);
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [invoice?.id, isUploaded, lines, queryClient]);
-
   const summary = useMemo(() => computeInvoiceSummary(lines), [lines]);
+  const canRevert = useMemo(
+    () => canRevertInvoiceWarehouse(invoice, lines),
+    [invoice, lines],
+  );
+  const uploadCheck = useMemo(
+    () => canUploadInvoiceToWarehouse(lines, { uploaded: isUploaded }),
+    [lines, isUploaded],
+  );
 
   const saveInvoice = async (nextLines) => {
     if (!invoice) return;
@@ -606,11 +565,12 @@ function IntakeDetail() {
   const uploadMutation = useMutation({
     mutationFn: async () => {
       if (!invoice || lines.length === 0) throw new Error('Накладная пуста');
+      const check = canUploadInvoiceToWarehouse(lines, { uploaded: isUploaded });
+      if (!check.ok) throw new Error(check.message);
       const { lines: nextLines, ...report } = await uploadInvoiceLinesToWarehouse(lines, cnyRate);
       if (report.errors.length && report.created === 0 && report.updated === 0) {
         throw new Error(report.errors[0]);
       }
-      const allSynced = nextLines.length > 0 && nextLines.every(isLineWarehouseSynced);
       const now = new Date();
       const uploadedAt = `${String(now.getDate()).padStart(2, '0')}.${String(now.getMonth() + 1).padStart(2, '0')}.${now.getFullYear()} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
       await intakeApi.upsert({
@@ -618,18 +578,34 @@ function IntakeDetail() {
         number: invoice.number,
         date: invoice.date,
         lines: nextLines,
-        uploaded: allSynced,
-        pending_warehouse_upload: !allSynced && (report.created > 0 || report.updated > 0),
-        uploaded_at: allSynced ? uploadedAt : invoice.uploaded_at,
+        uploaded: true,
+        pending_warehouse_upload: false,
+        uploaded_at: uploadedAt,
       });
       return report;
     },
     onSuccess: (report) => {
       queryClient.invalidateQueries({ queryKey: ['intake-invoices'] });
+      queryClient.invalidateQueries({ queryKey: ['products'] });
       const photoMsg = report.photosUploaded > 0 ? `, фото ${report.photosUploaded}` : '';
-      const skipMsg = report.skipped > 0 ? `, пропущено ${report.skipped}` : '';
-      toast.success(`На склад: создано ${report.created}, обновлено ${report.updated}${photoMsg}${skipMsg}`);
+      toast.success(`На склад: создано ${report.created}, обновлено ${report.updated}${photoMsg}`);
       if (report.errors.length) toast.error(report.errors.slice(0, 3).join('; '));
+    },
+    onError: (e) => toast.error(getApiErrorMessage(e, String(e.message || e))),
+  });
+
+  const revertMutation = useMutation({
+    mutationFn: async () => {
+      if (!invoice) throw new Error('Накладная не найдена');
+      const r = await intakeApi.revertWarehouse(invoice.id);
+      return r.data;
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['intake-invoices'] });
+      queryClient.invalidateQueries({ queryKey: ['products'] });
+      const msg = `Отменено: снято ${data.removed}, уменьшено ${data.updated}`;
+      toast.success(msg);
+      if (data.warnings?.length) toast.error(data.warnings.slice(0, 2).join('; '));
     },
     onError: (e) => toast.error(getApiErrorMessage(e, String(e.message || e))),
   });
@@ -760,46 +736,23 @@ function IntakeDetail() {
     toast.success('Позиция удалена');
   };
 
-  const handleMarkSynced = async (index) => {
-    if (isUploaded) return;
-    const line = lines[index];
-    if (!line || isLineWarehouseSynced(line)) return;
+  const handleUploadClick = () => {
+    if (!uploadCheck.ok) {
+      toast.error(uploadCheck.message);
+      return;
+    }
+    uploadMutation.mutate();
+  };
+
+  const handleRevertClick = () => {
     if (
       !window.confirm(
-        `Позиция «${line.name || 'без названия'}» уже на складе?\n\nОтметим её, чтобы при повторной загрузке количество не удвоилось.`,
+        'Отменить загрузку на склад?\n\nТовары будут сняты со склада (количество уменьшится), но останутся в накладной для редактирования.',
       )
     ) {
       return;
     }
-    const next = [...lines];
-    next[index] = { ...next[index], warehouse_synced: true };
-    await saveInvoice(next);
-    toast.success('Позиция отмечена «На складе»');
-  };
-
-  const handleUploadClick = () => {
-    if (!invoice || lines.length === 0) return;
-    const pending = lines.filter((l) => !isLineWarehouseSynced(l));
-    if (pending.length === 0) {
-      toast.error('Все позиции уже на складе');
-      return;
-    }
-    const ready = pending.filter(isLineWarehouseReady).length;
-    const notReady = pending.length - ready;
-    if (ready === 0) {
-      toast.error('Нет готовых позиций. Обновите категорию у строк с предупреждением.');
-      return;
-    }
-    if (notReady > 0) {
-      if (
-        !window.confirm(
-          `Частичная загрузка\n\nГотово к складу: ${ready} из ${pending.length}.\n${notReady} поз. пропустят (категория не обновлена или не заполнена).\n\nЗагрузить только готовые?`,
-        )
-      ) {
-        return;
-      }
-    }
-    uploadMutation.mutate();
+    revertMutation.mutate();
   };
 
   const renderLine = ({ line: l, index }) => {
@@ -818,10 +771,6 @@ function IntakeDetail() {
       onDelete: (e) => {
         e?.stopPropagation?.();
         handleDeleteLine(index);
-      },
-      onMarkSynced: (e) => {
-        e?.stopPropagation?.();
-        handleMarkSynced(index);
       },
     };
 
@@ -884,11 +833,23 @@ function IntakeDetail() {
               </>
             )}
           </span>
+          {canRevert && (
+            <Button
+              variant="secondary"
+              icon={FiRotateCcw}
+              onClick={handleRevertClick}
+              loading={revertMutation.isPending}
+            >
+              Отменить загрузку
+            </Button>
+          )}
           {!isUploaded && lines.length > 0 && (
             <Button
               icon={FiUpload}
               onClick={handleUploadClick}
               loading={uploadMutation.isPending}
+              disabled={!uploadCheck.ok}
+              title={uploadCheck.ok ? undefined : uploadCheck.message}
             >
               В склад
             </Button>
@@ -900,8 +861,18 @@ function IntakeDetail() {
         <div className="intake-alert intake-alert-success">
           <FiCheckCircle size={18} className="intake-alert-icon" />
           <span>
-            Накладная на складе — только просмотр и печать этикеток. Редактирование и добавление
-            отключены.
+            Накладная на складе. Чтобы снова редактировать позиции — нажмите «Отменить загрузку»:
+            товары снимутся со склада, но останутся в накладной.
+          </span>
+        </div>
+      )}
+
+      {!isUploaded && summary.notReadyCount > 0 && lines.length > 0 && (
+        <div className="intake-alert intake-alert-warn">
+          <FiAlertCircle size={18} className="intake-alert-icon" />
+          <span>
+            Не все позиции готовы к складу ({summary.notReadyCount} из {summary.positions}).
+            Загрузка будет доступна только когда все строки заполнены и категории обновлены.
           </span>
         </div>
       )}
