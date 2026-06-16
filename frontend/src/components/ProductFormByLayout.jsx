@@ -112,10 +112,12 @@ export default function ProductFormByLayout({
   }, [onFormDataChange]);
 
   const setAttr = useCallback((key, val) => {
-    applyChange((prev) => ({
-      ...prev,
-      attributes: { ...(prev.attributes || {}), [key]: val },
-    }));
+    applyChange((prev) => {
+      const nextAttrs = { ...(prev.attributes || {}) };
+      if (val === '' || val == null) delete nextAttrs[key];
+      else nextAttrs[key] = val;
+      return { ...prev, attributes: nextAttrs };
+    });
   }, [applyChange]);
 
   const { vehicle_mode: vm } = resolveCategoryProfile(schema);

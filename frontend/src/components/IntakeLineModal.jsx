@@ -327,14 +327,23 @@ export default function IntakeLineModal({
     model: form.model,
   }), [form.name, form.attributes, form.brand, form.model]);
 
-  const setIntakeFormData = useCallback((next) => {
-    setForm((f) => ({
-      ...f,
-      name: next.name ?? f.name,
-      attributes: next.attributes ?? f.attributes,
-      brand: next.brand ?? f.brand,
-      model: next.model ?? f.model,
-    }));
+  const setIntakeFormData = useCallback((nextOrUpdater) => {
+    setForm((f) => {
+      const slice = {
+        name: f.name,
+        attributes: f.attributes || {},
+        brand: f.brand,
+        model: f.model,
+      };
+      const next = typeof nextOrUpdater === 'function' ? nextOrUpdater(slice) : nextOrUpdater;
+      return {
+        ...f,
+        name: next.name ?? f.name,
+        attributes: next.attributes ?? f.attributes,
+        brand: next.brand ?? f.brand,
+        model: next.model ?? f.model,
+      };
+    });
   }, []);
 
   const capField = (key) => {
