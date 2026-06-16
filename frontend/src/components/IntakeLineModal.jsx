@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 import {
@@ -25,7 +25,9 @@ import { productApi, categoryApi, compatibilityApi, resolveUploadedAssetUrl } fr
 import CategoryPicker, { findGroupIdForCategory, findCategoryInTree } from './CategoryPicker';
 import { resolveCategoryProfile } from '../utils/formLayoutUtils';
 import ProductFormByLayout from './ProductFormByLayout';
-import VehicleCompatibilityPicker from './VehicleCompatibilityPicker';
+import VehicleCompatibilityPicker, {
+  inferCompatIdsFromBrandModel,
+} from './VehicleCompatibilityPicker';
 import { syncPrimaryVehicleFromSelection } from '../utils/productDisplayUtils';
 
 const EMPTY_COMPAT_IDS = Object.freeze([]);
@@ -58,6 +60,12 @@ function capitalizeWords(value) {
     if (!word) return word;
     return word.charAt(0).toLocaleUpperCase('ru-RU') + word.slice(1).toLocaleLowerCase('ru-RU');
   });
+}
+
+function normalizeCompatIds(ids) {
+  return (ids || [])
+    .map((id) => Number(id))
+    .filter((id) => Number.isInteger(id) && id > 0);
 }
 
 function emptyForm() {
@@ -94,9 +102,7 @@ function lineToForm(line) {
     category_id: line.category_id || null,
     category_group_id: line.category_group_id || null,
     attributes: line.attributes && typeof line.attributes === 'object' ? { ...line.attributes } : {},
-    compatibility_vehicle_model_ids: Array.isArray(line.compatibility_vehicle_model_ids)
-      ? [...line.compatibility_vehicle_model_ids]
-      : [],
+    compatibility_vehicle_model_ids: normalizeCompatIds(line.compatibility_vehicle_model_ids),
     manufacturer: line.manufacturer || '',
     extra_info: line.extra_info || '',
     cny_price: num(line.cny_price) > 0 ? String(line.cny_price) : '',
@@ -154,9 +160,10 @@ export default function IntakeLineModal({
   const [changeCategoryMode, setChangeCategoryMode] = useState(false);
   const [needsCatalogUpdate, setNeedsCatalogUpdate] = useState(false);
   const [catalogUpdated, setCatalogUpdated] = useState(false);
+  const compatInferredRef = useRef(false);
 
   const resetCompatPicker = useCallback((ids = EMPTY_COMPAT_IDS) => {
-    setCompatInitialIds(ids?.length ? [...ids] : EMPTY_COMPAT_IDS);
+    setCompatInitialIds(normalizeCompatIds(ids));
     setCompatPickerKey((k) => k + 1);
   }, []);
 
@@ -251,6 +258,7 @@ export default function IntakeLineModal({
   useEffect(() => {
     if (!isOpen) return;
     setChangeCategoryMode(false);
+    compatInferredRef.current = false;
     setNeedsCatalogUpdate(Boolean(line?.needs_catalog_update));
     setCatalogUpdated(Boolean(line?.catalog_updated || (line?.category_id && !line?.needs_catalog_update)));
     setDeliveryMode('normal');
@@ -258,7 +266,9 @@ export default function IntakeLineModal({
     setKnownOnWarehouse(false);
     setShowPrint(false);
     if (line) {
-      setForm(lineToForm(line));
+      const nextForm = lineToForm(line);
+      setForm(nextForm);
+      resetCompatPicker(nextForm.compatibility_vehicle_model_ids);
       setPhotos(photosFromLine(line));
       if (line.barcode) fetchCnyHistory(line.barcode).then(setCnyHistory);
       else setCnyHistory([]);
@@ -279,6 +289,18 @@ export default function IntakeLineModal({
     else setCnyHistory([]);
   }, [isOpen, line, seedLine, resetCompatPicker]);
 
+  // Старые позиции: на карточке brand/model есть, id совместимости — нет.
+  useEffect(() => {
+    if (!isOpen || !vehicleModels.length || compatInferredRef.current) return;
+    const ids = normalizeCompatIds(form.compatibility_vehicle_model_ids);
+    if (ids.length) return;
+    const inferred = inferCompatIdsFromBrandModel(form.brand, form.model, vehicleModels);
+    if (!inferred.length) return;
+    compatInferredRef.current = true;
+    setForm((f) => ({ ...f, compatibility_vehicle_model_ids: inferred }));
+    resetCompatPicker(inferred);
+  }, [isOpen, form.brand, form.model, form.compatibility_vehicle_model_ids, vehicleModels, resetCompatPicker]);
+
   useEffect(() => {
     if (!isOpen || !form.category_id || form.category_group_id) return;
     const gid = findGroupIdForCategory(categoryTree, form.category_id);
@@ -288,9 +310,12 @@ export default function IntakeLineModal({
   const setField = (key, value) => setForm((f) => ({ ...f, [key]: value }));
 
   const handleCompatibilityChange = useCallback((ids) => {
-    const idList = Array.isArray(ids) ? ids : [];
+    const idList = normalizeCompatIds(ids);
     setForm((f) => {
-      const selected = (vehicleModels || []).filter((m) => idList.includes(m.id));
+      if (!idList.length) {
+        return { ...f, compatibility_vehicle_model_ids: [], brand: '', model: '' };
+      }
+      const selected = (vehicleModels || []).filter((m) => idList.includes(Number(m.id)));
       return syncPrimaryVehicleFromSelection(
         { ...f, compatibility_vehicle_model_ids: idList },
         selected,
@@ -692,8 +717,8 @@ export default function IntakeLineModal({
       category_id: form.category_id || null,
       category_group_id: form.category_group_id || null,
       attributes: Object.keys(form.attributes || {}).length ? form.attributes : null,
-      compatibility_vehicle_model_ids: (form.compatibility_vehicle_model_ids || []).length
-        ? form.compatibility_vehicle_model_ids
+      compatibility_vehicle_model_ids: normalizeCompatIds(form.compatibility_vehicle_model_ids).length
+        ? normalizeCompatIds(form.compatibility_vehicle_model_ids)
         : null,
       manufacturer: form.manufacturer.trim() || null,
       extra_info: form.extra_info.trim() || null,

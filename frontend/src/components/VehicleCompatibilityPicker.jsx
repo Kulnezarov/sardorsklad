@@ -6,10 +6,19 @@ function idsKey(ids) {
   return (ids || []).slice().sort((a, b) => a - b).join(',');
 }
 
+function normalizeCompatId(id) {
+  const n = Number(id);
+  return Number.isInteger(n) && n > 0 ? n : null;
+}
+
+function normalizeCompatIds(ids) {
+  return (ids || []).map(normalizeCompatId).filter((id) => id != null);
+}
+
 function selectedIdsToRows(selectedIds, models) {
   const byBrand = new Map();
-  (selectedIds || []).forEach((id) => {
-    const m = (models || []).find((x) => x.id === id);
+  normalizeCompatIds(selectedIds).forEach((id) => {
+    const m = (models || []).find((x) => Number(x.id) === id);
     if (!m) return;
     const bid = m.vehicle_brand_id;
     if (!byBrand.has(bid)) byBrand.set(bid, []);
@@ -81,7 +90,8 @@ export default function VehicleCompatibilityPicker({
   const hydratedRef = useRef(false);
   const modelIdsByBrandRef = useRef(new Map());
   const [rows, setRows] = useState(() => {
-    const initial = selectedIdsToRows(initialSelectedIds, models);
+    const ids = normalizeCompatIds(initialSelectedIds);
+    const initial = selectedIdsToRows(ids, models);
     initial.forEach((row) => {
       if (row.brandId && (row.modelIds || []).length) {
         modelIdsByBrandRef.current.set(row.brandId, [...row.modelIds]);
@@ -138,15 +148,14 @@ export default function VehicleCompatibilityPicker({
     queueMicrotask(() => emitRows(nextRows));
   };
 
-  // Один раз: подтянуть сохранённые id после загрузки справочника (редактирование товара).
+  // Подтянуть сохранённые id после загрузки справочника моделей.
   useEffect(() => {
     if (hydratedRef.current || userEditedRef.current) return;
-    if (!(initialSelectedIds || []).length || !(models || []).length) return;
+    const ids = normalizeCompatIds(initialSelectedIds);
+    if (!ids.length || !(models || []).length) return;
     hydratedRef.current = true;
     setRows((prev) => {
-      if (rowsToSelectedIds(prev).length > 0) return prev;
-      if (hasDraftRows(prev)) return prev;
-      const committed = selectedIdsToRows(initialSelectedIds, models);
+      const committed = selectedIdsToRows(ids, models);
       if (!committed.some((r) => r.brandId)) return prev;
       hydrateCacheFromRows(committed);
       return mergeCommittedWithDrafts(committed, prev);
@@ -318,14 +327,15 @@ export default function VehicleCompatibilityPicker({
                   <span className="vehicle-compat-row__models-label">Модели — можно несколько</span>
                   <div className="vehicle-compat-row__model-chips">
                     {brandModels.map((m) => {
-                      const on = selectedSet.has(m.id);
+                      const mid = Number(m.id);
+                      const on = selectedSet.has(mid) || selectedSet.has(m.id);
                       return (
                         <button
                           key={m.id}
                           type="button"
                           className={`catalog-chip ${on ? 'catalog-chip-active' : ''}`}
                           disabled={disabled}
-                          onClick={() => toggleModel(idx, m.id)}
+                          onClick={() => toggleModel(idx, mid)}
                         >
                           {m.name}
                         </button>
@@ -356,4 +366,21 @@ export default function VehicleCompatibilityPicker({
   );
 }
 
-export { selectedIdsToRows, rowsToSelectedIds };
+export { selectedIdsToRows, rowsToSelectedIds, normalizeCompatIds };
+
+/** Для старых строк: только brand/model в тексте, без id в накладной. */
+export function inferCompatIdsFromBrandModel(brand, model, models) {
+  const bn = String(brand || '').trim().toLowerCase();
+  const mn = String(model || '').trim().toLowerCase();
+  if (!mn || !(models || []).length) return [];
+  return normalizeCompatIds(
+    models
+      .filter((vm) => {
+        const name = String(vm.name || '').toLowerCase();
+        const brandName = String(vm.brand?.name || vm.brand_name || '').toLowerCase();
+        if (bn && brandName && !brandName.includes(bn) && !bn.includes(brandName)) return false;
+        return name === mn || mn.includes(name) || name.includes(mn);
+      })
+      .map((vm) => vm.id),
+  );
+}
