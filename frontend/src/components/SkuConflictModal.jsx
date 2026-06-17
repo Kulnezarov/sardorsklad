@@ -13,6 +13,7 @@ export default function SkuConflictModal({
   onCancel,
   onSaveAnyway,
   onShowExisting,
+  onCopyTemplate,
 }) {
   if (!isOpen) return null;
 
@@ -63,8 +64,13 @@ export default function SkuConflictModal({
             </div>
           )}
         </div>
+        {onCopyTemplate && (
+          <Button variant="secondary" onClick={onCopyTemplate} disabled={saving}>
+            Скопировать данные
+          </Button>
+        )}
         <Button variant="secondary" onClick={onShowExisting} disabled={saving}>
-          Показать существующий товар
+          Открыть товар
         </Button>
       </div>
     </Modal>

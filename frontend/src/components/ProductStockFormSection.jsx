@@ -30,6 +30,7 @@ export default function ProductStockFormSection({
   effPurchasePreview,
   optionalNum,
   num,
+  skuMatchBanner = null,
 }) {
   const [showBarcodePreview, setShowBarcodePreview] = useState(false);
   const hasBarcode = Boolean(formData.barcode?.trim());
@@ -53,6 +54,7 @@ export default function ProductStockFormSection({
               onChange={(e) => setFormData({ ...formData, sku: e.target.value })}
               style={highlightStyle}
             />
+            {skuMatchBanner}
           </div>
 
           <div className="product-stock-card product-stock-card--barcode">

@@ -29,6 +29,8 @@ import { generateEAN13 } from '../utils/barcodeGen';
 import { productMatchesSearch } from '../utils/smartSearch';
 import LabelPrint from '../components/LabelPrint';
 import SkuConflictModal from '../components/SkuConflictModal';
+import SkuMatchBanner from '../components/SkuMatchBanner';
+import { applyCatalogProductTemplate } from '../utils/productTemplateCopy';
 import BulkCategoryUpdateModal from '../components/BulkCategoryUpdateModal';
 import JsBarcode from 'jsbarcode';
 
@@ -272,6 +274,9 @@ const Products = () => {
   const [skuConflictSku, setSkuConflictSku] = useState('');
   const [skuConflictPayload, setSkuConflictPayload] = useState(null);
   const skuOpenAfterSaveRef = useRef(null);
+  const [skuTemplateProduct, setSkuTemplateProduct] = useState(null);
+  const [skuTemplateLoading, setSkuTemplateLoading] = useState(false);
+  const skuTemplateDismissedRef = useRef('');
   const [barcodeLocked, setBarcodeLocked] = useState(false);
   /** Редактирование: смена категории тем же экраном, что при создании */
   const [changeCategoryMode, setChangeCategoryMode] = useState(false);
@@ -1184,6 +1189,9 @@ const Products = () => {
     setBarcodeLocked(false);
     setForceCreateMode(false);
     setChangeCategoryMode(false);
+    setSkuTemplateProduct(null);
+    setSkuTemplateLoading(false);
+    skuTemplateDismissedRef.current = '';
     clearDraft();
   };
 
@@ -1520,6 +1528,85 @@ const Products = () => {
     skuOpenAfterSaveRef.current = null;
   };
 
+  const handleSkuConflictCopyTemplate = () => {
+    const existing = skuConflictExisting;
+    if (!existing) {
+      closeSkuConflict();
+      return;
+    }
+    const sku = skuConflictSku || String(formData.sku || '').trim();
+    setFormData((prev) => applyCatalogProductTemplate(prev, existing, categoryTree, { keepSku: sku }));
+    closeSkuConflict();
+    setSkuTemplateProduct(null);
+    skuTemplateDismissedRef.current = sku;
+    toast.success('Данные скопированы — штрих-код новый');
+  };
+
+  const handleSkuTemplateCopy = useCallback(() => {
+    if (!skuTemplateProduct) return;
+    const sku = String(formData.sku || '').trim();
+    setFormData((prev) => applyCatalogProductTemplate(prev, skuTemplateProduct, categoryTree, { keepSku: sku }));
+    setSkuTemplateProduct(null);
+    skuTemplateDismissedRef.current = sku;
+    toast.success('Данные скопированы — штрих-код новый');
+  }, [skuTemplateProduct, categoryTree, formData.sku]);
+
+  const handleSkuTemplateOpen = useCallback(() => {
+    if (!skuTemplateProduct?.id) return;
+    setShowForm(false);
+    setSideProduct(skuTemplateProduct.id);
+  }, [skuTemplateProduct]);
+
+  const handleSkuTemplateDismiss = useCallback(() => {
+    skuTemplateDismissedRef.current = String(formData.sku || '').trim();
+    setSkuTemplateProduct(null);
+  }, [formData.sku]);
+
+  useEffect(() => {
+    const sku = String(formData.sku || '').trim();
+    if (skuTemplateDismissedRef.current && skuTemplateDismissedRef.current !== sku) {
+      skuTemplateDismissedRef.current = '';
+    }
+  }, [formData.sku]);
+
+  useEffect(() => {
+    if (!showForm || formData.id) {
+      setSkuTemplateProduct(null);
+      setSkuTemplateLoading(false);
+      return undefined;
+    }
+    const sku = String(formData.sku || '').trim();
+    if (sku.length < 2) {
+      setSkuTemplateProduct(null);
+      setSkuTemplateLoading(false);
+      return undefined;
+    }
+    if (skuTemplateDismissedRef.current === sku) {
+      return undefined;
+    }
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      setSkuTemplateLoading(true);
+      try {
+        const r = await productApi.getBySku(sku, { allow404: true });
+        if (cancelled) return;
+        if (r?.status === 200 && r?.data) {
+          setSkuTemplateProduct(r.data);
+        } else {
+          setSkuTemplateProduct(null);
+        }
+      } catch {
+        if (!cancelled) setSkuTemplateProduct(null);
+      } finally {
+        if (!cancelled) setSkuTemplateLoading(false);
+      }
+    }, 450);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [showForm, formData.id, formData.sku]);
+
   const handleSkuConflictSaveAnyway = () => {
     if (!skuConflictPayload) {
       closeSkuConflict();
@@ -1531,14 +1618,11 @@ const Products = () => {
 
   const handleSkuConflictShowExisting = async () => {
     const existing = skuConflictExisting;
-    const payload = skuConflictPayload;
-    if (!existing?.id || !payload) {
-      closeSkuConflict();
-      return;
-    }
-    skuOpenAfterSaveRef.current = existing;
-    submitProductPayload(payload, { allowDuplicateSku: true });
     closeSkuConflict();
+    if (existing?.id) {
+      setShowForm(false);
+      setSideProduct(existing.id);
+    }
   };
 
   const selectedProducts = useMemo(
@@ -2439,6 +2523,7 @@ const Products = () => {
         onCancel={closeSkuConflict}
         onSaveAnyway={handleSkuConflictSaveAnyway}
         onShowExisting={handleSkuConflictShowExisting}
+        onCopyTemplate={handleSkuConflictCopyTemplate}
       />
 
       {/* ── Print suggest after create ── */}
@@ -2828,6 +2913,17 @@ const Products = () => {
             effPurchasePreview={effPurchasePreview}
             optionalNum={optionalNum}
             num={num}
+            skuMatchBanner={!formData.id && (skuTemplateProduct || skuTemplateLoading) ? (
+              <SkuMatchBanner
+                product={skuTemplateProduct}
+                sku={String(formData.sku || '').trim()}
+                mode="catalog"
+                loading={skuTemplateLoading}
+                onCopy={handleSkuTemplateCopy}
+                onOpen={handleSkuTemplateOpen}
+                onDismiss={handleSkuTemplateDismiss}
+              />
+            ) : null}
           />
         </form>
           </div>

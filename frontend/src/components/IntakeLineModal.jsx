@@ -133,6 +133,7 @@ function photosFromLine(line) {
 
 import FormAccordionSection from './FormAccordionSection';
 import FormField from './FormField';
+import SkuMatchBanner from './SkuMatchBanner';
 
 export default function IntakeLineModal({
   isOpen,
@@ -161,6 +162,9 @@ export default function IntakeLineModal({
   const [needsCatalogUpdate, setNeedsCatalogUpdate] = useState(false);
   const [catalogUpdated, setCatalogUpdated] = useState(false);
   const compatInferredRef = useRef(false);
+  const [skuTemplateProduct, setSkuTemplateProduct] = useState(null);
+  const [skuTemplateLoading, setSkuTemplateLoading] = useState(false);
+  const skuTemplateDismissedRef = useRef('');
 
   const resetCompatPicker = useCallback((ids = EMPTY_COMPAT_IDS) => {
     setCompatInitialIds(normalizeCompatIds(ids));
@@ -264,6 +268,9 @@ export default function IntakeLineModal({
     setDeliveryMode('normal');
     setCustomRate('');
     setKnownOnWarehouse(false);
+    setSkuTemplateProduct(null);
+    setSkuTemplateLoading(false);
+    skuTemplateDismissedRef.current = '';
     setShowPrint(false);
     if (line) {
       const nextForm = lineToForm(line);
@@ -435,16 +442,23 @@ export default function IntakeLineModal({
 
   const clearWarehouseLookup = useCallback(() => {
     setKnownOnWarehouse(false);
+    setSkuTemplateProduct(null);
     setPhotos((prev) => prev.filter((p) => p.kind === 'pending'));
   }, []);
 
   const applyWarehouseProduct = useCallback(
-    async (p, { updateBarcode = false, force = false } = {}) => {
+    async (p, {
+      updateBarcode = false,
+      force = false,
+      keepQuantity = false,
+      preserveFields = [],
+    } = {}) => {
       const bc = updateBarcode && p.barcode ? p.barcode : form.barcode;
       if (updateBarcode && p.barcode) setField('barcode', p.barcode);
       const history = await fetchCnyHistory(bc);
       setCnyHistory(history);
       setKnownOnWarehouse(true);
+      setSkuTemplateProduct(null);
       const legacyProduct = Boolean(p.is_legacy_category || p.needs_category_refresh);
       setNeedsCatalogUpdate(legacyProduct);
       setCatalogUpdated(!legacyProduct);
@@ -452,6 +466,7 @@ export default function IntakeLineModal({
       setForm((f) => {
         const next = { ...f };
         const fill = (key, val) => {
+          if (preserveFields.includes(key) && String(next[key] ?? '').trim()) return;
           if (force || !String(next[key] ?? '').trim()) next[key] = val;
         };
         fill('sku', capitalizeWords(p.sku || ''));
@@ -490,7 +505,9 @@ export default function IntakeLineModal({
         if (force || (!next.sale_price.trim() && num(p.sale_price) > 0)) {
           next.sale_price = String(p.sale_price);
         }
-        next.quantity = '';
+        if (!keepQuantity) {
+          next.quantity = '';
+        }
         return next;
       });
       if (syncDelKzt) onKztChanged(syncDelKzt);
@@ -556,23 +573,57 @@ export default function IntakeLineModal({
   const lookupSku = useCallback(async () => {
     const sku = String(form.sku || '').trim();
     if (sku.length < 2) {
-      setKnownOnWarehouse(false);
+      setSkuTemplateProduct(null);
+      setSkuTemplateLoading(false);
       return;
     }
-    setLookingUp(true);
+    if (skuTemplateDismissedRef.current === sku) {
+      return;
+    }
+    setSkuTemplateLoading(true);
     try {
       const res = await productApi.getBySku(sku, { allow404: true });
       if (res.status === 200 && res.data) {
-        await applyWarehouseProduct(res.data, { updateBarcode: true });
+        setSkuTemplateProduct(res.data);
       } else {
-        clearWarehouseLookup();
+        setSkuTemplateProduct(null);
       }
     } catch {
-      clearWarehouseLookup();
+      setSkuTemplateProduct(null);
     } finally {
-      setLookingUp(false);
+      setSkuTemplateLoading(false);
     }
-  }, [form.sku, applyWarehouseProduct, clearWarehouseLookup]);
+  }, [form.sku]);
+
+  const handleSkuTemplateCopy = useCallback(async () => {
+    if (!skuTemplateProduct) return;
+    const sku = String(form.sku || '').trim();
+    await applyWarehouseProduct(skuTemplateProduct, {
+      force: true,
+      updateBarcode: false,
+      keepQuantity: true,
+      preserveFields: ['manufacturer', 'extra_info'],
+    });
+    skuTemplateDismissedRef.current = sku;
+    toast.success('Данные скопированы — штрих-код и количество не изменены');
+  }, [skuTemplateProduct, form.sku, applyWarehouseProduct]);
+
+  const handleSkuTemplateOpen = useCallback(() => {
+    if (!skuTemplateProduct?.id) return;
+    window.open(`/products?product=${skuTemplateProduct.id}`, '_blank', 'noopener,noreferrer');
+  }, [skuTemplateProduct]);
+
+  const handleSkuTemplateDismiss = useCallback(() => {
+    skuTemplateDismissedRef.current = String(form.sku || '').trim();
+    setSkuTemplateProduct(null);
+  }, [form.sku]);
+
+  useEffect(() => {
+    const sku = String(form.sku || '').trim();
+    if (skuTemplateDismissedRef.current && skuTemplateDismissedRef.current !== sku) {
+      skuTemplateDismissedRef.current = '';
+    }
+  }, [form.sku]);
 
   useEffect(() => {
     if (!isOpen || readonly) return undefined;
@@ -1018,7 +1069,7 @@ export default function IntakeLineModal({
               </div>
             </FormField>
             {lookingUp && <div className="intake-form-progress" />}
-            {knownOnWarehouse && !lookingUp && !readonly && !needsCatalogUpdate && (
+            {knownOnWarehouse && !skuTemplateProduct && !skuTemplateLoading && !lookingUp && !readonly && !needsCatalogUpdate && (
               <div className="intake-form-banner intake-form-banner--success">
                 Товар найден на складе — поля заполнены
               </div>
@@ -1029,7 +1080,7 @@ export default function IntakeLineModal({
                 Товар на складе не обновлён — выберите категорию внизу, иначе загрузка запрещена
               </div>
             )}
-            <FormField label="Артикул" hint="OEM / внутренний код — подставит данные со склада">
+            <FormField label="Артикул" hint="OEM / внутренний код — при совпадении предложим скопировать данные">
               <input
                 className="ios-input"
                 value={form.sku}
@@ -1037,6 +1088,17 @@ export default function IntakeLineModal({
                 onBlur={() => capField('sku')}
                 readOnly={readonly}
               />
+              {!readonly && (skuTemplateProduct || skuTemplateLoading) && (
+                <SkuMatchBanner
+                  product={skuTemplateProduct}
+                  sku={String(form.sku || '').trim()}
+                  mode="intake"
+                  loading={skuTemplateLoading}
+                  onCopy={handleSkuTemplateCopy}
+                  onOpen={handleSkuTemplateOpen}
+                  onDismiss={handleSkuTemplateDismiss}
+                />
+              )}
             </FormField>
             <FormField label="Производитель">
               <input
