@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
-import { FiChevronDown, FiChevronUp, FiPlus, FiX } from 'react-icons/fi';
+import { FiCheck, FiChevronDown, FiChevronUp, FiEdit2, FiPlus, FiX } from 'react-icons/fi';
 import { compatibilityApi, getApiErrorMessage } from '../api/client';
 
 function pluralModels(n) {
@@ -18,6 +18,10 @@ export default function SettingsVehicleBrandsSection() {
   const [brandName, setBrandName] = useState('');
   const [expandedBrandId, setExpandedBrandId] = useState(null);
   const [modelDraft, setModelDraft] = useState({});
+  const [editingBrandId, setEditingBrandId] = useState(null);
+  const [editingBrandName, setEditingBrandName] = useState('');
+  const [editingModelId, setEditingModelId] = useState(null);
+  const [editingModelName, setEditingModelName] = useState('');
 
   const { data: brands = [], isLoading: brandsLoading } = useQuery({
     queryKey: ['compatibility', 'vehicle-brands', 'all'],
@@ -44,11 +48,23 @@ export default function SettingsVehicleBrandsSection() {
     onError: (e) => toast.error(getApiErrorMessage(e, 'Не удалось добавить марку')),
   });
 
+  const updateBrandMut = useMutation({
+    mutationFn: ({ id, name }) => compatibilityApi.updateVehicleBrand(id, { name }),
+    onSuccess: () => {
+      toast.success('Марка обновлена');
+      setEditingBrandId(null);
+      setEditingBrandName('');
+      invalidate();
+    },
+    onError: (e) => toast.error(getApiErrorMessage(e, 'Не удалось обновить марку')),
+  });
+
   const deleteBrandMut = useMutation({
     mutationFn: (id) => compatibilityApi.deleteVehicleBrand(id),
     onSuccess: () => {
       toast.success('Марка удалена');
       setExpandedBrandId(null);
+      setEditingBrandId(null);
       invalidate();
     },
     onError: (e) => toast.error(getApiErrorMessage(e, 'Не удалось удалить марку')),
@@ -64,10 +80,22 @@ export default function SettingsVehicleBrandsSection() {
     onError: (e) => toast.error(getApiErrorMessage(e, 'Не удалось добавить модель')),
   });
 
+  const updateModelMut = useMutation({
+    mutationFn: ({ id, name }) => compatibilityApi.updateVehicleModel(id, { name }),
+    onSuccess: () => {
+      toast.success('Модель обновлена');
+      setEditingModelId(null);
+      setEditingModelName('');
+      invalidate();
+    },
+    onError: (e) => toast.error(getApiErrorMessage(e, 'Не удалось обновить модель')),
+  });
+
   const deleteModelMut = useMutation({
     mutationFn: (id) => compatibilityApi.deleteVehicleModel(id),
     onSuccess: () => {
       toast.success('Модель удалена');
+      setEditingModelId(null);
       invalidate();
     },
     onError: (e) => toast.error(getApiErrorMessage(e, 'Не удалось удалить модель')),
@@ -90,6 +118,37 @@ export default function SettingsVehicleBrandsSection() {
   );
 
   const loading = brandsLoading || modelsLoading;
+  const busy =
+    createBrandMut.isPending ||
+    updateBrandMut.isPending ||
+    deleteBrandMut.isPending ||
+    createModelMut.isPending ||
+    updateModelMut.isPending ||
+    deleteModelMut.isPending;
+
+  const startEditBrand = (brand) => {
+    setEditingBrandId(brand.id);
+    setEditingBrandName(brand.name || '');
+    setEditingModelId(null);
+  };
+
+  const saveEditBrand = () => {
+    const name = editingBrandName.trim();
+    if (!name || editingBrandId == null) return toast.error('Введите название марки');
+    updateBrandMut.mutate({ id: editingBrandId, name });
+  };
+
+  const startEditModel = (model) => {
+    setEditingModelId(model.id);
+    setEditingModelName(model.name || '');
+    setEditingBrandId(null);
+  };
+
+  const saveEditModel = () => {
+    const name = editingModelName.trim();
+    if (!name || editingModelId == null) return toast.error('Введите название модели');
+    updateModelMut.mutate({ id: editingModelId, name });
+  };
 
   return (
     <div className="settings-catalog-panel">
@@ -97,7 +156,7 @@ export default function SettingsVehicleBrandsSection() {
         <div className="settings-catalog-hero__text">
           <h2 className="settings-catalog-hero__title">Марки и модели</h2>
           <p className="settings-catalog-hero__desc">
-            Марки автомобилей и модели для совместимости запчастей.
+            Марки автомобилей и модели для совместимости запчастей. Можно переименовать существующие записи.
           </p>
         </div>
       </div>
@@ -118,51 +177,161 @@ export default function SettingsVehicleBrandsSection() {
           const open = expandedBrandId === brand.id;
           const brandModels = modelsByBrand.get(brand.id) || [];
           const draft = modelDraft[brand.id] || '';
+          const editingBrand = editingBrandId === brand.id;
 
           return (
             <div key={brand.id} className={`settings-ios-brand${open ? ' settings-ios-brand--open' : ''}`}>
               <div className="settings-ios-row">
-                <button
-                  type="button"
-                  className="settings-ios-row__main"
-                  onClick={() => setExpandedBrandId(open ? null : brand.id)}
-                >
-                  <span className="settings-ios-row__text">
-                    <span className="settings-ios-row__title">{brand.name}</span>
-                    <span className="settings-ios-row__meta">{brandModels.length} {pluralModels(brandModels.length)}</span>
-                  </span>
-                  {open ? <FiChevronUp size={17} className="settings-ios-row__chevron" /> : <FiChevronDown size={17} className="settings-ios-row__chevron" />}
-                </button>
-                <button
-                  type="button"
-                  className="settings-ios-icon-btn settings-ios-icon-btn--danger"
-                  title="Удалить марку"
-                  onClick={() => {
-                    if (window.confirm(`Удалить марку «${brand.name}» и все модели?`)) {
-                      deleteBrandMut.mutate(brand.id);
-                    }
-                  }}
-                >
-                  <FiX size={15} />
-                </button>
+                {editingBrand ? (
+                  <div className="settings-ios-row__main settings-ios-row__main--static">
+                    <input
+                      className="settings-ios-add__input"
+                      value={editingBrandName}
+                      onChange={(e) => setEditingBrandName(e.target.value)}
+                      autoFocus
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') saveEditBrand();
+                        if (e.key === 'Escape') {
+                          setEditingBrandId(null);
+                          setEditingBrandName('');
+                        }
+                      }}
+                    />
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    className="settings-ios-row__main"
+                    onClick={() => setExpandedBrandId(open ? null : brand.id)}
+                  >
+                    <span className="settings-ios-row__text">
+                      <span className="settings-ios-row__title">{brand.name}</span>
+                      <span className="settings-ios-row__meta">{brandModels.length} {pluralModels(brandModels.length)}</span>
+                    </span>
+                    {open ? <FiChevronUp size={17} className="settings-ios-row__chevron" /> : <FiChevronDown size={17} className="settings-ios-row__chevron" />}
+                  </button>
+                )}
+                <div className="settings-ios-row__tools">
+                  {editingBrand ? (
+                    <>
+                      <button
+                        type="button"
+                        className="settings-ios-icon-btn"
+                        title="Сохранить"
+                        disabled={busy}
+                        onClick={saveEditBrand}
+                      >
+                        <FiCheck size={16} />
+                      </button>
+                      <button
+                        type="button"
+                        className="settings-ios-icon-btn"
+                        title="Отмена"
+                        onClick={() => {
+                          setEditingBrandId(null);
+                          setEditingBrandName('');
+                        }}
+                      >
+                        <FiX size={16} />
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <button
+                        type="button"
+                        className="settings-ios-icon-btn"
+                        title="Переименовать марку"
+                        disabled={busy}
+                        onClick={() => startEditBrand(brand)}
+                      >
+                        <FiEdit2 size={15} />
+                      </button>
+                      <button
+                        type="button"
+                        className="settings-ios-icon-btn settings-ios-icon-btn--danger"
+                        title="Удалить марку"
+                        disabled={busy}
+                        onClick={() => {
+                          if (window.confirm(`Удалить марку «${brand.name}» и все модели?`)) {
+                            deleteBrandMut.mutate(brand.id);
+                          }
+                        }}
+                      >
+                        <FiX size={15} />
+                      </button>
+                    </>
+                  )}
+                </div>
               </div>
 
               {open && (
                 <div className="settings-ios-brand__body">
                   <div className="settings-ios-chips">
-                    {brandModels.map((m) => (
-                      <span key={m.id} className="settings-ios-chip">
-                        {m.name}
-                        <button
-                          type="button"
-                          className="settings-ios-chip__x"
-                          aria-label={`Удалить ${m.name}`}
-                          onClick={() => deleteModelMut.mutate(m.id)}
-                        >
-                          <FiX size={11} />
-                        </button>
-                      </span>
-                    ))}
+                    {brandModels.map((m) => {
+                      const editingModel = editingModelId === m.id;
+                      if (editingModel) {
+                        return (
+                          <span key={m.id} className="settings-ios-chip settings-ios-chip--edit">
+                            <input
+                              className="settings-ios-chip__input"
+                              value={editingModelName}
+                              onChange={(e) => setEditingModelName(e.target.value)}
+                              autoFocus
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') saveEditModel();
+                                if (e.key === 'Escape') {
+                                  setEditingModelId(null);
+                                  setEditingModelName('');
+                                }
+                              }}
+                            />
+                            <button
+                              type="button"
+                              className="settings-ios-chip__x"
+                              aria-label="Сохранить"
+                              disabled={busy}
+                              onClick={saveEditModel}
+                            >
+                              <FiCheck size={11} />
+                            </button>
+                            <button
+                              type="button"
+                              className="settings-ios-chip__x"
+                              aria-label="Отмена"
+                              onClick={() => {
+                                setEditingModelId(null);
+                                setEditingModelName('');
+                              }}
+                            >
+                              <FiX size={11} />
+                            </button>
+                          </span>
+                        );
+                      }
+                      return (
+                        <span key={m.id} className="settings-ios-chip">
+                          {m.name}
+                          <button
+                            type="button"
+                            className="settings-ios-chip__x"
+                            aria-label={`Переименовать ${m.name}`}
+                            disabled={busy}
+                            onClick={() => startEditModel(m)}
+                          >
+                            <FiEdit2 size={11} />
+                          </button>
+                          <button
+                            type="button"
+                            className="settings-ios-chip__x"
+                            aria-label={`Удалить ${m.name}`}
+                            disabled={busy}
+                            onClick={() => deleteModelMut.mutate(m.id)}
+                          >
+                            <FiX size={11} />
+                          </button>
+                        </span>
+                      );
+                    })}
                     {!brandModels.length && (
                       <span className="settings-ios-brand__empty">Нет моделей</span>
                     )}

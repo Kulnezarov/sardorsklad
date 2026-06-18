@@ -10301,6 +10301,20 @@ textarea {
   cursor: pointer;
   padding: 0;
 }
+.settings-ios-chip--edit {
+  padding: 4px 6px 4px 8px;
+  gap: 2px;
+}
+.settings-ios-chip__input {
+  border: none;
+  background: transparent;
+  font: inherit;
+  color: inherit;
+  min-width: 80px;
+  max-width: 180px;
+  padding: 2px 4px;
+  outline: none;
+}
 .settings-ios-brand__empty {
   font-size: 13px;
   color: var(--text-muted);
