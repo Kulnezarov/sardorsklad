@@ -641,6 +641,7 @@ def create_product(
 ):
     payload = product.model_dump()
     allow_duplicate_sku = bool(payload.pop("allow_duplicate_sku", False))
+    copy_gallery_from = payload.pop("copy_gallery_from_product_id", None)
     payload.pop("image_url", None)
     payload.pop("image_urls", None)
     payload["sku"] = payload.get("sku") or build_generated_sku(db)
@@ -678,6 +679,13 @@ def create_product(
     db.flush()
 
     apply_product_compatibility(db, db_product, vehicle_model_ids=v_ids, engine_family_ids=e_ids)
+
+    if copy_gallery_from:
+        source = db.query(models.Product).filter(models.Product.id == copy_gallery_from).first()
+        if source:
+            src_urls = _product_gallery_urls(source)
+            if src_urls:
+                _persist_product_gallery(db_product, src_urls[:MAX_PRODUCT_IMAGES])
 
     db.add(
         models.History(

@@ -572,6 +572,11 @@ export default function IntakeLineModal({
 
   const lookupSku = useCallback(async () => {
     const sku = String(form.sku || '').trim();
+    const requestedSku = sku;
+    // #region agent log
+    const lookupId = `${Date.now()}_${sku}`;
+    fetch('http://127.0.0.1:7415/ingest/64fc1600-807a-4c4b-afeb-2d3cf2e15696',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'91a77d'},body:JSON.stringify({sessionId:'91a77d',runId:'post-fix',hypothesisId:'H3-H4',location:'IntakeLineModal.jsx:lookupSku:start',message:'sku lookup started',data:{lookupId,sku,len:sku.length},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion
     if (sku.length < 2) {
       setSkuTemplateProduct(null);
       setSkuTemplateLoading(false);
@@ -583,15 +588,25 @@ export default function IntakeLineModal({
     setSkuTemplateLoading(true);
     try {
       const res = await productApi.getBySku(sku, { allow404: true });
+      const currentSku = String(form.sku || '').trim();
+      const stale = requestedSku !== currentSku;
+      // #region agent log
+      fetch('http://127.0.0.1:7415/ingest/64fc1600-807a-4c4b-afeb-2d3cf2e15696',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'91a77d'},body:JSON.stringify({sessionId:'91a77d',runId:'post-fix',hypothesisId:'H3-H4',location:'IntakeLineModal.jsx:lookupSku:done',message:'sku lookup finished',data:{lookupId,requestedSku,currentSku,stale,found:res?.status===200,productId:res?.data?.id},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
+      if (stale) return;
       if (res.status === 200 && res.data) {
         setSkuTemplateProduct(res.data);
       } else {
         setSkuTemplateProduct(null);
       }
     } catch {
-      setSkuTemplateProduct(null);
+      if (String(form.sku || '').trim() === requestedSku) {
+        setSkuTemplateProduct(null);
+      }
     } finally {
-      setSkuTemplateLoading(false);
+      if (String(form.sku || '').trim() === requestedSku) {
+        setSkuTemplateLoading(false);
+      }
     }
   }, [form.sku]);
 

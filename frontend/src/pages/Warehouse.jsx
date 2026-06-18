@@ -4,6 +4,7 @@ import toast from 'react-hot-toast';
 import LabelPrint from '../components/LabelPrint';
 import { readStoredLabelLayout } from '../utils/labelPrintUtils';
 import SkuConflictModal from '../components/SkuConflictModal';
+import { applyWarehouseFormTemplate } from '../utils/productTemplateCopy';
 import { productsApi } from '../api/products';
 import { resolveUploadedAssetUrl, getApiErrorMessage } from '../api/client';
 import { settingsApi } from '../api/settings';
@@ -88,6 +89,7 @@ const Warehouse = () => {
   const [skuConflictSku, setSkuConflictSku] = useState('');
   const [skuConflictPayload, setSkuConflictPayload] = useState(null);
   const skuOpenAfterSaveRef = useRef(null);
+  const templateGallerySourceIdRef = useRef(null);
   const queryClient = useQueryClient();
 
   const { data: products = [], isLoading } = useQuery({
@@ -119,6 +121,7 @@ const Warehouse = () => {
       const urls = normalizeProductGallery(saved);
       toast.success(formData.id ? 'Товар обновлён' : 'Товар создан');
       queryClient.invalidateQueries({ queryKey: ['products'] });
+      templateGallerySourceIdRef.current = null;
       const openAfter = skuOpenAfterSaveRef.current;
       skuOpenAfterSaveRef.current = null;
       if (openAfter?.id) {
@@ -213,6 +216,9 @@ const Warehouse = () => {
       cny_price: Number(formData.cny_price) || 0,
     };
     if (allowDuplicateSku) payload.allow_duplicate_sku = true;
+    if (!formData.id && templateGallerySourceIdRef.current) {
+      payload.copy_gallery_from_product_id = templateGallerySourceIdRef.current;
+    }
     return payload;
   };
 
@@ -263,13 +269,27 @@ const Warehouse = () => {
   };
 
   const handleSkuConflictShowExisting = () => {
-    if (!skuConflictExisting?.id || !skuConflictPayload) {
+    const existing = skuConflictExisting;
+    // #region agent log
+    fetch('http://127.0.0.1:7415/ingest/64fc1600-807a-4c4b-afeb-2d3cf2e15696',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'91a77d'},body:JSON.stringify({sessionId:'91a77d',runId:'post-fix',hypothesisId:'H1',location:'Warehouse.jsx:handleSkuConflictShowExisting',message:'show existing clicked',data:{existingId:existing?.id,willSaveDuplicate:false},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion
+    closeSkuConflict();
+    if (existing?.id) {
+      openProduct(existing);
+    }
+  };
+
+  const handleSkuConflictCopyTemplate = () => {
+    const existing = skuConflictExisting;
+    if (!existing) {
       closeSkuConflict();
       return;
     }
-    skuOpenAfterSaveRef.current = skuConflictExisting;
-    saveMutation.mutate({ ...buildSavePayload(true), id: skuConflictPayload.id });
+    const sku = skuConflictSku || String(formData.sku || '').trim();
+    setFormData((prev) => applyWarehouseFormTemplate(prev, existing, { keepSku: sku }));
+    templateGallerySourceIdRef.current = existing?.id ?? null;
     closeSkuConflict();
+    toast.success('Данные скопированы');
   };
 
   const productImageDisplaySrc = (url) => {
@@ -785,6 +805,7 @@ const Warehouse = () => {
         onCancel={closeSkuConflict}
         onSaveAnyway={handleSkuConflictSaveAnyway}
         onShowExisting={handleSkuConflictShowExisting}
+        onCopyTemplate={handleSkuConflictCopyTemplate}
       />
 
       <LabelPrint

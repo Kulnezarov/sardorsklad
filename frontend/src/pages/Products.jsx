@@ -30,7 +30,7 @@ import { productMatchesSearch } from '../utils/smartSearch';
 import LabelPrint from '../components/LabelPrint';
 import SkuConflictModal from '../components/SkuConflictModal';
 import SkuMatchBanner from '../components/SkuMatchBanner';
-import { applyCatalogProductTemplate } from '../utils/productTemplateCopy';
+import { applyCatalogProductTemplate, applyWarehouseFormTemplate } from '../utils/productTemplateCopy';
 import BulkCategoryUpdateModal from '../components/BulkCategoryUpdateModal';
 import JsBarcode from 'jsbarcode';
 
@@ -277,6 +277,7 @@ const Products = () => {
   const [skuTemplateProduct, setSkuTemplateProduct] = useState(null);
   const [skuTemplateLoading, setSkuTemplateLoading] = useState(false);
   const skuTemplateDismissedRef = useRef('');
+  const templateGallerySourceIdRef = useRef(null);
   const [barcodeLocked, setBarcodeLocked] = useState(false);
   /** Редактирование: смена категории тем же экраном, что при создании */
   const [changeCategoryMode, setChangeCategoryMode] = useState(false);
@@ -947,6 +948,7 @@ const Products = () => {
       skuOpenAfterSaveRef.current = null;
       setDuplicateBarcodeProduct(null);
       setDuplicateBarcodeValue('');
+      templateGallerySourceIdRef.current = null;
       if (openAfter?.id) {
         resetForm();
         handleEdit(openAfter);
@@ -1192,6 +1194,7 @@ const Products = () => {
     setSkuTemplateProduct(null);
     setSkuTemplateLoading(false);
     skuTemplateDismissedRef.current = '';
+    templateGallerySourceIdRef.current = null;
     clearDraft();
   };
 
@@ -1386,6 +1389,9 @@ const Products = () => {
   const submitProductPayload = (payload, opts = {}) => {
     const body = { ...payload };
     if (opts.allowDuplicateSku) body.allow_duplicate_sku = true;
+    if (!body.id && templateGallerySourceIdRef.current) {
+      body.copy_gallery_from_product_id = templateGallerySourceIdRef.current;
+    }
     saveMutation.mutate(forceCreateMode ? { ...body, id: null, _forceCreate: true } : body);
   };
 
@@ -1495,6 +1501,9 @@ const Products = () => {
     setIsSubmitting(true);
     try {
       const payload = buildPayload(formData, cnyRate);
+      // #region agent log
+      fetch('http://127.0.0.1:7415/ingest/64fc1600-807a-4c4b-afeb-2d3cf2e15696',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'91a77d'},body:JSON.stringify({sessionId:'91a77d',runId:'post-fix',hypothesisId:'H2',location:'Products.jsx:handleSubmit',message:'submit product',data:{isNew:!formData.id,sku:payload.sku,imageUrlsInForm:(formData.image_urls||[]).length,galleryCopyFrom:templateGallerySourceIdRef.current},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
       const sku = String(formData.sku || '').trim();
       if (sku) {
         try {
@@ -1536,6 +1545,7 @@ const Products = () => {
     }
     const sku = skuConflictSku || String(formData.sku || '').trim();
     setFormData((prev) => applyCatalogProductTemplate(prev, existing, categoryTree, { keepSku: sku }));
+    templateGallerySourceIdRef.current = existing?.id ?? null;
     closeSkuConflict();
     setSkuTemplateProduct(null);
     skuTemplateDismissedRef.current = sku;
@@ -1546,6 +1556,7 @@ const Products = () => {
     if (!skuTemplateProduct) return;
     const sku = String(formData.sku || '').trim();
     setFormData((prev) => applyCatalogProductTemplate(prev, skuTemplateProduct, categoryTree, { keepSku: sku }));
+    templateGallerySourceIdRef.current = skuTemplateProduct?.id ?? null;
     setSkuTemplateProduct(null);
     skuTemplateDismissedRef.current = sku;
     toast.success('Данные скопированы — штрих-код новый');

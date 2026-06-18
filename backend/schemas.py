@@ -102,6 +102,7 @@ class ProductBase(BaseModel):
 
 class ProductCreate(ProductBase):
     allow_duplicate_sku: bool = False
+    copy_gallery_from_product_id: Optional[int] = Field(None, ge=1)
     compatibility_vehicle_model_ids: Optional[List[int]] = None
     compatibility_engine_family_ids: Optional[List[int]] = None
 

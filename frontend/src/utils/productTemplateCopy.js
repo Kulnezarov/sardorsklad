@@ -63,6 +63,30 @@ export function applyCatalogProductTemplate(baseForm, product, categoryTree, { k
     engine_code_id: product.engine_code?.id || null,
     compatibility_vehicle_model_ids: vehicleCompatIds(product),
     compatibility_engine_family_ids: engineCompatIds(product),
+    imageUrls: gallery,
     show_on_storefront: product.show_on_storefront !== false,
+  };
+}
+
+/** Шаблон для упрощённой формы склада (Warehouse.jsx). */
+export function applyWarehouseFormTemplate(baseForm, product, { keepSku } = {}) {
+  const gallery = productGalleryFromApi(product);
+  const sku = keepSku ?? (String(baseForm.sku || '').trim() || product.sku || '');
+  return {
+    ...baseForm,
+    id: null,
+    name: product.name || '',
+    sku,
+    brand: product.brand || '',
+    model: product.model || '',
+    category: product.category || '',
+    purchase_price: product.purchase_price != null ? Number(product.purchase_price) : 0,
+    sale_price: product.sale_price != null ? Number(product.sale_price) : 0,
+    cny_price: product.cny_price != null ? Number(product.cny_price) : 0,
+    description: product.description || '',
+    location_zone: product.location_zone || '',
+    image_urls: gallery,
+    image_url: gallery[0] || '',
+    quantity: baseForm.quantity ?? 0,
   };
 }
