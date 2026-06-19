@@ -4,7 +4,7 @@ import { keepPreviousData, useInfiniteQuery, useMutation, useQuery, useQueryClie
 import toast from 'react-hot-toast';
 import {
   FiPlus, FiEdit2, FiTrash2, FiSearch, FiAlertTriangle,
-  FiImage, FiGrid, FiShoppingCart, FiRefreshCw,
+  FiImage, FiGrid, FiList, FiShoppingCart, FiRefreshCw,
   FiTag, FiUpload, FiDownload, FiX, FiLoader, FiClock, FiPackage, FiGlobe,
 } from 'react-icons/fi';
 import { Button, Modal, Input, TextArea, LoadingSpinner, Alert } from '../components/ui';
@@ -247,6 +247,208 @@ function isLegacyProduct(p) {
   return Boolean(p?.is_legacy_category || p?.needs_category_refresh);
 }
 
+const PRODUCTS_VIEW_KEY = 'skladpro_products_view';
+
+function readProductsViewMode() {
+  try {
+    const v = localStorage.getItem(PRODUCTS_VIEW_KEY);
+    return v === 'grid' ? 'grid' : 'table';
+  } catch {
+    return 'table';
+  }
+}
+
+function formatKztGrid(value) {
+  return `${Number(value || 0).toLocaleString('ru-RU')} ₸`;
+}
+
+function ProductsViewToggle({ viewMode, onChange }) {
+  return (
+    <div className="intake-view-toggle" role="group" aria-label="Вид каталога">
+      <button
+        type="button"
+        className={`intake-view-btn${viewMode === 'table' ? ' intake-view-btn-active' : ''}`}
+        onClick={() => onChange('table')}
+        title="Таблица"
+      >
+        <FiList size={16} />
+        <span>Таблица</span>
+      </button>
+      <button
+        type="button"
+        className={`intake-view-btn${viewMode === 'grid' ? ' intake-view-btn-active' : ''}`}
+        onClick={() => onChange('grid')}
+        title="Сетка"
+      >
+        <FiGrid size={16} />
+        <span>Сетка</span>
+      </button>
+    </div>
+  );
+}
+
+function ProductGridCard({
+  product,
+  onOpen,
+  onEdit,
+  onPrint,
+  onToggleStorefront,
+  storefrontPending,
+}) {
+  const clickTimerRef = useRef(null);
+  const thumb = normalizeProductGallery(product)[0];
+  const thumbSrc = thumb ? resolveUploadedAssetUrl(thumb) : null;
+  const qty = Number(product.quantity) || 0;
+  const onSite = product.show_on_storefront !== false;
+  const compatCell = formatCompatibilityTableCell(product);
+  const catColor = getCatColor(product.category);
+
+  const handleCardClick = useCallback(() => {
+    if (clickTimerRef.current) clearTimeout(clickTimerRef.current);
+    clickTimerRef.current = setTimeout(() => {
+      clickTimerRef.current = null;
+      onOpen();
+    }, 220);
+  }, [onOpen]);
+
+  const handleCardDoubleClick = useCallback((e) => {
+    e.preventDefault();
+    if (clickTimerRef.current) {
+      clearTimeout(clickTimerRef.current);
+      clickTimerRef.current = null;
+    }
+    onEdit();
+  }, [onEdit]);
+
+  useEffect(() => () => {
+    if (clickTimerRef.current) clearTimeout(clickTimerRef.current);
+  }, []);
+
+  return (
+    <div className="product-grid-card" title="Один клик — открыть · двойной — редактировать">
+      <div
+        className="product-grid-card__media"
+        onClick={handleCardClick}
+        onDoubleClick={handleCardDoubleClick}
+        role="button"
+        tabIndex={0}
+        onKeyDown={(e) => e.key === 'Enter' && onOpen()}
+      >
+        {thumbSrc ? (
+          <img src={thumbSrc} alt="" loading="lazy" />
+        ) : (
+          <FiPackage size={28} />
+        )}
+        <button
+          type="button"
+          className={`product-grid-card__chparts${onSite ? ' product-grid-card__chparts--on' : ''}`}
+          title={onSite ? 'На витрине — нажмите, чтобы скрыть' : 'Скрыто с сайта — нажмите, чтобы показать'}
+          disabled={storefrontPending}
+          onClick={(e) => {
+            e.stopPropagation();
+            onToggleStorefront(product);
+          }}
+        >
+          <FiGlobe size={12} />
+          <span>{onSite ? 'CHPARTS' : 'Скрыто'}</span>
+        </button>
+      </div>
+      <div
+        className="product-grid-card__body"
+        onClick={handleCardClick}
+        onDoubleClick={handleCardDoubleClick}
+        role="presentation"
+      >
+        <div className="product-grid-card__title-row">
+          <div className="product-grid-card__name">{product.name || 'Без названия'}</div>
+          <div className="product-grid-card__codes">
+            {product.barcode ? <span title="Штрих-код">{product.barcode}</span> : null}
+            {product.sku ? <span title="Артикул">{product.sku}</span> : null}
+            {!product.barcode && !product.sku ? <span className="product-grid-card__muted">—</span> : null}
+          </div>
+        </div>
+        <div className="product-grid-card__brand-row">
+          {product.brand ? <span className="product-grid-card__brand">{product.brand}</span> : null}
+          {compatCell ? (
+            <span
+              className="product-grid-card__compat"
+              title={compatCell.extra > 0 ? `Ещё ${compatCell.extra} совместимостей` : compatCell.primary}
+            >
+              <span aria-hidden>🚗</span>
+              <span>{compatCell.primary}</span>
+              {compatCell.extra > 0 ? (
+                <span className="product-grid-card__compat-extra">+{compatCell.extra}</span>
+              ) : null}
+            </span>
+          ) : null}
+          {!product.brand && !compatCell ? <span className="product-grid-card__muted">—</span> : null}
+        </div>
+        <div className="product-grid-card__category">
+          {product.category ? (
+            <span
+              className="product-grid-card__cat-pill"
+              style={{ background: catColor.bg, color: catColor.color }}
+            >
+              {product.category}
+            </span>
+          ) : (
+            <span className="product-grid-card__muted">—</span>
+          )}
+        </div>
+        <div className="product-grid-card__prices">
+          <div className="product-grid-card__price-box">
+            <span className="product-grid-card__price-label">Закуп</span>
+            <span className="product-grid-card__price-val">{formatKztGrid(product.purchase_price)}</span>
+          </div>
+          <div className="product-grid-card__price-box product-grid-card__price-box--sale">
+            <span className="product-grid-card__price-label">Продажа</span>
+            <span className="product-grid-card__price-val">{formatKztGrid(product.sale_price)}</span>
+          </div>
+        </div>
+        <div className="product-grid-card__stock">
+          <div className="product-grid-card__stock-item">
+            <span className="product-grid-card__price-label">Место</span>
+            <span className="product-grid-card__stock-val">{product.location_zone || '—'}</span>
+          </div>
+          <div className="product-grid-card__stock-item">
+            <span className="product-grid-card__price-label">Остаток</span>
+            <span
+              className={`product-grid-card__qty${
+                qty === 0 ? ' product-grid-card__qty--zero' : qty <= 5 ? ' product-grid-card__qty--low' : ' product-grid-card__qty--ok'
+              }`}
+            >
+              {qty} шт
+            </span>
+          </div>
+        </div>
+      </div>
+      <div className="product-grid-card__foot">
+        <button
+          type="button"
+          className="product-grid-card__label-btn"
+          title="Этикетка"
+          onClick={(e) => {
+            e.stopPropagation();
+            onPrint(product, e);
+          }}
+        >
+          <FiTag size={14} />
+        </button>
+        <button
+          type="button"
+          className="product-grid-card__open-btn"
+          onClick={(e) => {
+            e.stopPropagation();
+            onOpen();
+          }}
+        >
+          Открыть товар
+        </button>
+      </div>
+    </div>
+  );
+}
+
 /* ── component ── */
 const Products = () => {
   const location = useLocation();
@@ -262,6 +464,7 @@ const Products = () => {
   const [showStale, setShowStale] = useState(false);
   /** '' = все, 'on' = на витрине, 'off' = скрыто с сайта */
   const [storefrontFilter, setStorefrontFilter] = useState('');
+  const [viewMode, setViewMode] = useState(readProductsViewMode);
 
   const [showForm, setShowForm] = useState(false);
   const [forceCreateMode, setForceCreateMode] = useState(false);
@@ -373,6 +576,14 @@ const Products = () => {
   const [tableViewportH, setTableViewportH] = useState(480);
 
   useEffect(() => { formRef.current = formData; }, [formData]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(PRODUCTS_VIEW_KEY, viewMode);
+    } catch {
+      /* ignore */
+    }
+  }, [viewMode]);
 
   // ── Черновик в sessionStorage ──
   const DRAFT_KEY = 'skladpro:product-draft:new';
@@ -2128,6 +2339,9 @@ const Products = () => {
             <FiClock size={13} style={{ marginRight: 5 }} />Залежалось {staleCount > 0 && <span style={{ marginLeft: 4, background: showStale ? '#fbbf24' : '#fde047', border: '1px solid', borderColor: showStale ? '#d97706' : '#f59e0b', borderRadius: 8, padding: '1px 6px', fontSize: 11 }}>{staleCount}</span>}
           </button>
         </div>
+        <div className="products-catalog-toolbar-row">
+          <ProductsViewToggle viewMode={viewMode} onChange={setViewMode} />
+        </div>
         {(legacyOnlyFilter || needsRefreshFilter) && legacyGroups.length > 0 && (
           <div style={{ marginTop: 10, display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
             <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-muted)' }}>Группы:</span>
@@ -2146,12 +2360,12 @@ const Products = () => {
         )}
       </div>
 
-      {/* ── Table (виртуальный скролл: в DOM только видимые строки + буфер) ── */}
+      {/* ── Table / Grid ── */}
       <div
         ref={tableScrollRef}
-        className="products-table-scroll"
+        className={`products-table-scroll${viewMode === 'grid' ? ' products-table-scroll--grid' : ''}`}
         style={{ marginBottom: 0 }}
-        onScroll={handleTableScroll}
+        onScroll={viewMode === 'table' ? handleTableScroll : undefined}
       >
         {displayProducts.length === 0 ? (
           <div style={{ padding: '48px 16px', textAlign: 'center', color: 'var(--text-muted)' }}>
@@ -2167,6 +2381,25 @@ const Products = () => {
                 Сбросить фильтры
               </button>
             )}
+          </div>
+        ) : viewMode === 'grid' ? (
+          <div className="products-catalog-grid">
+            {displayProducts.map((row) => (
+              <ProductGridCard
+                key={row.id}
+                product={row}
+                onOpen={() => setSideProduct(row)}
+                onEdit={() => handleEdit(row)}
+                onPrint={openPrintForRow}
+                onToggleStorefront={(p) => {
+                  toggleStorefrontMutation.mutate({
+                    id: p.id,
+                    value: p.show_on_storefront === false,
+                  });
+                }}
+                storefrontPending={toggleStorefrontMutation.isPending}
+              />
+            ))}
           </div>
         ) : (
           <table className="products-catalog-table">
