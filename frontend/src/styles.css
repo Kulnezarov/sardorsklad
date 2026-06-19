@@ -2456,6 +2456,42 @@ textarea {
   margin-top: 10px;
 }
 
+.products-catalog-chrome-slot {
+  flex-shrink: 0;
+  overflow: hidden;
+  transition: height 0.28s ease;
+}
+
+.products-catalog-chrome-slot--collapsed {
+  pointer-events: none;
+}
+
+.products-catalog-chrome {
+  opacity: 1;
+  transition: opacity 0.2s ease;
+}
+
+.products-catalog-chrome-slot--collapsed .products-catalog-chrome {
+  opacity: 0;
+}
+
+.products-grid-sentinel {
+  width: 100%;
+  height: 1px;
+  pointer-events: none;
+}
+
+.products-grid-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 16px 12px 20px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
 .products-table-scroll--grid {
   padding: 14px;
   background: var(--ios-grouped-bg);
@@ -2495,6 +2531,8 @@ textarea {
   background: var(--surface);
   overflow: hidden;
   transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
+  content-visibility: auto;
+  contain-intrinsic-size: auto 320px;
 }
 
 .product-grid-card:hover {

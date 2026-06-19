@@ -287,7 +287,7 @@ function ProductsViewToggle({ viewMode, onChange }) {
   );
 }
 
-function ProductGridCard({
+const ProductGridCard = React.memo(function ProductGridCard({
   product,
   onOpen,
   onEdit,
@@ -447,7 +447,7 @@ function ProductGridCard({
       </div>
     </div>
   );
-}
+});
 
 /* ── component ── */
 const Products = () => {
@@ -570,10 +570,15 @@ const Products = () => {
   const scanBufRef = useRef('');
   const scanLastRef = useRef(0);
   const tableScrollRef = useRef(null);
+  const chromeRef = useRef(null);
+  const gridLoadSentinelRef = useRef(null);
+  const lastGridScrollTopRef = useRef(0);
   const queryClient = useQueryClient();
 
   const [tableScrollTop, setTableScrollTop] = useState(0);
   const [tableViewportH, setTableViewportH] = useState(480);
+  const [gridChromeHidden, setGridChromeHidden] = useState(false);
+  const [chromeHeight, setChromeHeight] = useState(0);
 
   useEffect(() => { formRef.current = formData; }, [formData]);
 
@@ -1078,15 +1083,73 @@ const Products = () => {
     return () => ro.disconnect();
   }, []);
 
-  const handleTableScroll = useCallback((e) => {
-    setTableScrollTop(e.currentTarget.scrollTop);
+  useEffect(() => {
+    const el = chromeRef.current;
+    if (!el) return undefined;
+    const measure = () => setChromeHeight(el.offsetHeight);
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
   }, []);
 
-  useEffect(() => {
+  const resetCatalogScroll = useCallback(() => {
     const el = tableScrollRef.current;
     if (el) el.scrollTop = 0;
     setTableScrollTop(0);
-  }, [showStale, selectedCategory, search, storefrontFilter]);
+    setGridChromeHidden(false);
+    lastGridScrollTopRef.current = 0;
+  }, []);
+
+  const handleCatalogScroll = useCallback((e) => {
+    const st = e.currentTarget.scrollTop;
+    if (viewMode === 'table') {
+      setTableScrollTop(st);
+      return;
+    }
+    const delta = st - lastGridScrollTopRef.current;
+    if (st < 24) {
+      setGridChromeHidden(false);
+    } else if (delta > 8) {
+      setGridChromeHidden(true);
+    } else if (delta < -8) {
+      setGridChromeHidden(false);
+    }
+    lastGridScrollTopRef.current = st;
+  }, [viewMode]);
+
+  useEffect(() => {
+    resetCatalogScroll();
+  }, [
+    showStale,
+    selectedCategory,
+    selectedCategoryId,
+    legacyOnlyFilter,
+    needsRefreshFilter,
+    search,
+    storefrontFilter,
+    viewMode,
+    resetCatalogScroll,
+  ]);
+
+  useEffect(() => {
+    if (viewMode !== 'grid' || !hasNextPage) return undefined;
+    const root = tableScrollRef.current;
+    const sentinel = gridLoadSentinelRef.current;
+    if (!root || !sentinel) return undefined;
+
+    const obs = new IntersectionObserver(
+      (entries) => {
+        const entry = entries[0];
+        if (entry?.isIntersecting && !isFetchingNextPage) {
+          fetchNextPage();
+        }
+      },
+      { root, rootMargin: '600px 0px', threshold: 0 },
+    );
+    obs.observe(sentinel);
+    return () => obs.disconnect();
+  }, [viewMode, hasNextPage, isFetchingNextPage, fetchNextPage, displayProducts.length]);
 
   /* mutations */
   const saveMutation = useMutation({
@@ -2174,6 +2237,11 @@ const Products = () => {
         </div>
       )}
 
+      <div
+        className={`products-catalog-chrome-slot${viewMode === 'grid' && gridChromeHidden ? ' products-catalog-chrome-slot--collapsed' : ''}`}
+        style={viewMode === 'grid' ? { height: gridChromeHidden ? 0 : (chromeHeight || undefined) } : undefined}
+      >
+        <div ref={chromeRef} className="products-catalog-chrome">
       {/* ── Page header ── */}
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', marginBottom: 16 }}>
         <div>
@@ -2359,13 +2427,15 @@ const Products = () => {
           </div>
         )}
       </div>
+        </div>
+      </div>
 
       {/* ── Table / Grid ── */}
       <div
         ref={tableScrollRef}
         className={`products-table-scroll${viewMode === 'grid' ? ' products-table-scroll--grid' : ''}`}
         style={{ marginBottom: 0 }}
-        onScroll={viewMode === 'table' ? handleTableScroll : undefined}
+        onScroll={handleCatalogScroll}
       >
         {displayProducts.length === 0 ? (
           <div style={{ padding: '48px 16px', textAlign: 'center', color: 'var(--text-muted)' }}>
@@ -2383,24 +2453,33 @@ const Products = () => {
             )}
           </div>
         ) : viewMode === 'grid' ? (
-          <div className="products-catalog-grid">
-            {displayProducts.map((row) => (
-              <ProductGridCard
-                key={row.id}
-                product={row}
-                onOpen={() => setSideProduct(row)}
-                onEdit={() => handleEdit(row)}
-                onPrint={openPrintForRow}
-                onToggleStorefront={(p) => {
-                  toggleStorefrontMutation.mutate({
-                    id: p.id,
-                    value: p.show_on_storefront === false,
-                  });
-                }}
-                storefrontPending={toggleStorefrontMutation.isPending}
-              />
-            ))}
-          </div>
+          <>
+            <div className="products-catalog-grid">
+              {displayProducts.map((row) => (
+                <ProductGridCard
+                  key={row.id}
+                  product={row}
+                  onOpen={() => setSideProduct(row)}
+                  onEdit={() => handleEdit(row)}
+                  onPrint={openPrintForRow}
+                  onToggleStorefront={(p) => {
+                    toggleStorefrontMutation.mutate({
+                      id: p.id,
+                      value: p.show_on_storefront === false,
+                    });
+                  }}
+                  storefrontPending={toggleStorefrontMutation.isPending}
+                />
+              ))}
+            </div>
+            {hasNextPage ? <div ref={gridLoadSentinelRef} className="products-grid-sentinel" aria-hidden /> : null}
+            {isFetchingNextPage ? (
+              <div className="products-grid-loading">
+                <FiLoader size={18} style={{ animation: 'spin 1s linear infinite' }} />
+                <span>Загрузка…</span>
+              </div>
+            ) : null}
+          </>
         ) : (
           <table className="products-catalog-table">
             <thead className="products-catalog-thead">
@@ -2541,7 +2620,7 @@ const Products = () => {
           </table>
         )}
       </div>
-      {hasNextPage && (
+      {hasNextPage && viewMode === 'table' && (
         <div className="products-load-more-bar">
           <button
             type="button"
