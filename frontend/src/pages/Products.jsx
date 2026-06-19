@@ -32,6 +32,7 @@ import SkuConflictModal from '../components/SkuConflictModal';
 import SkuMatchBanner from '../components/SkuMatchBanner';
 import { applyCatalogProductTemplate, applyWarehouseFormTemplate } from '../utils/productTemplateCopy';
 import BulkCategoryUpdateModal from '../components/BulkCategoryUpdateModal';
+import ProductImageLightbox from '../components/ProductImageLightbox';
 import JsBarcode from 'jsbarcode';
 
 const MAX_PRODUCT_PHOTOS = 12;
@@ -262,6 +263,16 @@ function formatKztGrid(value) {
   return `${Number(value || 0).toLocaleString('ru-RU')} ₸`;
 }
 
+function formatSidePurchaseYuan(product) {
+  const cny = optionalNum(product?.cny_price);
+  return cny != null && cny > 0 ? `${cny} ¥` : '—';
+}
+
+function formatSidePurchaseKztHint(product) {
+  const pp = Number(product?.purchase_price) || 0;
+  return pp > 0 ? `≈ ${pp.toLocaleString('ru-RU')} ₸ с доставкой` : null;
+}
+
 function ProductsViewToggle({ viewMode, onChange }) {
   return (
     <div className="intake-view-toggle" role="group" aria-label="Вид каталога">
@@ -293,6 +304,7 @@ const ProductGridCard = React.memo(function ProductGridCard({
   onEdit,
   onPrint,
   onToggleStorefront,
+  onZoomPhoto,
   storefrontPending,
 }) {
   const clickTimerRef = useRef(null);
@@ -324,10 +336,19 @@ const ProductGridCard = React.memo(function ProductGridCard({
     if (clickTimerRef.current) clearTimeout(clickTimerRef.current);
   }, []);
 
+  const handlePhotoClick = useCallback((e) => {
+    e.stopPropagation();
+    if (clickTimerRef.current) {
+      clearTimeout(clickTimerRef.current);
+      clickTimerRef.current = null;
+    }
+    if (thumbSrc) onZoomPhoto?.(product, 0);
+  }, [thumbSrc, onZoomPhoto, product]);
+
   return (
     <div className="product-grid-card" title="Один клик — открыть · двойной — редактировать">
       <div
-        className="product-grid-card__media"
+        className={`product-grid-card__media${thumbSrc ? ' product-grid-card__media--zoomable' : ''}`}
         onClick={handleCardClick}
         onDoubleClick={handleCardDoubleClick}
         role="button"
@@ -335,7 +356,7 @@ const ProductGridCard = React.memo(function ProductGridCard({
         onKeyDown={(e) => e.key === 'Enter' && onOpen()}
       >
         {thumbSrc ? (
-          <img src={thumbSrc} alt="" loading="lazy" />
+          <img src={thumbSrc} alt="" loading="lazy" onClick={handlePhotoClick} />
         ) : (
           <FiPackage size={28} />
         )}
@@ -579,6 +600,8 @@ const Products = () => {
   const [tableViewportH, setTableViewportH] = useState(480);
   const [gridChromeHidden, setGridChromeHidden] = useState(false);
   const [chromeHeight, setChromeHeight] = useState(0);
+  const [lightboxState, setLightboxState] = useState(null);
+  const [sidePhotoIdx, setSidePhotoIdx] = useState(0);
 
   useEffect(() => { formRef.current = formData; }, [formData]);
 
@@ -1011,6 +1034,20 @@ const Products = () => {
   }, [sideProduct?.id]);
 
   const sidePanelProduct = sideProductDetail || sideProduct;
+
+  const openProductLightbox = useCallback((product, index = 0) => {
+    const urls = normalizeProductGallery(product);
+    if (!urls.length) return;
+    setLightboxState({
+      urls,
+      index: Math.min(Math.max(0, index), urls.length - 1),
+      title: product?.name || '',
+    });
+  }, []);
+
+  useEffect(() => {
+    setSidePhotoIdx(0);
+  }, [sideProduct?.id]);
 
   const displayProducts = useMemo(() => {
     let list = showStale ? products.filter(isStale) : products;
@@ -2239,7 +2276,17 @@ const Products = () => {
 
       <div
         className={`products-catalog-chrome-slot${viewMode === 'grid' && gridChromeHidden ? ' products-catalog-chrome-slot--collapsed' : ''}`}
-        style={viewMode === 'grid' ? { height: gridChromeHidden ? 0 : (chromeHeight || undefined) } : undefined}
+        style={
+          viewMode === 'grid'
+            ? {
+                height: gridChromeHidden
+                  ? 0
+                  : chromeHeight > 0
+                    ? chromeHeight
+                    : undefined,
+              }
+            : undefined
+        }
       >
         <div ref={chromeRef} className="products-catalog-chrome">
       {/* ── Page header ── */}
@@ -2462,13 +2509,14 @@ const Products = () => {
                   onOpen={() => setSideProduct(row)}
                   onEdit={() => handleEdit(row)}
                   onPrint={openPrintForRow}
-                  onToggleStorefront={(p) => {
-                    toggleStorefrontMutation.mutate({
-                      id: p.id,
-                      value: p.show_on_storefront === false,
-                    });
-                  }}
-                  storefrontPending={toggleStorefrontMutation.isPending}
+                onToggleStorefront={(p) => {
+                  toggleStorefrontMutation.mutate({
+                    id: p.id,
+                    value: p.show_on_storefront === false,
+                  });
+                }}
+                onZoomPhoto={openProductLightbox}
+                storefrontPending={toggleStorefrontMutation.isPending}
                 />
               ))}
             </div>
@@ -2714,13 +2762,64 @@ const Products = () => {
                   <FiLoader size={16} style={{ animation: 'spin 1s linear infinite' }} /> Загрузка деталей…
                 </div>
               )}
+              {(() => {
+                const gallery = normalizeProductGallery(sidePanelProduct);
+                const focusUrl = gallery[sidePhotoIdx] ?? gallery[0];
+                const focusSrc = focusUrl ? resolveUploadedAssetUrl(focusUrl) : null;
+                return (
+                  <div className="product-side-photo">
+                    <button
+                      type="button"
+                      className="product-side-photo__main"
+                      disabled={!focusSrc}
+                      onClick={() => focusSrc && openProductLightbox(sidePanelProduct, sidePhotoIdx)}
+                    >
+                      {focusSrc ? (
+                        <img src={focusSrc} alt="" />
+                      ) : (
+                        <FiPackage size={36} style={{ color: 'var(--text-muted)' }} />
+                      )}
+                    </button>
+                    {focusSrc ? (
+                      <div className="product-side-photo__hint">Нажмите для увеличения</div>
+                    ) : null}
+                    {gallery.length > 1 ? (
+                      <div className="product-side-photo__thumbs">
+                        {gallery.map((url, idx) => (
+                          <button
+                            key={`${url}-${idx}`}
+                            type="button"
+                            className={`product-side-photo__thumb${idx === sidePhotoIdx ? ' product-side-photo__thumb--active' : ''}`}
+                            onClick={() => setSidePhotoIdx(idx)}
+                          >
+                            <img src={resolveUploadedAssetUrl(url)} alt="" />
+                          </button>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
+                );
+              })()}
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 18 }}>
                 {[
                   ['Штрих-код', sidePanelProduct.barcode || sidePanelProduct.sku || '—', true],
                   ['Марка', sidePanelProduct.brand || '—'],
                   ['Модель', sidePanelProduct.model || '—'],
                   ['Производитель', sidePanelProduct.supplier || '—'],
-                  ['Закуп (₸)', `${Number(sidePanelProduct.purchase_price || 0).toLocaleString('ru-RU')} ₸`],
+                ].map(([label, val, mono]) => (
+                  <div key={label} style={{ padding: '12px 14px', borderRadius: 16, background: 'var(--ios-grouped-bg)', border: '1px solid var(--border)' }}>
+                    <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>{label}</div>
+                    <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text)', fontFamily: mono ? 'ui-monospace,monospace' : undefined, wordBreak: 'break-word' }}>{val}</div>
+                  </div>
+                ))}
+                <div style={{ padding: '12px 14px', borderRadius: 16, background: 'var(--ios-grouped-bg)', border: '1px solid var(--border)' }}>
+                  <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>Закуп (¥)</div>
+                  <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text)' }}>{formatSidePurchaseYuan(sidePanelProduct)}</div>
+                  {formatSidePurchaseKztHint(sidePanelProduct) ? (
+                    <div className="product-side-spec-purchase__hint">{formatSidePurchaseKztHint(sidePanelProduct)}</div>
+                  ) : null}
+                </div>
+                {[
                   ['Доставка', sidePanelProduct.delivery_cost_kzt ? `${Number(sidePanelProduct.delivery_cost_kzt).toLocaleString('ru-RU')} ₸` : '—'],
                   ['Вес (доставка)', formatSideDeliveryKg(sidePanelProduct, deliveryKztPerKg)],
                   ['Продажа (₸)', `${Number(sidePanelProduct.sale_price || 0).toLocaleString('ru-RU')} ₸`],
@@ -2803,6 +2902,22 @@ const Products = () => {
           </div>
         </>
       )}
+
+      {lightboxState ? (
+        <ProductImageLightbox
+          urls={lightboxState.urls}
+          index={lightboxState.index}
+          title={lightboxState.title}
+          onClose={() => setLightboxState(null)}
+          onIndexChange={(next) => {
+            setLightboxState((prev) => {
+              if (!prev) return prev;
+              const idx = typeof next === 'function' ? next(prev.index) : next;
+              return { ...prev, index: idx };
+            });
+          }}
+        />
+      ) : null}
 
       {/* ── Delete Math Confirm ── */}
       {deleteModal && (
