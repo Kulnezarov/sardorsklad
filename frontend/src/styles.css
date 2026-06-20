@@ -2458,21 +2458,19 @@ textarea {
 
 .products-catalog-chrome-slot {
   flex-shrink: 0;
-  overflow: hidden;
-  transition: height 0.32s cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-.products-catalog-chrome-slot--collapsed {
-  pointer-events: none;
 }
 
 .products-catalog-chrome {
-  opacity: 1;
-  transition: opacity 0.25s ease;
+  position: relative;
+  z-index: 2;
 }
 
-.products-catalog-chrome-slot--collapsed .products-catalog-chrome {
-  opacity: 0;
+.products-catalog-chrome .ios-glass-panel {
+  box-shadow: 0 4px 24px rgba(15, 23, 42, 0.06);
+}
+
+[data-theme="dark"] .products-catalog-chrome .ios-glass-panel {
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.25);
 }
 
 /* Product image lightbox */
