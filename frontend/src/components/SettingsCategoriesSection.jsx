@@ -76,11 +76,13 @@ function findSimilarSubcategories(name, tree, excludeId = null) {
 
 function CategoryTemplatePreview({ form }) {
   const vm = form?.vehicle_mode || 'none';
+  const ecm = form?.engine_code_mode || 'none';
   const autoLabel = vm === 'compatibility'
     ? 'Пикер марок и моделей'
     : vm === 'brand_model'
       ? 'Поля марка / модель'
       : 'Без привязки к авто';
+  const engineLabel = ecm === 'required' ? 'Код мотора (несколько)' : null;
   const fields = (form?.fields || []).filter((f) => f?.label?.trim());
   return (
     <div className="settings-category-template-preview">
@@ -88,6 +90,7 @@ function CategoryTemplatePreview({ form }) {
       <ul className="settings-category-template-preview__list">
         <li>Название товара</li>
         <li>{autoLabel}</li>
+        {engineLabel ? <li>{engineLabel} *</li> : null}
         {fields.map((f, i) => (
           <li key={f.key || i}>
             {f.label}
@@ -168,6 +171,7 @@ export default function SettingsCategoriesSection() {
       icon: '⚙️',
       show_compatibility: true,
       vehicle_mode: 'compatibility',
+      engine_code_mode: 'none',
       pricing_mode: 'import_cny',
       fields: [emptyField()],
     });
@@ -192,6 +196,7 @@ export default function SettingsCategoriesSection() {
       is_active: c.is_active !== false,
       show_compatibility: prof.vehicle_mode === 'compatibility',
       vehicle_mode: prof.vehicle_mode,
+      engine_code_mode: prof.engine_code_mode || 'none',
       pricing_mode: prof.pricing_mode,
       fields: schemaToFields(c.attribute_schema).length ? schemaToFields(c.attribute_schema) : [emptyField()],
     });
@@ -215,6 +220,7 @@ export default function SettingsCategoriesSection() {
     const f = subForm || editTarget;
     if (!f?.name?.trim()) { toast.error('Введите название подкатегории'); return; }
     const vm = f.vehicle_mode || 'none';
+    const ecm = f.engine_code_mode || 'none';
     const payload = {
       name: f.name.trim(),
       icon: f.icon || '⚙️',
@@ -222,6 +228,7 @@ export default function SettingsCategoriesSection() {
       attribute_schema: fieldsToFullSchema(f.fields, vm === 'compatibility', null, {
         vehicle_mode: vm,
         pricing_mode: f.pricing_mode || 'import_cny',
+        engine_code_mode: ecm,
       }),
       is_active: true,
     };
@@ -239,6 +246,7 @@ export default function SettingsCategoriesSection() {
       return;
     }
     const vm = editTarget.vehicle_mode || 'none';
+    const ecm = editTarget.engine_code_mode || 'none';
     updateMutation.mutate({
       id: editTarget.id,
       payload: {
@@ -248,6 +256,7 @@ export default function SettingsCategoriesSection() {
         attribute_schema: fieldsToFullSchema(editTarget.fields, vm === 'compatibility', null, {
           vehicle_mode: vm,
           pricing_mode: editTarget.pricing_mode || 'import_cny',
+          engine_code_mode: ecm,
         }),
       },
     });
@@ -295,6 +304,26 @@ export default function SettingsCategoriesSection() {
                 vehicle_mode: opt.value,
                 show_compatibility: opt.value === 'compatibility',
               })}
+            >
+              <span className="settings-profile-chip__label">{opt.label}</span>
+              <span className="settings-profile-chip__sub">{opt.sub}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="settings-profile-row">
+        <span className="settings-profile-row__label">Код мотора</span>
+        <div className="settings-profile-chips">
+          {[
+            { value: 'none', label: 'Не нужен', sub: 'кузов, интерьер, оптика' },
+            { value: 'required', label: 'Обязателен', sub: 'несколько кодов на товар' },
+          ].map((opt) => (
+            <button
+              key={opt.value}
+              type="button"
+              className={`settings-profile-chip${(form.engine_code_mode || 'none') === opt.value ? ' settings-profile-chip--active' : ''}`}
+              onClick={() => setForm({ ...form, engine_code_mode: opt.value })}
             >
               <span className="settings-profile-chip__label">{opt.label}</span>
               <span className="settings-profile-chip__sub">{opt.sub}</span>

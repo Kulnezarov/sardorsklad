@@ -23,6 +23,7 @@ export const BUILTIN_LABELS = {
 
 export const VALID_PRICING_MODES = ['import_cny', 'local_kzt'];
 export const VALID_VEHICLE_MODES = ['compatibility', 'brand_model', 'none'];
+export const VALID_ENGINE_CODE_MODES = ['none', 'required'];
 
 /**
  * Определяет профиль категории: pricing_mode и vehicle_mode.
@@ -39,7 +40,10 @@ export function resolveCategoryProfile(schema) {
     vm = s.show_compatibility ? 'compatibility' : 'none';
   }
 
-  return { pricing_mode: pm, vehicle_mode: vm };
+  let ecm = s.engine_code_mode;
+  if (!VALID_ENGINE_CODE_MODES.includes(ecm)) ecm = 'none';
+
+  return { pricing_mode: pm, vehicle_mode: vm, engine_code_mode: ecm };
 }
 
 /** Поля цен/склада в хвосте form_layout (после артикула). */
@@ -316,11 +320,15 @@ export function fieldsToFullSchema(fields, showCompatibility, formLayout, opts =
     });
   const vehicleMode = opts.vehicle_mode || (showCompatibility ? 'compatibility' : 'none');
   const pricingMode = opts.pricing_mode || 'import_cny';
+  const engineCodeMode = VALID_ENGINE_CODE_MODES.includes(opts.engine_code_mode)
+    ? opts.engine_code_mode
+    : 'none';
   const base = {
     fields: out,
     show_compatibility: vehicleMode === 'compatibility',
     vehicle_mode: vehicleMode,
     pricing_mode: pricingMode,
+    engine_code_mode: engineCodeMode,
   };
   return {
     ...base,

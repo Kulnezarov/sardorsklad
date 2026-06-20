@@ -229,6 +229,9 @@ export async function uploadInvoiceLinesToWarehouse(lines, cnyRate) {
         ...(Array.isArray(l.compatibility_vehicle_model_ids) && l.compatibility_vehicle_model_ids.length
           ? { compatibility_vehicle_model_ids: l.compatibility_vehicle_model_ids }
           : {}),
+        ...(Array.isArray(l.compatibility_engine_family_ids) && l.compatibility_engine_family_ids.length
+          ? { compatibility_engine_family_ids: l.compatibility_engine_family_ids }
+          : {}),
         supplier: l.manufacturer || null,
         description: l.extra_info || null,
         cny_price: num(l.cny_price) > 0 ? roundMoney2(num(l.cny_price)) : null,

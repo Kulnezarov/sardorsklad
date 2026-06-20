@@ -41,7 +41,7 @@ from services.category_attributes import (
     sync_category_text,
     validate_attributes_for_category,
 )
-from services.form_layout import display_layout_from_form_layout, normalize_form_layout
+from services.form_layout import display_layout_from_form_layout, normalize_form_layout, resolve_category_profile
 from services.product_display import sync_custom_fields_to_attributes
 from services.image_encode import (
     bytes_to_avif,
@@ -198,6 +198,34 @@ def _apply_engine_code_defaults(db: Session, payload: dict) -> None:
     if first_match:
         payload["brand"] = _normalize_vehicle_text(first_match.brand)
         payload["model"] = _normalize_vehicle_text(first_match.model)
+
+
+def _current_engine_family_ids(db: Session, product_id: int) -> list[int]:
+    return [
+        int(r[0])
+        for r in db.query(models.ProductEngineFamilyLink.engine_family_id)
+        .filter(models.ProductEngineFamilyLink.product_id == product_id)
+        .all()
+    ]
+
+
+def _validate_engine_families_for_category(
+    db: Session,
+    category_id: int | None,
+    engine_family_ids: list | None,
+) -> None:
+    if not category_id:
+        return
+    schema = get_category_schema(db, category_id) or {}
+    profile = resolve_category_profile(schema)
+    if profile.get("engine_code_mode") != "required":
+        return
+    ids = [int(x) for x in (engine_family_ids or []) if x]
+    if not ids:
+        raise HTTPException(
+            status_code=422,
+            detail="Для этой категории обязателен хотя бы один код мотора",
+        )
 
 
 def _product_gallery_urls(p: models.Product) -> list[str]:
@@ -678,6 +706,7 @@ def create_product(
     db.add(db_product)
     db.flush()
 
+    _validate_engine_families_for_category(db, payload.get("category_id"), e_ids)
     apply_product_compatibility(db, db_product, vehicle_model_ids=v_ids, engine_family_ids=e_ids)
 
     if copy_gallery_from:
@@ -823,7 +852,14 @@ def update_product(
         ]
         nvm = v_ids if vkey else cur_vm
         nef = e_ids if ekey else cur_ef
+        _validate_engine_families_for_category(db, db_product.category_id, nef)
         apply_product_compatibility(db, db_product, vehicle_model_ids=nvm, engine_family_ids=nef)
+    elif "category_id" in update_data:
+        _validate_engine_families_for_category(
+            db,
+            db_product.category_id,
+            _current_engine_family_ids(db, product_id),
+        )
 
     db.add(
         models.History(

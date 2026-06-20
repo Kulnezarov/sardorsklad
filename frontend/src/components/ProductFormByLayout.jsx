@@ -93,6 +93,8 @@ export default function ProductFormByLayout({
   onFormDataChange,
   disabled = false,
   compatibilitySlot,
+  engineCompatibilitySlot,
+  showEngineFamilies = false,
   fieldErrors = {},
   categoryName = '',
   categoryGroupName = '',
@@ -275,6 +277,25 @@ export default function ProductFormByLayout({
     rows.splice(insertAt, 0, { type: 'compat', row: { id: 'compat', kind: 'compatibility' } });
   }
 
+  if (
+    layoutSection !== 'attributes'
+    && showEngineFamilies
+    && engineCompatibilitySlot
+    && !rows.some((b) => b.type === 'engine_compat')
+  ) {
+    let insertAt = rows.length;
+    for (let i = 0; i < rows.length; i += 1) {
+      if (rows[i].type === 'compat') {
+        insertAt = i + 1;
+        break;
+      }
+      if (rows[i].type === 'full' && rows[i].row?.key === 'name') {
+        insertAt = i + 1;
+      }
+    }
+    rows.splice(insertAt, 0, { type: 'engine_compat', row: { id: 'engine_compat', kind: 'engine_compat' } });
+  }
+
   const fieldLabel = (row) => layoutRowLabel(row, schema);
   const isNameRow = (row) => row.kind === 'builtin' && row.key === 'name';
 
@@ -285,6 +306,18 @@ export default function ProductFormByLayout({
           return (
             <ProductAttrField key="vehicle-compat-block" label="Совместим с авто" className="product-attr-field--compat">
               {compatibilitySlot}
+            </ProductAttrField>
+          );
+        }
+        if (block.type === 'engine_compat') {
+          return (
+            <ProductAttrField
+              key="engine-compat-block"
+              label="Код мотора"
+              className="product-attr-field--compat product-attr-field--engine"
+              error={fieldErrors.engine_families}
+            >
+              {engineCompatibilitySlot}
             </ProductAttrField>
           );
         }

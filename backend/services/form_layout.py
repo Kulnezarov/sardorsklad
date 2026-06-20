@@ -51,6 +51,10 @@ DEFAULT_PRICING_MODE = "import_cny"
 VALID_VEHICLE_MODES = frozenset({"compatibility", "brand_model", "none"})
 DEFAULT_VEHICLE_MODE = "none"
 
+# engine_code_mode: none (скрыть) | required (multi-select кодов мотора обязателен)
+VALID_ENGINE_CODE_MODES = frozenset({"none", "required"})
+DEFAULT_ENGINE_CODE_MODE = "none"
+
 
 def _row_id(entry: dict) -> str:
     return str(entry.get("id") or entry.get("key") or "").strip()
@@ -73,7 +77,11 @@ def resolve_category_profile(schema: dict | None) -> dict[str, str]:
         else:
             vm = DEFAULT_VEHICLE_MODE
 
-    return {"pricing_mode": pm, "vehicle_mode": vm}
+    ecm = str(s.get("engine_code_mode") or "").strip()
+    if ecm not in VALID_ENGINE_CODE_MODES:
+        ecm = DEFAULT_ENGINE_CODE_MODE
+
+    return {"pricing_mode": pm, "vehicle_mode": vm, "engine_code_mode": ecm}
 
 
 def default_form_layout(
@@ -363,11 +371,16 @@ def normalize_attribute_schema(raw: Any) -> dict:
     if vm not in VALID_VEHICLE_MODES:
         vm = "compatibility" if show_compatibility else DEFAULT_VEHICLE_MODE
 
+    ecm = str(raw.get("engine_code_mode") or "").strip()
+    if ecm not in VALID_ENGINE_CODE_MODES:
+        ecm = DEFAULT_ENGINE_CODE_MODE
+
     base: dict[str, Any] = {
         "fields": fields,
         "show_compatibility": show_compatibility,
         "pricing_mode": pm,
         "vehicle_mode": vm,
+        "engine_code_mode": ecm,
     }
     base["form_layout"] = normalize_form_layout(raw.get("form_layout"), base)
     return base

@@ -16,6 +16,7 @@ import { priceLayoutRows, resolveCategoryProfile } from '../utils/formLayoutUtil
 import ProductFormSection, { ProductFormTemplateBadge } from '../components/ProductFormSection';
 import FormAccordionSection from '../components/FormAccordionSection';
 import VehicleCompatibilityPicker from '../components/VehicleCompatibilityPicker';
+import EngineFamilyPicker from '../components/EngineFamilyPicker';
 import ProductFormProgress from '../components/ProductFormProgress';
 import ProductStorefrontPreview from '../components/ProductStorefrontPreview';
 import { formatAttributePreview } from '../components/CategoryAttributeFields';
@@ -193,6 +194,7 @@ function buildPayload(formData, cnyRate = 65) {
   const cny = optionalNum(formData.cny_price);
   const purchase = effectivePurchaseTenge(formData, cnyRate);
   const vms = formData.compatibility_vehicle_model_ids || [];
+  const efs = formData.compatibility_engine_family_ids || [];
   return {
     id: formData.id ?? null,
     name: formData.name.trim(),
@@ -216,9 +218,13 @@ function buildPayload(formData, cnyRate = 65) {
     min_quantity: parseInt(formData.min_quantity, 10) || 0,
     show_on_storefront: formData.show_on_storefront !== false,
     ...(formData.id
-      ? { compatibility_vehicle_model_ids: vms }
+      ? {
+          compatibility_vehicle_model_ids: vms,
+          compatibility_engine_family_ids: efs,
+        }
       : {
           ...(vms.length ? { compatibility_vehicle_model_ids: vms } : {}),
+          ...(efs.length ? { compatibility_engine_family_ids: efs } : {}),
         }),
   };
 }
@@ -529,6 +535,12 @@ const Products = () => {
     setCompatInitialIds(ids?.length ? [...ids] : EMPTY_COMPAT_IDS);
     setCompatPickerKey((k) => k + 1);
   }, []);
+  const [enginePickerKey, setEnginePickerKey] = useState(0);
+  const [engineInitialIds, setEngineInitialIds] = useState(EMPTY_COMPAT_IDS);
+  const resetEnginePicker = useCallback((ids = EMPTY_COMPAT_IDS) => {
+    setEngineInitialIds(ids?.length ? [...ids] : EMPTY_COMPAT_IDS);
+    setEnginePickerKey((k) => k + 1);
+  }, []);
 
   const [imageUploading, setImageUploading] = useState(false);
   /** 0–100 во время upload; null когда не качаем */
@@ -742,10 +754,14 @@ const Products = () => {
         category: sub?.name || prev.category,
         attributes: catChanged && prev.category_id ? {} : (prev.attributes || {}),
         compatibility_vehicle_model_ids: catChanged && prev.category_id ? [] : prev.compatibility_vehicle_model_ids,
+        compatibility_engine_family_ids: catChanged && prev.category_id ? [] : prev.compatibility_engine_family_ids,
         brand: catChanged && prev.category_id ? '' : prev.brand,
         model: catChanged && prev.category_id ? '' : prev.model,
       }));
-      if (catChanged) resetCompatPicker([]);
+      if (catChanged) {
+        resetCompatPicker([]);
+        resetEnginePicker([]);
+      }
       if (categoryId) setChangeCategoryMode(false);
     };
 
@@ -807,11 +823,17 @@ const Products = () => {
     return !liquidsGroup || vm !== 'none';
   }, [selectedCategoryGroup?.name, selectedSubcategorySchema?.vehicle_mode]);
 
+  const showEngineFamilyPicker = useMemo(
+    () => selectedSubcategorySchema?.engine_code_mode === 'required',
+    [selectedSubcategorySchema?.engine_code_mode],
+  );
+
   const formProgress = useMemo(() => buildProductFormProgress({
     formData,
     schema: selectedSubcategorySchema,
     showCompatibility: showCompatibilityPicker,
-  }), [formData, selectedSubcategorySchema, showCompatibilityPicker]);
+    showEngineFamilies: showEngineFamilyPicker,
+  }), [formData, selectedSubcategorySchema, showCompatibilityPicker, showEngineFamilyPicker]);
 
   const storefrontPreview = useMemo(() => buildStorefrontPreview({
     formData,
@@ -820,6 +842,11 @@ const Products = () => {
     vehicleModels,
     compatibilityIds: formData.compatibility_vehicle_model_ids,
   }), [formData, selectedSubcategorySchema, selectedSubcategory?.name, vehicleModels]);
+
+  const handleEngineFamilyChange = useCallback((ids) => {
+    const idList = Array.isArray(ids) ? ids : [];
+    setFormData((fd) => ({ ...fd, compatibility_engine_family_ids: idList }));
+  }, []);
 
   const compatibilityPickerSlot = useMemo(() => {
     if (!showCompatibilityPicker) return null;
@@ -839,6 +866,24 @@ const Products = () => {
     vehicleBrands,
     vehicleModels,
     handleCompatibilityChange,
+  ]);
+
+  const engineCompatibilitySlot = useMemo(() => {
+    if (!showEngineFamilyPicker) return null;
+    return (
+      <EngineFamilyPicker
+        key={`engine-${enginePickerKey}`}
+        initialSelectedIds={engineInitialIds}
+        vehicleModelIds={formData.compatibility_vehicle_model_ids || []}
+        onChange={handleEngineFamilyChange}
+      />
+    );
+  }, [
+    showEngineFamilyPicker,
+    enginePickerKey,
+    engineInitialIds,
+    formData.compatibility_vehicle_model_ids,
+    handleEngineFamilyChange,
   ]);
 
   // openVoiceAdd: открыть форму нового товара (как «Добавить»)
@@ -1689,6 +1734,7 @@ const Products = () => {
       return '';
     });
     resetCompatPicker((p.compatibility?.vehicle_models || []).map((x) => x.id));
+    resetEnginePicker((p.compatibility?.engine_families || []).map((x) => x.id));
     setShowForm(true); setBarcodeLocked(true); setFormError('');
     setForceCreateMode(false);
     setChangeCategoryMode(false);
@@ -1745,6 +1791,7 @@ const Products = () => {
       description: product.description || '',
       show_on_storefront: product.show_on_storefront !== false,
       compatibility_vehicle_model_ids: (product.compatibility?.vehicle_models || []).map((x) => x.id),
+      compatibility_engine_family_ids: (product.compatibility?.engine_families || []).map((x) => x.id),
       quantity: 0,
       min_quantity: 0,
       image_url: galleryUrls[0] || '',
@@ -1757,9 +1804,10 @@ const Products = () => {
     setFormError('');
     setFieldErrors({});
     resetCompatPicker((product.compatibility?.vehicle_models || []).map((x) => x.id));
+    resetEnginePicker((product.compatibility?.engine_families || []).map((x) => x.id));
     setShowForm(true);
     toast('Дублирование: измените нужные поля и сохраните', { icon: '📋', duration: 4000 });
-  }, [categoryTree, resetCompatPicker]);
+  }, [categoryTree, resetCompatPicker, resetEnginePicker]);
 
   const handleMigrateProduct = (product) => {
     handleEdit(product);
@@ -1801,6 +1849,10 @@ const Products = () => {
           errors[`attr:${f.key}`] = `${f.label} обязательно`;
         }
       });
+    }
+
+    if (showEngineFamilyPicker && !(formData.compatibility_engine_family_ids || []).length) {
+      errors.engine_families = 'Выберите хотя бы один код мотора';
     }
 
     if (Object.keys(errors).length > 0) {
@@ -3326,6 +3378,8 @@ const Products = () => {
               categoryName={selectedSubcategory?.name || formData.category || ''}
               categoryGroupName={selectedCategoryGroup?.name || ''}
               compatibilitySlot={compatibilityPickerSlot}
+              engineCompatibilitySlot={engineCompatibilitySlot}
+              showEngineFamilies={showEngineFamilyPicker}
             />
           </FormAccordionSection>
 

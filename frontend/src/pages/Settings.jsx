@@ -11,6 +11,7 @@ import { getApiErrorMessage } from '../api/client';
 import { settingsApi } from '../api/settings';
 import { historyApi } from '../api/history';
 import SettingsVehicleBrandsSection from '../components/SettingsVehicleBrandsSection';
+import SettingsEngineFamiliesSection from '../components/SettingsEngineFamiliesSection';
 import SettingsCategoriesSection from '../components/SettingsCategoriesSection';
 import { useAuth } from '../auth/AuthContext';
 import { fetchCnyRate } from '../utils/cnyAutoRate';
@@ -357,9 +358,12 @@ const Settings = () => {
           <div className="settings-catalog-segment" role="tablist" aria-label="Каталог">
             <CatalogTab id="categories" label="Категории" active={catalogTab} onSelect={setCatalogTab} />
             <CatalogTab id="brands" label="Марки и модели" active={catalogTab} onSelect={setCatalogTab} />
+            <CatalogTab id="engines" label="Код мотора" active={catalogTab} onSelect={setCatalogTab} />
           </div>
           <div className="settings-catalog-section__body">
-            {catalogTab === 'categories' ? <SettingsCategoriesSection /> : <SettingsVehicleBrandsSection />}
+            {catalogTab === 'categories' && <SettingsCategoriesSection />}
+            {catalogTab === 'brands' && <SettingsVehicleBrandsSection />}
+            {catalogTab === 'engines' && <SettingsEngineFamiliesSection />}
           </div>
         </div>
 

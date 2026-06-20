@@ -482,7 +482,8 @@ def list_engine_families(
             or_(models.EngineFamily.code.ilike(term), models.EngineFamily.name.ilike(term))
         )
     fams: List[models.EngineFamily] = qry.order_by(asc(models.EngineFamily.code)).all()
-    return [_engine_family_to_schema(db, f) for f in fams]
+    counts = _engine_family_product_counts(db, [f.id for f in fams])
+    return [_engine_family_to_schema(db, f, product_count=counts.get(f.id, 0)) for f in fams]
 
 
 @router.get("/engine-families/by-code/{code}", response_model=schemas.EngineFamilyResponse)
@@ -517,7 +518,27 @@ def get_engine_family(family_id: int, db: Session = Depends(get_db)):
     return _engine_family_to_schema(db, f)
 
 
-def _engine_family_to_schema(db: Session, f: models.EngineFamily) -> schemas.EngineFamilyResponse:
+def _engine_family_product_counts(db: Session, family_ids: List[int]) -> dict[int, int]:
+    if not family_ids:
+        return {}
+    rows = (
+        db.query(
+            models.ProductEngineFamilyLink.engine_family_id,
+            func.count(models.ProductEngineFamilyLink.product_id),
+        )
+        .filter(models.ProductEngineFamilyLink.engine_family_id.in_(family_ids))
+        .group_by(models.ProductEngineFamilyLink.engine_family_id)
+        .all()
+    )
+    return {int(fid): int(cnt) for fid, cnt in rows}
+
+
+def _engine_family_to_schema(
+    db: Session,
+    f: models.EngineFamily,
+    *,
+    product_count: int | None = None,
+) -> schemas.EngineFamilyResponse:
     f = (
         db.query(models.EngineFamily)
         .filter(models.EngineFamily.id == f.id)
@@ -547,8 +568,15 @@ def _engine_family_to_schema(db: Session, f: models.EngineFamily) -> schemas.Eng
         )
         vms.append(d)
     vms.sort(key=lambda x: (x.brand.name.casefold() if x.brand else "", x.name.casefold(), x.id))
+    if product_count is None:
+        product_count = (
+            db.query(func.count(models.ProductEngineFamilyLink.product_id))
+            .filter(models.ProductEngineFamilyLink.engine_family_id == f.id)
+            .scalar()
+            or 0
+        )
     base = schemas.EngineFamilyResponse.model_validate(f, from_attributes=True)
-    return base.model_copy(update={"vehicle_models": vms})
+    return base.model_copy(update={"vehicle_models": vms, "product_count": int(product_count)})
 
 
 @router.post(

@@ -298,6 +298,7 @@ class EngineFamilyResponse(BaseModel):
     code: str
     name: Optional[str] = None
     is_active: bool
+    product_count: int = 0
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
     vehicle_models: List[VehicleModelResponse] = []

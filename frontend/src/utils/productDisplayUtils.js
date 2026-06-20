@@ -161,6 +161,10 @@ export function compatibilityLabelsFromProduct(product) {
     const s = `${ec.brand || ''} ${ec.model || ''}`.trim();
     if (s && !labels.includes(s)) labels.push(s);
   });
+  (product?.compatibility?.engine_families || []).forEach((ef) => {
+    const s = String(ef.code || '').trim();
+    if (s && !labels.includes(s)) labels.push(s);
+  });
   return labels;
 }
 

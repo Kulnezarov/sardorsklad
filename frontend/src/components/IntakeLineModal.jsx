@@ -28,6 +28,7 @@ import ProductFormByLayout from './ProductFormByLayout';
 import VehicleCompatibilityPicker, {
   inferCompatIdsFromBrandModel,
 } from './VehicleCompatibilityPicker';
+import EngineFamilyPicker from './EngineFamilyPicker';
 import { syncPrimaryVehicleFromSelection } from '../utils/productDisplayUtils';
 
 const EMPTY_COMPAT_IDS = Object.freeze([]);
@@ -80,6 +81,7 @@ function emptyForm() {
     category_group_id: null,
     attributes: {},
     compatibility_vehicle_model_ids: [],
+    compatibility_engine_family_ids: [],
     manufacturer: '',
     extra_info: '',
     cny_price: '',
@@ -103,6 +105,7 @@ function lineToForm(line) {
     category_group_id: line.category_group_id || null,
     attributes: line.attributes && typeof line.attributes === 'object' ? { ...line.attributes } : {},
     compatibility_vehicle_model_ids: normalizeCompatIds(line.compatibility_vehicle_model_ids),
+    compatibility_engine_family_ids: normalizeCompatIds(line.compatibility_engine_family_ids),
     manufacturer: line.manufacturer || '',
     extra_info: line.extra_info || '',
     cny_price: num(line.cny_price) > 0 ? String(line.cny_price) : '',
@@ -170,6 +173,12 @@ export default function IntakeLineModal({
     setCompatInitialIds(normalizeCompatIds(ids));
     setCompatPickerKey((k) => k + 1);
   }, []);
+  const [enginePickerKey, setEnginePickerKey] = useState(0);
+  const [engineInitialIds, setEngineInitialIds] = useState(EMPTY_COMPAT_IDS);
+  const resetEnginePicker = useCallback((ids = EMPTY_COMPAT_IDS) => {
+    setEngineInitialIds(normalizeCompatIds(ids));
+    setEnginePickerKey((k) => k + 1);
+  }, []);
 
   const { data: categoryTree = [] } = useQuery({
     queryKey: ['categories', 'tree'],
@@ -208,6 +217,7 @@ export default function IntakeLineModal({
   const vehicleMode = selectedSubcategorySchema?.vehicle_mode || 'none';
   const liquidsGroup = /жидкост/i.test(selectedCategoryGroup?.name || '');
   const showCompatibilityBlock = !liquidsGroup || vehicleMode !== 'none';
+  const showEngineFamilyBlock = selectedSubcategorySchema?.engine_code_mode === 'required';
   const showBrandModelBlock = false;
 
   const { data: vehicleBrands = [] } = useQuery({
@@ -276,6 +286,7 @@ export default function IntakeLineModal({
       const nextForm = lineToForm(line);
       setForm(nextForm);
       resetCompatPicker(nextForm.compatibility_vehicle_model_ids);
+      resetEnginePicker(nextForm.compatibility_engine_family_ids);
       setPhotos(photosFromLine(line));
       if (line.barcode) fetchCnyHistory(line.barcode).then(setCnyHistory);
       else setCnyHistory([]);
@@ -290,6 +301,7 @@ export default function IntakeLineModal({
     const nextForm = lineToForm(draft);
     setForm(nextForm);
     resetCompatPicker(nextForm.compatibility_vehicle_model_ids);
+    resetEnginePicker(nextForm.compatibility_engine_family_ids);
     setPhotos(photosFromLine(draft));
     const bc = String(draft.barcode || '').trim();
     if (bc.length >= 4) fetchCnyHistory(bc).then(setCnyHistory);
@@ -330,6 +342,11 @@ export default function IntakeLineModal({
     });
   }, [vehicleModels]);
 
+  const handleEngineFamilyChange = useCallback((ids) => {
+    const idList = normalizeCompatIds(ids);
+    setForm((f) => ({ ...f, compatibility_engine_family_ids: idList }));
+  }, []);
+
   const compatibilityPickerSlot = useMemo(() => {
     if (!showCompatibilityBlock) return null;
     return (
@@ -349,6 +366,26 @@ export default function IntakeLineModal({
     vehicleBrands,
     vehicleModels,
     handleCompatibilityChange,
+    readonly,
+  ]);
+
+  const engineCompatibilitySlot = useMemo(() => {
+    if (!showEngineFamilyBlock) return null;
+    return (
+      <EngineFamilyPicker
+        key={`engine-${enginePickerKey}`}
+        initialSelectedIds={engineInitialIds}
+        vehicleModelIds={form.compatibility_vehicle_model_ids || []}
+        onChange={handleEngineFamilyChange}
+        disabled={readonly}
+      />
+    );
+  }, [
+    showEngineFamilyBlock,
+    enginePickerKey,
+    engineInitialIds,
+    form.compatibility_vehicle_model_ids,
+    handleEngineFamilyChange,
     readonly,
   ]);
 
@@ -478,6 +515,9 @@ export default function IntakeLineModal({
         if (p.attributes) next.attributes = { ...p.attributes };
         if (p.compatibility?.vehicle_models?.length) {
           next.compatibility_vehicle_model_ids = p.compatibility.vehicle_models.map((m) => m.id);
+        }
+        if (p.compatibility?.engine_families?.length) {
+          next.compatibility_engine_family_ids = p.compatibility.engine_families.map((x) => x.id);
         }
         next.category_group_id = findGroupIdForCategory(categoryTree, p.category_id);
         fill('manufacturer', capitalizeWords(p.supplier || ''));
@@ -714,7 +754,10 @@ export default function IntakeLineModal({
     const sub = findCategoryInTree(categoryTree, categoryId);
     setForm((prev) => {
       const catChanged = categoryId && categoryId !== prev.category_id;
-      if (catChanged) resetCompatPicker([]);
+      if (catChanged) {
+        resetCompatPicker([]);
+        resetEnginePicker([]);
+      }
       return {
         ...prev,
         category_group_id: groupId,
@@ -723,6 +766,8 @@ export default function IntakeLineModal({
         attributes: catChanged && prev.category_id ? {} : (prev.attributes || {}),
         compatibility_vehicle_model_ids:
           catChanged && prev.category_id ? [] : prev.compatibility_vehicle_model_ids,
+        compatibility_engine_family_ids:
+          catChanged && prev.category_id ? [] : prev.compatibility_engine_family_ids,
         brand: catChanged && prev.category_id ? '' : prev.brand,
         model: catChanged && prev.category_id ? '' : prev.model,
       };
@@ -760,6 +805,10 @@ export default function IntakeLineModal({
       toast.error('Укажите название');
       return;
     }
+    if (showEngineFamilyBlock && !normalizeCompatIds(form.compatibility_engine_family_ids).length) {
+      toast.error('Выберите хотя бы один код мотора');
+      return;
+    }
     const barcode = form.barcode.trim() || generateEAN13();
     const cnyV = roundMoney2(num(form.cny_price));
     const prevCny = line ? num(line.cny_price) : 0;
@@ -785,6 +834,9 @@ export default function IntakeLineModal({
       attributes: Object.keys(form.attributes || {}).length ? form.attributes : null,
       compatibility_vehicle_model_ids: normalizeCompatIds(form.compatibility_vehicle_model_ids).length
         ? normalizeCompatIds(form.compatibility_vehicle_model_ids)
+        : null,
+      compatibility_engine_family_ids: normalizeCompatIds(form.compatibility_engine_family_ids).length
+        ? normalizeCompatIds(form.compatibility_engine_family_ids)
         : null,
       manufacturer: form.manufacturer.trim() || null,
       extra_info: form.extra_info.trim() || null,
@@ -1018,6 +1070,8 @@ export default function IntakeLineModal({
                 categoryGroupName={selectedCategoryGroup?.name || ''}
                 categoryName={selectedSubcategory?.name || form.category || ''}
                 compatibilitySlot={compatibilityPickerSlot}
+                engineCompatibilitySlot={engineCompatibilitySlot}
+                showEngineFamilies={showEngineFamilyBlock}
               />
             )}
           </FormAccordionSection>

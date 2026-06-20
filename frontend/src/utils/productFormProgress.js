@@ -11,6 +11,7 @@ export function buildProductFormProgress({
   formData,
   schema,
   showCompatibility = false,
+  showEngineFamilies = false,
 }) {
   const items = [];
 
@@ -31,6 +32,14 @@ export function buildProductFormProgress({
       key: 'compat',
       label: 'Марки авто',
       done: (formData?.compatibility_vehicle_model_ids || []).length > 0,
+    });
+  }
+
+  if (showEngineFamilies) {
+    items.push({
+      key: 'engine_families',
+      label: 'Код мотора',
+      done: (formData?.compatibility_engine_family_ids || []).length > 0,
     });
   }
 
