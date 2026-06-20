@@ -603,11 +603,15 @@ const Products = () => {
   const scanBufRef = useRef('');
   const scanLastRef = useRef(0);
   const tableScrollRef = useRef(null);
+  const chromeRef = useRef(null);
   const gridLoadSentinelRef = useRef(null);
+  const lastGridScrollTopRef = useRef(0);
   const queryClient = useQueryClient();
 
   const [tableScrollTop, setTableScrollTop] = useState(0);
   const [tableViewportH, setTableViewportH] = useState(480);
+  const [gridChromeHidden, setGridChromeHidden] = useState(false);
+  const [chromeHeight, setChromeHeight] = useState(0);
   const [lightboxState, setLightboxState] = useState(null);
   const [sidePhotoIdx, setSidePhotoIdx] = useState(0);
 
@@ -1154,16 +1158,35 @@ const Products = () => {
     return () => ro.disconnect();
   }, []);
 
+  useEffect(() => {
+    const el = chromeRef.current;
+    if (!el) return undefined;
+    const measure = () => setChromeHeight(el.offsetHeight);
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
   const resetCatalogScroll = useCallback(() => {
     const el = tableScrollRef.current;
     if (el) el.scrollTop = 0;
     setTableScrollTop(0);
+    setGridChromeHidden(false);
+    lastGridScrollTopRef.current = 0;
   }, []);
 
   const handleCatalogScroll = useCallback((e) => {
+    const st = e.currentTarget.scrollTop;
     if (viewMode === 'table') {
-      setTableScrollTop(e.currentTarget.scrollTop);
+      setTableScrollTop(st);
+      return;
     }
+    // Скрыть один раз при прокрутке вниз; при прокрутке вверх не показывать снова.
+    if (st > 24 && st > lastGridScrollTopRef.current + 8) {
+      setGridChromeHidden(true);
+    }
+    lastGridScrollTopRef.current = st;
   }, [viewMode]);
 
   useEffect(() => {
@@ -2292,8 +2315,21 @@ const Products = () => {
         </div>
       )}
 
-      <div className="products-catalog-chrome-slot">
-        <div className="products-catalog-chrome">
+      <div
+        className={`products-catalog-chrome-slot${viewMode === 'grid' && gridChromeHidden ? ' products-catalog-chrome-slot--collapsed' : ''}`}
+        style={
+          viewMode === 'grid'
+            ? {
+                height: gridChromeHidden
+                  ? 0
+                  : chromeHeight > 0
+                    ? chromeHeight
+                    : undefined,
+              }
+            : undefined
+        }
+      >
+        <div ref={chromeRef} className="products-catalog-chrome">
       {/* ── Page header ── */}
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', marginBottom: 16 }}>
         <div>
