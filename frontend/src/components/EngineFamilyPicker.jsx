@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query';
 import { FiX } from 'react-icons/fi';
 import { compatibilityApi } from '../api/client';
+import { engineFamilySearchHaystack, formatEngineFamilySummary } from '../utils/engineFamilyUtils';
 
 function normalizeIds(ids) {
   return (ids || [])
@@ -60,11 +61,7 @@ export default function EngineFamilyPicker({
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     if (!q) return sortedFamilies;
-    return sortedFamilies.filter((f) => {
-      const code = String(f.code || '').toLowerCase();
-      const name = String(f.name || '').toLowerCase();
-      return code.includes(q) || name.includes(q);
-    });
+    return sortedFamilies.filter((f) => engineFamilySearchHaystack(f).includes(q));
   }, [sortedFamilies, search]);
 
   const selectedFamilies = useMemo(() => {
@@ -87,19 +84,25 @@ export default function EngineFamilyPicker({
   return (
     <div className={`engine-family-picker${open ? ' engine-family-picker--open' : ''}`}>
       <div className="engine-family-picker__selected">
-        {selectedFamilies.length ? selectedFamilies.map((f) => (
+        {selectedFamilies.length ? selectedFamilies.map((f) => {
+          const summary = formatEngineFamilySummary(f);
+          return (
           <button
             key={f.id}
             type="button"
             className="catalog-chip catalog-chip-active engine-family-picker__chip"
             disabled={disabled}
             onClick={() => toggle(f.id)}
-            title={f.name || f.code}
+            title={summary || f.code}
           >
-            {f.code}
+            <span className="engine-family-picker__chip-code">{f.code}</span>
+            {summary ? (
+              <span className="engine-family-picker__chip-sub">{summary}</span>
+            ) : null}
             <FiX size={12} aria-hidden />
           </button>
-        )) : (
+          );
+        }) : (
           <span className="engine-family-picker__empty">Выберите один или несколько кодов</span>
         )}
       </div>
@@ -120,7 +123,7 @@ export default function EngineFamilyPicker({
           )}
           <input
             className="ios-input engine-family-picker__search"
-            placeholder="Поиск кода…"
+            placeholder="Поиск кода, объёма, производителя…"
             value={search}
             disabled={disabled}
             onChange={(e) => setSearch(e.target.value)}
@@ -128,16 +131,20 @@ export default function EngineFamilyPicker({
           <div className="engine-family-picker__grid">
             {filtered.map((f) => {
               const on = selectedIds.includes(f.id);
+              const summary = formatEngineFamilySummary(f);
               return (
                 <button
                   key={f.id}
                   type="button"
-                  className={`catalog-chip${on ? ' catalog-chip-active' : ''}`}
+                  className={`catalog-chip engine-family-picker__option${on ? ' catalog-chip-active' : ''}`}
                   disabled={disabled}
                   onClick={() => toggle(f.id)}
-                  title={f.name || undefined}
+                  title={summary || undefined}
                 >
-                  {f.code}
+                  <span className="engine-family-picker__option-code">{f.code}</span>
+                  {summary ? (
+                    <span className="engine-family-picker__option-sub">{summary}</span>
+                  ) : null}
                 </button>
               );
             })}

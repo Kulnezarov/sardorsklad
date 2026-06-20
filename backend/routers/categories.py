@@ -208,6 +208,35 @@ def update_category(
     return category
 
 
+@router.patch("/{category_id}/engine-code-mode", response_model=schemas.CategoryResponse)
+def patch_category_engine_code_mode(
+    category_id: int,
+    payload: schemas.CategoryEngineCodeModePatch,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_manager_or_admin),
+):
+    """Обновить только engine_code_mode, не трогая fields и form_layout."""
+    category = db.query(models.Category).filter(models.Category.id == category_id).first()
+    if not category:
+        raise HTTPException(status_code=404, detail="Category not found")
+    raw = category.attribute_schema if isinstance(category.attribute_schema, dict) else {}
+    category.attribute_schema = normalize_attribute_schema({
+        **raw,
+        "engine_code_mode": payload.engine_code_mode,
+    })
+    write_audit_log(
+        db,
+        user_id=current_user.id,
+        action="UPDATE_CATEGORY_ENGINE_CODE_MODE",
+        entity_type="category",
+        entity_id=category.id,
+        payload={"engine_code_mode": payload.engine_code_mode},
+    )
+    db.commit()
+    db.refresh(category)
+    return category
+
+
 @router.delete("/{category_id}")
 def delete_category(
     category_id: int,

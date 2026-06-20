@@ -4,7 +4,7 @@ import toast from 'react-hot-toast';
 import { FiChevronLeft, FiChevronRight, FiPlus, FiTrash2, FiEdit2, FiLayout, FiX, FiDownload } from 'react-icons/fi';
 import { categoryApi, getApiErrorMessage } from '../api/client';
 import CategoryFormLayoutEditor from './CategoryFormLayoutEditor';
-import { fieldsToFullSchema, slugFieldKey, resolveCategoryProfile } from '../utils/formLayoutUtils';
+import { fieldsToFullSchema, slugFieldKey, resolveCategoryProfile, categoryTreeQueryKey } from '../utils/formLayoutUtils';
 
 const emptyField = () => ({
   key: '',
@@ -113,7 +113,7 @@ export default function SettingsCategoriesSection() {
   const [layoutEditor, setLayoutEditor] = useState(null);
 
   const { data: tree = [], isLoading } = useQuery({
-    queryKey: ['categories', 'tree'],
+    queryKey: categoryTreeQueryKey(false),
     queryFn: () => categoryApi.getTree({ active_only: false }).then((r) => r.data),
   });
 

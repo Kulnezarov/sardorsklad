@@ -150,6 +150,8 @@ export function removeLayoutEntry(list, id) {
   return (list || []).filter((x) => x.id !== id);
 }
 
+import { formatEngineFamilySummary } from './engineFamilyUtils';
+
 /** Все метки совместимости для карточки товара. */
 export function compatibilityLabelsFromProduct(product) {
   const labels = [];
@@ -162,7 +164,9 @@ export function compatibilityLabelsFromProduct(product) {
     if (s && !labels.includes(s)) labels.push(s);
   });
   (product?.compatibility?.engine_families || []).forEach((ef) => {
-    const s = String(ef.code || '').trim();
+    const summary = formatEngineFamilySummary(ef);
+    const code = String(ef.code || '').trim();
+    const s = summary && summary !== code ? `${code} (${summary})` : code;
     if (s && !labels.includes(s)) labels.push(s);
   });
   return labels;

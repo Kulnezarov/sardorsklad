@@ -606,6 +606,22 @@ def ensure_compatibility_table_columns() -> None:
 
     _exec_schema_sql(
         """
+        DO $$
+        BEGIN
+          IF to_regclass('public.engine_families') IS NOT NULL THEN
+            ALTER TABLE engine_families ADD COLUMN IF NOT EXISTS displacement_l NUMERIC(6, 2);
+            ALTER TABLE engine_families ADD COLUMN IF NOT EXISTS fuel_type VARCHAR(30);
+            ALTER TABLE engine_families ADD COLUMN IF NOT EXISTS power VARCHAR(80);
+            ALTER TABLE engine_families ADD COLUMN IF NOT EXISTS manufacturer VARCHAR(120);
+            ALTER TABLE engine_families ADD COLUMN IF NOT EXISTS notes VARCHAR(2000);
+          END IF;
+        END $$;
+        """,
+        "engine_families.details",
+    )
+
+    _exec_schema_sql(
+        """
         CREATE TABLE IF NOT EXISTS debt_customers (
           id SERIAL PRIMARY KEY,
           name VARCHAR(255) NOT NULL,

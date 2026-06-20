@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session, joinedload
 
 import models
 import schemas
+from services.engine_family_utils import format_engine_family_summary
 
 
 # maketrans требует строки равной длины; ж/sh/ch — многосимвольно → мапа посимвольно/подстроки
@@ -84,6 +85,19 @@ def vehicle_brand_to_response(row: models.VehicleBrand) -> schemas.VehicleBrandR
         is_active=bool(row.is_active) if row.is_active is not None else True,
         created_at=ca,
         updated_at=ua,
+    )
+
+
+def _engine_family_brief(ef: models.EngineFamily) -> schemas.CompatibilityEngineFamilyBrief:
+    return schemas.CompatibilityEngineFamilyBrief(
+        id=ef.id,
+        code=ef.code,
+        name=ef.name,
+        displacement_l=ef.displacement_l,
+        fuel_type=ef.fuel_type,
+        power=ef.power,
+        manufacturer=ef.manufacturer,
+        summary=format_engine_family_summary(ef),
     )
 
 
@@ -277,9 +291,7 @@ def build_compatibility_map(db: Session, product_ids: List[int]) -> dict[int, sc
         .all()
     )
     for pid, ef in ef_rows:
-        ef_by_p[pid][ef.id] = schemas.CompatibilityEngineFamilyBrief(
-            id=ef.id, code=ef.code, name=ef.name
-        )
+        ef_by_p[pid][ef.id] = _engine_family_brief(ef)
     for pid, vm, vb in vm_rows:
         vm_by_p[pid][vm.id] = schemas.CompatibilityVehicleModelBrief(
             id=vm.id,
@@ -385,9 +397,7 @@ def build_compatibility_out(db: Session, product_id: int) -> schemas.ProductComp
         if not ef or ef.id in seen_ef:
             continue
         seen_ef.add(ef.id)
-        efs.append(
-            schemas.CompatibilityEngineFamilyBrief(id=ef.id, code=ef.code, name=ef.name)
-        )
+        efs.append(_engine_family_brief(ef))
     efs.sort(key=lambda x: (x.code.casefold(), x.id))
     vms: List[schemas.CompatibilityVehicleModelBrief] = []
     seen_v: Set[int] = set()

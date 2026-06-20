@@ -362,6 +362,8 @@ export const categoryApi = {
   getTree: (params = {}) => apiClient.get('/api/v1/categories/tree', { params }),
   create: (data) => apiClient.post('/api/v1/categories', data),
   update: (id, data) => apiClient.put(`/api/v1/categories/${id}`, data),
+  patchEngineCodeMode: (id, engineCodeMode) =>
+    apiClient.patch(`/api/v1/categories/${id}/engine-code-mode`, { engine_code_mode: engineCodeMode }),
   delete: (id) => apiClient.delete(`/api/v1/categories/${id}`),
   seedDefaults: () => apiClient.post('/api/v1/categories/seed-defaults'),
 }

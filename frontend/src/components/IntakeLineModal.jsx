@@ -23,7 +23,7 @@ import { readStoredLabelLayout } from '../utils/labelPrintUtils';
 import CameraBarcodeScanner from './CameraBarcodeScanner';
 import { productApi, categoryApi, compatibilityApi, resolveUploadedAssetUrl } from '../api/client';
 import CategoryPicker, { findGroupIdForCategory, findCategoryInTree } from './CategoryPicker';
-import { resolveCategoryProfile } from '../utils/formLayoutUtils';
+import { resolveCategorySchemaForProduct, categoryTreeQueryKey } from '../utils/formLayoutUtils';
 import ProductFormByLayout from './ProductFormByLayout';
 import VehicleCompatibilityPicker, {
   inferCompatIdsFromBrandModel,
@@ -181,18 +181,15 @@ export default function IntakeLineModal({
   }, []);
 
   const { data: categoryTree = [] } = useQuery({
-    queryKey: ['categories', 'tree'],
+    queryKey: categoryTreeQueryKey(true),
     queryFn: () => categoryApi.getTree({ active_only: true }).then((r) => r.data),
     staleTime: 120_000,
   });
 
-  const selectedSubcategorySchema = useMemo(() => {
-    const cat = findCategoryInTree(categoryTree, form.category_id);
-    const raw = cat?.attribute_schema || null;
-    if (!raw) return null;
-    const profile = resolveCategoryProfile(raw);
-    return { ...raw, ...profile, show_compatibility: profile.vehicle_mode === 'compatibility' };
-  }, [categoryTree, form.category_id]);
+  const selectedSubcategorySchema = useMemo(
+    () => resolveCategorySchemaForProduct(findCategoryInTree(categoryTree, form.category_id)),
+    [categoryTree, form.category_id],
+  );
 
   const selectedCategoryGroup = useMemo(() => {
     if (form.category_group_id) {

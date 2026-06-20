@@ -25,10 +25,6 @@ export const VALID_PRICING_MODES = ['import_cny', 'local_kzt'];
 export const VALID_VEHICLE_MODES = ['compatibility', 'brand_model', 'none'];
 export const VALID_ENGINE_CODE_MODES = ['none', 'required'];
 
-/**
- * Определяет профиль категории: pricing_mode и vehicle_mode.
- * Мигрирует legacy show_compatibility → vehicle_mode.
- */
 export function resolveCategoryProfile(schema) {
   const s = schema && typeof schema === 'object' ? schema : {};
 
@@ -44,6 +40,62 @@ export function resolveCategoryProfile(schema) {
   if (!VALID_ENGINE_CODE_MODES.includes(ecm)) ecm = 'none';
 
   return { pricing_mode: pm, vehicle_mode: vm, engine_code_mode: ecm };
+}
+
+/** Схема категории для формы товара (с профилем и legacy show_compatibility). */
+export function resolveCategorySchemaForProduct(cat) {
+  if (!cat) return null;
+  const raw = cat.attribute_schema && typeof cat.attribute_schema === 'object'
+    ? cat.attribute_schema
+    : {};
+  const profile = resolveCategoryProfile(raw);
+  return {
+    ...raw,
+    ...profile,
+    show_compatibility: profile.vehicle_mode === 'compatibility',
+  };
+}
+
+/** Обновить только engine_code_mode, сохранив fields и form_layout. */
+export function patchEngineCodeModeInSchema(schema, engineCodeMode) {
+  const existing = schema && typeof schema === 'object' ? schema : {};
+  const ecm = VALID_ENGINE_CODE_MODES.includes(engineCodeMode) ? engineCodeMode : 'none';
+  const profile = resolveCategoryProfile({ ...existing, engine_code_mode: ecm });
+  return {
+    ...existing,
+    pricing_mode: profile.pricing_mode,
+    vehicle_mode: profile.vehicle_mode,
+    engine_code_mode: profile.engine_code_mode,
+    show_compatibility: profile.vehicle_mode === 'compatibility',
+    fields: Array.isArray(existing.fields) ? existing.fields : [],
+    form_layout: existing.form_layout || defaultFormLayout({
+      ...existing,
+      ...profile,
+      show_compatibility: profile.vehicle_mode === 'compatibility',
+    }),
+  };
+}
+
+export function categoryTreeQueryKey(activeOnly = true) {
+  return ['categories', 'tree', { activeOnly: Boolean(activeOnly) }];
+}
+
+export function mergeEngineCodeModeIntoCategoryTree(tree, updatesById) {
+  if (!Array.isArray(tree) || !updatesById || typeof updatesById !== 'object') return tree;
+  return tree.map((group) => ({
+    ...group,
+    children: (group.children || []).map((cat) => {
+      const patch = updatesById[cat.id];
+      if (!patch) return cat;
+      return {
+        ...cat,
+        attribute_schema: patch.attribute_schema ?? patchEngineCodeModeInSchema(
+          cat.attribute_schema,
+          patch.engine_code_mode,
+        ),
+      };
+    }),
+  }));
 }
 
 /** Поля цен/склада в хвосте form_layout (после артикула). */

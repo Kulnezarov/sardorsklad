@@ -268,8 +268,13 @@ class VehicleModelResponse(BaseModel):
 class EngineFamilyCreate(BaseModel):
     code: str = Field(..., min_length=1, max_length=40)
     name: Optional[str] = Field(None, max_length=255)
+    displacement_l: Optional[Decimal] = None
+    fuel_type: Optional[str] = Field(None, max_length=30)
+    power: Optional[str] = Field(None, max_length=80)
+    manufacturer: Optional[str] = Field(None, max_length=120)
+    notes: Optional[str] = Field(None, max_length=2000)
     is_active: bool = True
-    vehicle_model_ids: Optional[List[int]] = None  # сразу привязать модели
+    vehicle_model_ids: Optional[List[int]] = None
 
     @field_validator("code", mode="before")
     @classmethod
@@ -278,12 +283,24 @@ class EngineFamilyCreate(BaseModel):
             return v
         return str(v).strip()
 
+    @field_validator("displacement_l", mode="before")
+    @classmethod
+    def _parse_displacement(cls, v):
+        if v is None or v == "":
+            return None
+        return Decimal(str(v).replace(",", "."))
+
 
 class EngineFamilyUpdate(BaseModel):
     code: Optional[str] = Field(None, min_length=1, max_length=40)
     name: Optional[str] = Field(None, max_length=255)
+    displacement_l: Optional[Decimal] = None
+    fuel_type: Optional[str] = Field(None, max_length=30)
+    power: Optional[str] = Field(None, max_length=80)
+    manufacturer: Optional[str] = Field(None, max_length=120)
+    notes: Optional[str] = Field(None, max_length=2000)
     is_active: Optional[bool] = None
-    vehicle_model_ids: Optional[List[int]] = None  # replace full set
+    vehicle_model_ids: Optional[List[int]] = None
 
     @field_validator("code", mode="before")
     @classmethod
@@ -292,11 +309,24 @@ class EngineFamilyUpdate(BaseModel):
             return v
         return str(v).strip()
 
+    @field_validator("displacement_l", mode="before")
+    @classmethod
+    def _parse_displacement_opt(cls, v):
+        if v is None or v == "":
+            return None
+        return Decimal(str(v).replace(",", "."))
+
 
 class EngineFamilyResponse(BaseModel):
     id: int
     code: str
     name: Optional[str] = None
+    displacement_l: Optional[Decimal] = None
+    fuel_type: Optional[str] = None
+    power: Optional[str] = None
+    manufacturer: Optional[str] = None
+    notes: Optional[str] = None
+    summary: Optional[str] = None
     is_active: bool
     product_count: int = 0
     created_at: Optional[datetime] = None
@@ -310,6 +340,11 @@ class CompatibilityEngineFamilyBrief(BaseModel):
     id: int
     code: str
     name: Optional[str] = None
+    displacement_l: Optional[Decimal] = None
+    fuel_type: Optional[str] = None
+    power: Optional[str] = None
+    manufacturer: Optional[str] = None
+    summary: Optional[str] = None
 
     model_config = {"from_attributes": True}
 
@@ -908,6 +943,10 @@ class CategoryUpdate(BaseModel):
     sort_order: Optional[int] = None
     attribute_schema: Optional[dict[str, Any]] = None
     is_active: Optional[bool] = None
+
+
+class CategoryEngineCodeModePatch(BaseModel):
+    engine_code_mode: Literal["none", "required"]
 
 
 class CategoryResponse(BaseModel):

@@ -15,6 +15,7 @@ from database import get_db
 from dependencies import require_manager_or_admin
 from config.logger import setup_logger
 from services.product_compatibility import slugify_label, vehicle_brand_to_response
+from services.engine_family_utils import apply_engine_family_details, format_engine_family_summary
 
 logger = setup_logger("compatibility")
 
@@ -479,7 +480,13 @@ def list_engine_families(
     if q and q.strip():
         term = f"%{q.strip()}%"
         qry = qry.filter(
-            or_(models.EngineFamily.code.ilike(term), models.EngineFamily.name.ilike(term))
+            or_(
+                models.EngineFamily.code.ilike(term),
+                models.EngineFamily.name.ilike(term),
+                models.EngineFamily.manufacturer.ilike(term),
+                models.EngineFamily.power.ilike(term),
+                models.EngineFamily.notes.ilike(term),
+            )
         )
     fams: List[models.EngineFamily] = qry.order_by(asc(models.EngineFamily.code)).all()
     counts = _engine_family_product_counts(db, [f.id for f in fams])
@@ -576,7 +583,11 @@ def _engine_family_to_schema(
             or 0
         )
     base = schemas.EngineFamilyResponse.model_validate(f, from_attributes=True)
-    return base.model_copy(update={"vehicle_models": vms, "product_count": int(product_count)})
+    return base.model_copy(update={
+        "vehicle_models": vms,
+        "product_count": int(product_count),
+        "summary": format_engine_family_summary(f),
+    })
 
 
 @router.post(
@@ -588,9 +599,9 @@ def create_engine_family(payload: schemas.EngineFamilyCreate, db: Session = Depe
     code = re.sub(r"\s+", "", (payload.code or "").strip()) or "code"
     row = models.EngineFamily(
         code=code,
-        name=(payload.name or "").strip() or None,
         is_active=payload.is_active,
     )
+    apply_engine_family_details(row, payload.model_dump())
     db.add(row)
     try:
         db.flush()
@@ -617,8 +628,7 @@ def update_engine_family(
         raise HTTPException(404, detail="Код не найден")
     if payload.code is not None:
         row.code = re.sub(r"\s+", "", payload.code.strip()) or row.code
-    if payload.name is not None:
-        row.name = payload.name.strip() or None
+    apply_engine_family_details(row, payload.model_dump(exclude_unset=True))
     if payload.is_active is not None:
         row.is_active = payload.is_active
     if payload.vehicle_model_ids is not None:
@@ -662,7 +672,8 @@ def autocomplete_families(
         db.query(models.EngineFamily)
         .filter(
             models.EngineFamily.is_active.is_(True),
-            or_(models.EngineFamily.code.ilike(term), models.EngineFamily.name.ilike(term)),
+            or_(models.EngineFamily.code.ilike(term), models.EngineFamily.name.ilike(term),
+                models.EngineFamily.manufacturer.ilike(term), models.EngineFamily.power.ilike(term)),
         )
         .order_by(asc(models.EngineFamily.code))
         .limit(30)

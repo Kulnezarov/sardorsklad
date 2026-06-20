@@ -12,7 +12,7 @@ import { productApi, resolveUploadedAssetUrl, compatibilityApi, categoryApi, get
 import CategoryPicker, { findGroupIdForCategory, findCategoryInTree } from '../components/CategoryPicker';
 import ProductFormByLayout from '../components/ProductFormByLayout';
 import ProductStockFormSection from '../components/ProductStockFormSection';
-import { priceLayoutRows, resolveCategoryProfile } from '../utils/formLayoutUtils';
+import { priceLayoutRows, resolveCategorySchemaForProduct, categoryTreeQueryKey } from '../utils/formLayoutUtils';
 import ProductFormSection, { ProductFormTemplateBadge } from '../components/ProductFormSection';
 import FormAccordionSection from '../components/FormAccordionSection';
 import VehicleCompatibilityPicker from '../components/VehicleCompatibilityPicker';
@@ -688,22 +688,15 @@ const Products = () => {
   }, [deliveryMode, customDeliveryRate, settingsDeliveryRate]);
 
   const { data: categoryTree = [] } = useQuery({
-    queryKey: ['categories', 'tree'],
+    queryKey: categoryTreeQueryKey(true),
     queryFn: () => categoryApi.getTree({ active_only: true }).then((r) => r.data),
     staleTime: 120000,
   });
 
-  const selectedSubcategorySchema = useMemo(() => {
-    const cat = findCategoryInTree(categoryTree, formData.category_id);
-    const raw = cat?.attribute_schema;
-    if (!raw || typeof raw !== 'object') return null;
-    const profile = resolveCategoryProfile(raw);
-    return {
-      ...raw,
-      ...profile,
-      show_compatibility: profile.vehicle_mode === 'compatibility',
-    };
-  }, [categoryTree, formData.category_id]);
+  const selectedSubcategorySchema = useMemo(
+    () => resolveCategorySchemaForProduct(findCategoryInTree(categoryTree, formData.category_id)),
+    [categoryTree, formData.category_id],
+  );
 
   const layoutPriceRows = useMemo(
     () => priceLayoutRows(selectedSubcategorySchema || {}),
