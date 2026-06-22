@@ -23,7 +23,7 @@ import { readStoredLabelLayout } from '../utils/labelPrintUtils';
 import CameraBarcodeScanner from './CameraBarcodeScanner';
 import { productApi, categoryApi, compatibilityApi, resolveUploadedAssetUrl } from '../api/client';
 import CategoryPicker, { findGroupIdForCategory, findCategoryInTree } from './CategoryPicker';
-import { resolveCategorySchemaForProduct, categoryTreeQueryKey, isEngineCodeRequired, isEngineCodeSingle } from '../utils/formLayoutUtils';
+import { resolveCategorySchemaForProduct, categoryTreeQueryKey, isEngineCodeRequired, isEngineCodeSingle, layoutHasCompatibility, layoutHasEngineCode, normalizeFormLayout } from '../utils/formLayoutUtils';
 import ProductFormByLayout from './ProductFormByLayout';
 import VehicleCompatibilityPicker, {
   inferCompatIdsFromBrandModel,
@@ -213,8 +213,15 @@ export default function IntakeLineModal({
 
   const vehicleMode = selectedSubcategorySchema?.vehicle_mode || 'none';
   const liquidsGroup = /жидкост/i.test(selectedCategoryGroup?.name || '');
-  const showCompatibilityBlock = !liquidsGroup || vehicleMode !== 'none';
-  const showEngineFamilyBlock = isEngineCodeRequired(selectedSubcategorySchema?.engine_code_mode);
+  const intakeProductLayout = useMemo(
+    () => normalizeFormLayout(selectedSubcategorySchema?.form_layout, selectedSubcategorySchema),
+    [selectedSubcategorySchema],
+  );
+
+  const showCompatibilityBlock = layoutHasCompatibility(intakeProductLayout)
+    && (!liquidsGroup || vehicleMode !== 'none');
+  const showEngineFamilyBlock = layoutHasEngineCode(intakeProductLayout)
+    && isEngineCodeRequired(selectedSubcategorySchema?.engine_code_mode);
   const engineCodeSingleSelect = isEngineCodeSingle(selectedSubcategorySchema?.engine_code_mode);
   const showBrandModelBlock = false;
 

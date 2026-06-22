@@ -1,5 +1,5 @@
 import React, { useCallback, useRef } from 'react';
-import { groupLayoutRowsForDisplay, layoutRowLabel, normalizeFormLayout, resolveCategoryProfile } from '../utils/formLayoutUtils';
+import { groupLayoutRowsForDisplay, layoutRowLabel, layoutHasCompatibility, layoutHasEngineCode, normalizeFormLayout, resolveCategoryProfile } from '../utils/formLayoutUtils';
 import { generateProductName } from '../utils/productNameUtils';
 
 function ProductAttrField({ label, children, prominent = false, className = '', error }) {
@@ -103,6 +103,8 @@ export default function ProductFormByLayout({
 }) {
   const nameTouchedRef = useRef(false);
   const layout = normalizeFormLayout(schema?.form_layout, schema);
+  const layoutShowsCompat = layoutHasCompatibility(layout);
+  const layoutShowsEngine = layoutHasEngineCode(layout);
   const fieldByKey = {};
   (schema?.fields || []).forEach((f) => {
     if (f?.key) fieldByKey[f.key] = f;
@@ -233,6 +235,11 @@ export default function ProductFormByLayout({
       contentRows.push({ type: 'compat', row });
       return;
     }
+    if (row.kind === 'engine_compat') {
+      if (layoutSection === 'attributes') return;
+      contentRows.push({ type: 'engine_compat', row });
+      return;
+    }
     contentRows.push({ type: 'field', row });
   });
 
@@ -247,7 +254,7 @@ export default function ProductFormByLayout({
     fieldBatch = [];
   };
   contentRows.forEach((item) => {
-    if (item.type === 'compat') {
+    if (item.type === 'compat' || item.type === 'engine_compat') {
       flushFields();
       rows.push(item);
       return;
@@ -260,6 +267,7 @@ export default function ProductFormByLayout({
     layoutSection !== 'attributes'
     && compatibilitySlot
     && wantsCompatibility
+    && layoutShowsCompat
     && !rows.some((b) => b.type === 'compat')
   ) {
     let insertAt = 0;
@@ -281,6 +289,7 @@ export default function ProductFormByLayout({
     layoutSection !== 'attributes'
     && showEngineFamilies
     && engineCompatibilitySlot
+    && layoutShowsEngine
     && !rows.some((b) => b.type === 'engine_compat')
   ) {
     let insertAt = rows.length;

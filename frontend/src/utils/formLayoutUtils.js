@@ -76,11 +76,17 @@ export function patchEngineCodeModeInSchema(schema, engineCodeMode) {
     engine_code_mode: profile.engine_code_mode,
     show_compatibility: profile.vehicle_mode === 'compatibility',
     fields: Array.isArray(existing.fields) ? existing.fields : [],
-    form_layout: existing.form_layout || defaultFormLayout({
-      ...existing,
-      ...profile,
-      show_compatibility: profile.vehicle_mode === 'compatibility',
-    }),
+    form_layout: ensureLayoutEngineCode(
+      ensureLayoutCompatibility(
+        existing.form_layout || defaultFormLayout({
+          ...existing,
+          ...profile,
+          show_compatibility: profile.vehicle_mode === 'compatibility',
+        }),
+        { ...existing, ...profile },
+      ),
+      { ...existing, ...profile },
+    ),
   };
 }
 
@@ -121,6 +127,18 @@ export const PRICE_BUILTIN_KEYS = new Set([
 export const VEHICLE_BUILTIN_ROWS = [
   { id: 'brand', kind: 'builtin', key: 'brand', width: 'half', label: 'Марка авто' },
   { id: 'model', kind: 'builtin', key: 'model', width: 'half', label: 'Модель авто' },
+];
+
+export const ENGINE_COMPAT_ROW = {
+  id: 'engine_compat',
+  kind: 'engine_compat',
+  width: 'full',
+  label: 'Код мотора',
+};
+
+export const ADDABLE_LAYOUT_ROWS = [
+  { id: 'compat', kind: 'compatibility', width: 'full', label: 'Совместим с авто' },
+  { ...ENGINE_COMPAT_ROW },
 ];
 
 export const ADDABLE_BUILTIN = [
@@ -174,6 +192,10 @@ export function defaultFormLayout(schema = null) {
     VEHICLE_BUILTIN_ROWS.forEach((r) => layout.push({ ...r }));
   }
 
+  if (isEngineCodeRequired(profile.engine_code_mode)) {
+    layout.push({ ...ENGINE_COMPAT_ROW });
+  }
+
   (schema?.fields || []).forEach((f) => {
     const key = f.key?.trim();
     if (!key) return;
@@ -221,9 +243,34 @@ export function ensureLayoutStockTail(rows) {
   return out;
 }
 
+function insertAfterNameOrCompat(rows, row) {
+  const compatIdx = rows.findIndex((r) => r.kind === 'compatibility');
+  const nameIdx = rows.findIndex((r) => r.key === 'name');
+  const at = compatIdx >= 0 ? compatIdx + 1 : (nameIdx >= 0 ? nameIdx + 1 : Math.min(1, rows.length));
+  rows.splice(at, 0, row);
+}
+
+export function layoutHasCompatibility(rows) {
+  return (rows || []).some((r) => r.kind === 'compatibility');
+}
+
+export function layoutHasEngineCode(rows) {
+  return (rows || []).some((r) => r.kind === 'engine_compat');
+}
+
+export function ensureLayoutEngineCode(rows, schema) {
+  const { engine_code_mode: ecm } = resolveCategoryProfile(schema);
+  const out = (rows || []).filter((r) => r.kind !== 'engine_compat');
+  if (!isEngineCodeRequired(ecm)) return out;
+  if (!out.some((r) => r.kind === 'engine_compat')) {
+    insertAfterNameOrCompat(out, { ...ENGINE_COMPAT_ROW });
+  }
+  return out;
+}
+
 export function ensureLayoutCompatibility(rows, schema) {
   const { vehicle_mode: vm } = resolveCategoryProfile(schema);
-  const out = [...(rows || [])];
+  const out = (rows || []).filter((r) => r.kind !== 'compatibility');
 
   if (vm === 'compatibility') {
     if (!out.some((r) => r.kind === 'compatibility')) {
@@ -279,7 +326,9 @@ export function normalizeFormLayout(raw, schema = null) {
     });
   });
   if (!out.length) return defaultFormLayout(schema);
-  return ensureLayoutStockTail(ensureLayoutCompatibility(out, schema));
+  const withCompat = ensureLayoutCompatibility(out, schema);
+  const withEngine = ensureLayoutEngineCode(withCompat, schema);
+  return ensureLayoutStockTail(withEngine);
 }
 
 /** Группирует соседние half-строки в пары для сетки (редактор и форма). */
@@ -340,6 +389,7 @@ export function layoutRowLabel(row, schema) {
     return f?.label || row.key;
   }
   if (row.kind === 'compatibility') return 'Совместим с авто';
+  if (row.kind === 'engine_compat') return 'Код мотора';
   return row.label || BUILTIN_LABELS[row.key] || row.key || row.id;
 }
 
@@ -390,9 +440,13 @@ export function fieldsToFullSchema(fields, showCompatibility, formLayout, opts =
     pricing_mode: pricingMode,
     engine_code_mode: engineCodeMode,
   };
+  if (opts.engine_code_mode_stash && VALID_ENGINE_CODE_MODES.includes(opts.engine_code_mode_stash)) {
+    base.engine_code_mode_stash = opts.engine_code_mode_stash;
+  }
+  const layout = formLayout || defaultFormLayout(base);
   return {
     ...base,
-    form_layout: formLayout || defaultFormLayout(base),
+    form_layout: ensureLayoutStockTail(ensureLayoutEngineCode(ensureLayoutCompatibility(layout, base), base)),
   };
 }
 

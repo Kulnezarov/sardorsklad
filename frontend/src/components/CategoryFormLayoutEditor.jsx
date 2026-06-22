@@ -2,16 +2,21 @@ import React, { useMemo, useState } from 'react';
 import { FiLock, FiMinus, FiMove } from 'react-icons/fi';
 import {
   ADDABLE_BUILTIN,
+  ADDABLE_LAYOUT_ROWS,
   BUILTIN_LABELS,
+  ENGINE_COMPAT_ROW,
   defaultFormLayout,
   fieldsToFullSchema,
+  isEngineCodeRequired,
   isLockedRow,
   layoutRowLabel,
   groupLayoutRowsForDisplay,
   normalizeFormLayout,
   reorderFormLayout,
+  resolveCategoryProfile,
   slugFieldKey,
   toggleRowWidth,
+  VALID_ENGINE_CODE_MODES,
 } from '../utils/formLayoutUtils';
 
 const emptyField = () => ({
@@ -25,7 +30,26 @@ const emptyField = () => ({
   width: 'full',
 });
 
+function schemaBaseFromState(state) {
+  return {
+    fields: state.fields,
+    show_compatibility: state.show_compatibility,
+    vehicle_mode: state.vehicle_mode,
+    engine_code_mode: state.engine_code_mode,
+    engine_code_mode_stash: state.engine_code_mode_stash,
+    pricing_mode: state.pricing_mode,
+  };
+}
+
 function FieldsTab({ state, setState }) {
+  const syncLayout = (nextState) => {
+    const base = schemaBaseFromState(nextState);
+    return {
+      ...nextState,
+      form_layout: normalizeFormLayout(nextState.form_layout, base),
+    };
+  };
+
   return (
     <div className="form-layout-editor-fields">
       <label className="form-layout-compat-toggle">
@@ -34,15 +58,44 @@ function FieldsTab({ state, setState }) {
           checked={state.show_compatibility}
           onChange={(e) => {
             const show_compatibility = e.target.checked;
-            const base = { fields: state.fields, show_compatibility };
-            setState({
+            const vehicle_mode = show_compatibility ? 'compatibility' : 'none';
+            setState(syncLayout({
               ...state,
               show_compatibility,
-              form_layout: normalizeFormLayout(state.form_layout, base),
-            });
+              vehicle_mode,
+            }));
           }}
         />
         Показывать «Совместим с авто» в форме товара
+      </label>
+      <label className="form-layout-compat-toggle">
+        <input
+          type="checkbox"
+          checked={state.show_engine_code}
+          onChange={(e) => {
+            const show = e.target.checked;
+            let engine_code_mode = state.engine_code_mode || 'none';
+            let engine_code_mode_stash = state.engine_code_mode_stash || 'required';
+            if (show) {
+              if (!isEngineCodeRequired(engine_code_mode)) {
+                engine_code_mode = VALID_ENGINE_CODE_MODES.includes(engine_code_mode_stash)
+                  && engine_code_mode_stash !== 'none'
+                  ? engine_code_mode_stash
+                  : 'required';
+              }
+            } else if (isEngineCodeRequired(engine_code_mode)) {
+              engine_code_mode_stash = engine_code_mode;
+              engine_code_mode = 'none';
+            }
+            setState(syncLayout({
+              ...state,
+              show_engine_code: show,
+              engine_code_mode,
+              engine_code_mode_stash,
+            }));
+          }}
+        />
+        Показывать «Код мотора» в форме товара
       </label>
       <div className="form-layout-editor-hint">Поля характеристик</div>
       {(state.fields || []).map((field, idx) => (
@@ -56,7 +109,7 @@ function FieldsTab({ state, setState }) {
                 const fields = [...state.fields];
                 if (fields.length <= 1) return;
                 fields.splice(idx, 1);
-                const base = { fields, show_compatibility: state.show_compatibility };
+                const base = schemaBaseFromState({ ...state, fields });
                 setState({ ...state, fields, form_layout: defaultFormLayout(base) });
               }}
             >
@@ -69,7 +122,7 @@ function FieldsTab({ state, setState }) {
                 onClick={() => {
                   const fields = [...state.fields];
                   [fields[idx - 1], fields[idx]] = [fields[idx], fields[idx - 1]];
-                  const base = { fields, show_compatibility: state.show_compatibility };
+                  const base = schemaBaseFromState({ ...state, fields });
                   setState({ ...state, fields, form_layout: defaultFormLayout(base) });
                 }}
               >
@@ -83,7 +136,7 @@ function FieldsTab({ state, setState }) {
                 onClick={() => {
                   const fields = [...state.fields];
                   [fields[idx + 1], fields[idx]] = [fields[idx], fields[idx + 1]];
-                  const base = { fields, show_compatibility: state.show_compatibility };
+                  const base = schemaBaseFromState({ ...state, fields });
                   setState({ ...state, fields, form_layout: defaultFormLayout(base) });
                 }}
               >
@@ -102,7 +155,7 @@ function FieldsTab({ state, setState }) {
                 label: e.target.value,
                 key: fields[idx].key || slugFieldKey(e.target.value),
               };
-              const base = { fields, show_compatibility: state.show_compatibility };
+              const base = schemaBaseFromState({ ...state, fields });
               setState({ ...state, fields, form_layout: defaultFormLayout(base) });
             }}
           />
@@ -167,11 +220,16 @@ function FieldsTab({ state, setState }) {
 }
 
 function CardTab({ state, setState }) {
-  const schema = useMemo(
-    () => ({ fields: state.fields, show_compatibility: state.show_compatibility }),
-    [state.fields, state.show_compatibility],
-  );
+  const schema = useMemo(() => schemaBaseFromState(state), [state]);
   const [dragIdx, setDragIdx] = useState(null);
+
+  const syncLayout = (nextState) => {
+    const base = schemaBaseFromState(nextState);
+    return {
+      ...nextState,
+      form_layout: normalizeFormLayout(nextState.form_layout, base),
+    };
+  };
 
   const addBuiltin = (row) => {
     const exists = state.form_layout.some((x) => x.id === row.id);
@@ -182,6 +240,29 @@ function CardTab({ state, setState }) {
     next.splice(insertAt, 0, { ...row });
     setState({ ...state, form_layout: next });
   };
+
+  const addLayoutRow = (row) => {
+    if (state.form_layout.some((x) => x.id === row.id)) return;
+    const next = [...state.form_layout];
+    const nameIdx = next.findIndex((r) => r.key === 'name');
+    const at = nameIdx >= 0 ? nameIdx + 1 : Math.min(1, next.length);
+    next.splice(at, 0, { ...row });
+    let patch = { ...state, form_layout: next };
+    if (row.kind === 'compatibility') {
+      patch = { ...patch, show_compatibility: true, vehicle_mode: 'compatibility' };
+    }
+    if (row.kind === 'engine_compat') {
+      const ecm = isEngineCodeRequired(state.engine_code_mode) ? state.engine_code_mode : 'required';
+      patch = { ...patch, show_engine_code: true, engine_code_mode: ecm };
+    }
+    setState(syncLayout(patch));
+  };
+
+  const rows = normalizeFormLayout(state.form_layout, schema);
+  const rowIndex = (id) => rows.findIndex((r) => r.id === id);
+  const availableAttrs = (state.fields || []).filter(
+    (f) => f.key && !rows.some((r) => r.key === f.key && r.kind === 'attribute'),
+  );
 
   const addAttribute = (key) => {
     const id = `attr:${key}`;
@@ -199,12 +280,6 @@ function CardTab({ state, setState }) {
     });
     setState({ ...state, form_layout: next });
   };
-
-  const rows = normalizeFormLayout(state.form_layout, schema);
-  const rowIndex = (id) => rows.findIndex((r) => r.id === id);
-  const availableAttrs = (state.fields || []).filter(
-    (f) => f.key && !rows.some((r) => r.key === f.key && r.kind === 'attribute'),
-  );
 
   const renderLayoutRow = (row) => {
     const idx = rowIndex(row.id);
@@ -247,7 +322,25 @@ function CardTab({ state, setState }) {
             <button
               type="button"
               className="product-field-minus"
-              onClick={() => setState({ ...state, form_layout: rows.filter((_, i) => i !== idx) })}
+              onClick={() => {
+                const nextLayout = rows.filter((_, i) => i !== idx);
+                let patch = { ...state, form_layout: nextLayout };
+                if (row.kind === 'compatibility') {
+                  patch = { ...patch, show_compatibility: false, vehicle_mode: 'none' };
+                }
+                if (row.kind === 'engine_compat') {
+                  const stash = isEngineCodeRequired(state.engine_code_mode)
+                    ? state.engine_code_mode
+                    : state.engine_code_mode_stash;
+                  patch = {
+                    ...patch,
+                    show_engine_code: false,
+                    engine_code_mode: 'none',
+                    engine_code_mode_stash: stash || 'required',
+                  };
+                }
+                setState(syncLayout(patch));
+              }}
             >
               <FiMinus size={14} />
             </button>
@@ -302,6 +395,12 @@ function CardTab({ state, setState }) {
             <span className="catalog-chip">Changan CS35</span>
           </div>
         )}
+        {row.kind === 'engine_compat' && (
+          <div className="chip-field-group">
+            <span className="catalog-chip catalog-chip-active">465</span>
+            <span className="catalog-chip">465Q</span>
+          </div>
+        )}
       </div>
     );
   };
@@ -325,6 +424,11 @@ function CardTab({ state, setState }) {
       </div>
       <div className="form-layout-add-row">
         <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-muted)' }}>Добавить:</span>
+        {ADDABLE_LAYOUT_ROWS.filter((b) => !rows.some((r) => r.id === b.id)).map((b) => (
+          <button key={b.id} type="button" className="catalog-chip" onClick={() => addLayoutRow(b)}>
+            + {b.label}
+          </button>
+        ))}
         {ADDABLE_BUILTIN.filter((b) => !rows.some((r) => r.id === b.id)).map((b) => (
           <button key={b.id} type="button" className="catalog-chip" onClick={() => addBuiltin(b)}>
             + {b.label}
@@ -343,6 +447,7 @@ function CardTab({ state, setState }) {
 export default function CategoryFormLayoutEditor({ category, groupName, onSave, onClose, saving }) {
   const initial = useMemo(() => {
     const schema = category?.attribute_schema || {};
+    const profile = resolveCategoryProfile(schema);
     const fields = (schema.fields || []).map((f) => ({
       key: f.key || '',
       label: f.label || '',
@@ -355,11 +460,16 @@ export default function CategoryFormLayoutEditor({ category, groupName, onSave, 
     }));
     const base = {
       fields: fields.length ? fields : [emptyField()],
-      show_compatibility: Boolean(schema.show_compatibility),
+      show_compatibility: profile.vehicle_mode === 'compatibility',
+      show_engine_code: isEngineCodeRequired(profile.engine_code_mode),
+      vehicle_mode: profile.vehicle_mode,
+      engine_code_mode: profile.engine_code_mode,
+      engine_code_mode_stash: schema.engine_code_mode_stash || 'required',
+      pricing_mode: profile.pricing_mode,
     };
     return {
       ...base,
-      form_layout: normalizeFormLayout(schema.form_layout, base),
+      form_layout: normalizeFormLayout(schema.form_layout, { ...schema, ...base }),
     };
   }, [category]);
 
@@ -367,7 +477,12 @@ export default function CategoryFormLayoutEditor({ category, groupName, onSave, 
   const [state, setState] = useState(initial);
 
   const handleSave = () => {
-    const schema = fieldsToFullSchema(state.fields, state.show_compatibility, state.form_layout);
+    const schema = fieldsToFullSchema(state.fields, state.show_compatibility, state.form_layout, {
+      vehicle_mode: state.vehicle_mode,
+      engine_code_mode: state.engine_code_mode,
+      engine_code_mode_stash: state.engine_code_mode_stash,
+      pricing_mode: state.pricing_mode,
+    });
     onSave?.(schema);
   };
 

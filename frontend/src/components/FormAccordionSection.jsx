@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 
 /** Сворачиваемая секция формы — как в мобильном приложении. */
 export default function FormAccordionSection({
@@ -7,13 +7,28 @@ export default function FormAccordionSection({
   icon,
   iconColor,
   initiallyExpanded = false,
+  expanded: expandedProp,
+  onExpandedChange,
   /** В накладной: секции всегда развёрнуты, без клика по заголовку */
   alwaysOpen = false,
   children,
   className = '',
 }) {
-  const [expanded, setExpanded] = useState(alwaysOpen || initiallyExpanded);
+  const [internalExpanded, setInternalExpanded] = useState(alwaysOpen || initiallyExpanded);
+  const isControlled = expandedProp != null;
+  const expanded = isControlled ? expandedProp : internalExpanded;
   const isOpen = alwaysOpen || expanded;
+
+  useEffect(() => {
+    if (!isControlled && initiallyExpanded) {
+      setInternalExpanded(true);
+    }
+  }, [initiallyExpanded, isControlled]);
+
+  const setExpanded = (next) => {
+    if (!isControlled) setInternalExpanded(next);
+    onExpandedChange?.(next);
+  };
 
   const headContent = (
     <>

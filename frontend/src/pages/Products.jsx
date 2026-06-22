@@ -12,7 +12,7 @@ import { productApi, resolveUploadedAssetUrl, compatibilityApi, categoryApi, get
 import CategoryPicker, { findGroupIdForCategory, findCategoryInTree } from '../components/CategoryPicker';
 import ProductFormByLayout from '../components/ProductFormByLayout';
 import ProductStockFormSection from '../components/ProductStockFormSection';
-import { priceLayoutRows, resolveCategorySchemaForProduct, categoryTreeQueryKey, isEngineCodeRequired, isEngineCodeSingle } from '../utils/formLayoutUtils';
+import { priceLayoutRows, resolveCategorySchemaForProduct, categoryTreeQueryKey, isEngineCodeRequired, isEngineCodeSingle, layoutHasCompatibility, layoutHasEngineCode, normalizeFormLayout } from '../utils/formLayoutUtils';
 import ProductFormSection, { ProductFormTemplateBadge } from '../components/ProductFormSection';
 import FormAccordionSection from '../components/FormAccordionSection';
 import VehicleCompatibilityPicker from '../components/VehicleCompatibilityPicker';
@@ -820,15 +820,22 @@ const Products = () => {
     });
   }, [vehicleModels]);
 
+  const categoryProductLayout = useMemo(
+    () => normalizeFormLayout(selectedSubcategorySchema?.form_layout, selectedSubcategorySchema),
+    [selectedSubcategorySchema],
+  );
+
   const showCompatibilityPicker = useMemo(() => {
     const vm = selectedSubcategorySchema?.vehicle_mode;
     const liquidsGroup = /жидкост/i.test(selectedCategoryGroup?.name || '');
+    if (!layoutHasCompatibility(categoryProductLayout)) return false;
     return !liquidsGroup || vm !== 'none';
-  }, [selectedCategoryGroup?.name, selectedSubcategorySchema?.vehicle_mode]);
+  }, [selectedCategoryGroup?.name, selectedSubcategorySchema?.vehicle_mode, categoryProductLayout]);
 
   const showEngineFamilyPicker = useMemo(
-    () => isEngineCodeRequired(selectedSubcategorySchema?.engine_code_mode),
-    [selectedSubcategorySchema?.engine_code_mode],
+    () => layoutHasEngineCode(categoryProductLayout)
+      && isEngineCodeRequired(selectedSubcategorySchema?.engine_code_mode),
+    [categoryProductLayout, selectedSubcategorySchema?.engine_code_mode],
   );
 
   const engineCodeSingleSelect = useMemo(
