@@ -12584,16 +12584,25 @@ textarea {
 
 .engine-code-card__head {
   display: grid;
-  grid-template-columns: 1fr auto;
+  grid-template-columns: 1fr auto auto;
+  gap: 0;
+  align-items: stretch;
+  position: relative;
+}
+
+.engine-code-card__main {
+  display: grid;
+  grid-template-columns: 1fr;
   grid-template-rows: auto auto auto;
   gap: 4px 12px;
   width: 100%;
-  padding: 14px 16px;
+  padding: 14px 8px 14px 16px;
   border: none;
   background: transparent;
   text-align: left;
   cursor: pointer;
   position: relative;
+  min-width: 0;
 }
 
 .engine-code-card__head::before {
@@ -12607,6 +12616,7 @@ textarea {
   background: linear-gradient(180deg, var(--primary), color-mix(in srgb, var(--primary) 50%, #7c3aed));
   opacity: 0;
   transition: opacity 0.15s ease;
+  pointer-events: none;
 }
 
 .engine-code-card--open .engine-code-card__head::before,
@@ -12614,8 +12624,51 @@ textarea {
   opacity: 1;
 }
 
+.engine-code-card__hide-btn,
+.engine-code-card__chevron-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.engine-code-card__hide-btn:hover,
+.engine-code-card__chevron-btn:hover {
+  color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 6%, transparent);
+}
+
+.engine-code-card--inactive .engine-code-card__hide-btn {
+  color: var(--primary);
+}
+
+.engine-settings-hidden-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 12px;
+  padding: 8px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.engine-settings-hidden-toggle--on {
+  color: var(--primary);
+  border-color: color-mix(in srgb, var(--primary) 28%, var(--border));
+  background: color-mix(in srgb, var(--primary) 8%, var(--surface));
+}
+
 .engine-code-card__code-wrap {
-  grid-column: 1;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -12631,7 +12684,6 @@ textarea {
 }
 
 .engine-code-card__desc {
-  grid-column: 1;
   margin: 0;
   font-size: 13px;
   line-height: 1.4;
@@ -12639,7 +12691,6 @@ textarea {
 }
 
 .engine-code-card__meta {
-  grid-column: 1;
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
@@ -13412,6 +13463,21 @@ textarea {
 
 .engine-family-picker__add-link:hover {
   text-decoration: underline;
+}
+
+.engine-family-picker__add-cancel {
+  align-self: flex-start;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.engine-family-picker__add-cancel:hover {
+  color: var(--text);
 }
 
 .product-attr-field--engine .product-attr-field__label::after {

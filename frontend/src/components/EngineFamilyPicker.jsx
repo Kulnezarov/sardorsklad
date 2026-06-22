@@ -36,7 +36,8 @@ export default function EngineFamilyPicker({
   const qc = useQueryClient();
   const userEditedRef = useRef(false);
   const [selectedIds, setSelectedIds] = useState(() => normalizeIds(initialSelectedIds));
-  const [search, setSearch] = useState('');
+  const [listFilter, setListFilter] = useState('');
+  const [newCode, setNewCode] = useState('');
   const [open, setOpen] = useState(false);
   const [addPanelOpen, setAddPanelOpen] = useState(false);
   const [showAddDetails, setShowAddDetails] = useState(false);
@@ -77,20 +78,20 @@ export default function EngineFamilyPicker({
     });
   }, [families, vmSet]);
 
-  const searchTrim = search.trim();
-  const searchCode = normalizeCode(search);
+  const listFilterTrim = listFilter.trim();
+  const newCodeNormalized = normalizeCode(newCode);
 
-  const existingByCode = useMemo(() => {
-    if (!searchCode) return null;
-    const q = searchCode.toLowerCase();
+  const existingByNewCode = useMemo(() => {
+    if (!newCodeNormalized) return null;
+    const q = newCodeNormalized.toLowerCase();
     return (families || []).find((f) => normalizeCode(f.code).toLowerCase() === q) || null;
-  }, [families, searchCode]);
+  }, [families, newCodeNormalized]);
 
   const filtered = useMemo(() => {
-    const q = searchTrim.toLowerCase();
+    const q = listFilterTrim.toLowerCase();
     if (!q) return sortedFamilies;
     return sortedFamilies.filter((f) => engineFamilySearchHaystack(f).includes(q));
-  }, [sortedFamilies, searchTrim]);
+  }, [sortedFamilies, listFilterTrim]);
 
   const selectedFamilies = useMemo(() => {
     const byId = new Map((families || []).map((f) => [f.id, f]));
@@ -107,16 +108,21 @@ export default function EngineFamilyPicker({
     }
   }, [emitChange, selectedIds, singleSelect]);
 
+  const resetAddForm = useCallback(() => {
+    setNewCode('');
+    setAddPanelOpen(false);
+    setShowAddDetails(false);
+    setNewDetails({ ...EMPTY_ENGINE_FAMILY_DETAILS });
+  }, []);
+
   const createMut = useMutation({
     mutationFn: (payload) => compatibilityApi.createEngineFamily(payload).then((r) => r.data),
     onSuccess: (created) => {
       qc.invalidateQueries({ queryKey: ['compatibility', 'engine-families'] });
       selectCreatedFamily(created);
       toast.success(`Код «${created.code}» добавлен`);
-      setSearch('');
-      setAddPanelOpen(false);
-      setShowAddDetails(false);
-      setNewDetails({ ...EMPTY_ENGINE_FAMILY_DETAILS });
+      resetAddForm();
+      setListFilter('');
     },
     onError: (e) => toast.error(getApiErrorMessage(e, 'Не удалось добавить код')),
   });
@@ -139,8 +145,15 @@ export default function EngineFamilyPicker({
     }
   };
 
-  const submitNewCode = (codeOverride) => {
-    const code = normalizeCode(codeOverride ?? search);
+  const openAddPanel = useCallback((prefill = '') => {
+    setAddPanelOpen(true);
+    setNewCode(prefill);
+    setShowAddDetails(false);
+    setNewDetails({ ...EMPTY_ENGINE_FAMILY_DETAILS });
+  }, []);
+
+  const submitNewCode = () => {
+    const code = newCodeNormalized;
     if (!code) {
       toast.error('Введите код мотора');
       return;
@@ -158,8 +171,8 @@ export default function EngineFamilyPicker({
   };
 
   const hasVmHint = vmSet.size > 0;
-  const showQuickAdd = allowCreate && !disabled && searchCode && !existingByCode;
-  const showAddForm = allowCreate && !disabled && (showQuickAdd || addPanelOpen);
+  const showAddForm = allowCreate && !disabled && addPanelOpen;
+  const canPrefillFromSearch = allowCreate && !disabled && listFilterTrim && !filtered.length;
 
   return (
     <div className={`engine-family-picker${open ? ' engine-family-picker--open' : ''}`}>
@@ -205,22 +218,11 @@ export default function EngineFamilyPicker({
           )}
           <input
             className="ios-input engine-family-picker__search"
-            placeholder="Поиск или новый код (например 465)…"
-            value={search}
+            placeholder="Поиск по коду, объёму, производителю…"
+            value={listFilter}
             disabled={disabled}
-            onChange={(e) => setSearch(e.target.value)}
+            onChange={(e) => setListFilter(e.target.value)}
           />
-
-          {existingByCode && !selectedIds.includes(existingByCode.id) && (
-            <button
-              type="button"
-              className="engine-family-picker__existing-hint"
-              disabled={disabled}
-              onClick={() => toggle(existingByCode.id)}
-            >
-              Код «{existingByCode.code}» уже есть — нажмите, чтобы выбрать
-            </button>
-          )}
 
           <div className="engine-family-picker__grid">
             {filtered.map((f) => {
@@ -242,49 +244,59 @@ export default function EngineFamilyPicker({
                 </button>
               );
             })}
-            {!filtered.length && !showQuickAdd && (
-              <span className="engine-family-picker__empty">Нет совпадений — введите код и добавьте ниже</span>
+            {!filtered.length && !canPrefillFromSearch && (
+              <span className="engine-family-picker__empty">Нет совпадений</span>
             )}
           </div>
+
+          {canPrefillFromSearch && !showAddForm && (
+            <button
+              type="button"
+              className="engine-family-picker__existing-hint"
+              disabled={disabled}
+              onClick={() => openAddPanel(listFilterTrim)}
+            >
+              Код «{listFilterTrim}» не найден — добавить новый
+            </button>
+          )}
 
           {showAddForm && (
             <div className="engine-family-picker__add">
               <div className="engine-family-picker__add-head">
-                <span className="engine-family-picker__add-title">
-                  {showQuickAdd ? `Новый код «${searchCode}»` : 'Новый код мотора'}
-                </span>
-                {showQuickAdd && (
-                  <button
-                    type="button"
-                    className="engine-family-picker__add-quick"
-                    disabled={disabled || createMut.isPending}
-                    onClick={() => submitNewCode(searchCode)}
-                  >
-                    <FiPlus size={14} aria-hidden />
-                    {createMut.isPending ? 'Добавление…' : 'Добавить и выбрать'}
-                  </button>
-                )}
+                <span className="engine-family-picker__add-title">Новый код мотора</span>
               </div>
 
-              {!showQuickAdd && (
-                <div className="engine-family-picker__add-code-row">
-                  <input
-                    className="ios-input engine-family-picker__add-code"
-                    placeholder="Код, например 465"
-                    value={search}
-                    disabled={disabled}
-                    onChange={(e) => setSearch(e.target.value)}
-                  />
-                  <button
-                    type="button"
-                    className="engine-family-picker__add-quick"
-                    disabled={disabled || createMut.isPending || !searchCode}
-                    onClick={() => submitNewCode()}
-                  >
-                    <FiPlus size={14} aria-hidden />
-                    {createMut.isPending ? '…' : 'Добавить'}
-                  </button>
-                </div>
+              <div className="engine-family-picker__add-code-row">
+                <input
+                  className="ios-input engine-family-picker__add-code"
+                  placeholder="Код, например 465Q"
+                  value={newCode}
+                  disabled={disabled}
+                  onChange={(e) => setNewCode(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') submitNewCode();
+                  }}
+                />
+                <button
+                  type="button"
+                  className="engine-family-picker__add-quick"
+                  disabled={disabled || createMut.isPending || !newCodeNormalized}
+                  onClick={submitNewCode}
+                >
+                  <FiPlus size={14} aria-hidden />
+                  {createMut.isPending ? '…' : 'Добавить'}
+                </button>
+              </div>
+
+              {existingByNewCode && !selectedIds.includes(existingByNewCode.id) && (
+                <button
+                  type="button"
+                  className="engine-family-picker__existing-hint"
+                  disabled={disabled}
+                  onClick={() => toggle(existingByNewCode.id)}
+                >
+                  Код «{existingByNewCode.code}» уже есть — нажмите, чтобы выбрать
+                </button>
               )}
 
               <button
@@ -310,6 +322,15 @@ export default function EngineFamilyPicker({
                   Код будет привязан к выбранным моделям авто
                 </p>
               )}
+
+              <button
+                type="button"
+                className="engine-family-picker__add-cancel"
+                disabled={disabled || createMut.isPending}
+                onClick={resetAddForm}
+              >
+                Отмена
+              </button>
             </div>
           )}
 
@@ -317,11 +338,7 @@ export default function EngineFamilyPicker({
             <button
               type="button"
               className="engine-family-picker__add-link"
-              onClick={() => {
-                setAddPanelOpen(true);
-                setShowAddDetails(false);
-                setNewDetails({ ...EMPTY_ENGINE_FAMILY_DETAILS });
-              }}
+              onClick={() => openAddPanel(listFilterTrim)}
             >
               <FiPlus size={14} aria-hidden />
               Добавить новый код

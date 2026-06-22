@@ -6,6 +6,8 @@ import {
   FiChevronDown,
   FiChevronUp,
   FiCpu,
+  FiEye,
+  FiEyeOff,
   FiLayers,
   FiPackage,
   FiPlus,
@@ -81,6 +83,7 @@ export default function SettingsEngineFamiliesSection() {
   const [editDetails, setEditDetails] = useState({ ...EMPTY_ENGINE_FAMILY_DETAILS });
   const [editModelIds, setEditModelIds] = useState([]);
   const [matrixDraft, setMatrixDraft] = useState({});
+  const [showHiddenCodes, setShowHiddenCodes] = useState(false);
 
   const { data: families = [], isLoading } = useQuery({
     queryKey: ['compatibility', 'engine-families', 'all', search],
@@ -159,6 +162,16 @@ export default function SettingsEngineFamiliesSection() {
     [families],
   );
 
+  const visibleFamilies = useMemo(() => {
+    if (showHiddenCodes) return sortedFamilies;
+    return sortedFamilies.filter((f) => f.is_active !== false);
+  }, [sortedFamilies, showHiddenCodes]);
+
+  const hiddenCount = useMemo(
+    () => sortedFamilies.filter((f) => f.is_active === false).length,
+    [sortedFamilies],
+  );
+
   const stats = useMemo(() => {
     const total = sortedFamilies.length;
     const active = sortedFamilies.filter((f) => f.is_active !== false).length;
@@ -206,6 +219,19 @@ export default function SettingsEngineFamiliesSection() {
         ...editDetails,
         vehicle_model_ids: normalizeModelIds(editModelIds),
       }),
+    });
+  };
+
+  const toggleFamilyVisibility = (family, e) => {
+    e?.stopPropagation?.();
+    const nextActive = family.is_active === false;
+    updateMut.mutate({
+      id: family.id,
+      payload: { is_active: nextActive },
+    }, {
+      onSuccess: () => {
+        toast.success(nextActive ? `Код «${family.code}» снова виден` : `Код «${family.code}» скрыт`);
+      },
     });
   };
 
@@ -392,6 +418,19 @@ export default function SettingsEngineFamiliesSection() {
         )}
       </div>
 
+      {hiddenCount > 0 && (
+        <button
+          type="button"
+          className={`engine-settings-hidden-toggle${showHiddenCodes ? ' engine-settings-hidden-toggle--on' : ''}`}
+          onClick={() => setShowHiddenCodes((v) => !v)}
+        >
+          {showHiddenCodes ? <FiEye size={15} /> : <FiEyeOff size={15} />}
+          {showHiddenCodes
+            ? `Скрыть неактивные (${hiddenCount})`
+            : `Показать скрытые (${hiddenCount})`}
+        </button>
+      )}
+
       {isLoading && (
         <div className="engine-settings-loading">
           <span className="engine-settings-loading__dot" />
@@ -399,17 +438,23 @@ export default function SettingsEngineFamiliesSection() {
         </div>
       )}
 
-      {!isLoading && !sortedFamilies.length && (
+      {!isLoading && !visibleFamilies.length && (
         <div className="engine-settings-empty">
           <div className="engine-settings-empty__icon"><FiCpu size={28} /></div>
-          <p className="engine-settings-empty__title">Справочник пуст</p>
-          <p className="engine-settings-empty__hint">Добавьте первый код двигателя в форме выше</p>
+          <p className="engine-settings-empty__title">
+            {sortedFamilies.length ? 'Нет активных кодов' : 'Справочник пуст'}
+          </p>
+          <p className="engine-settings-empty__hint">
+            {hiddenCount > 0 && !showHiddenCodes
+              ? 'Все коды скрыты — нажмите «Показать скрытые»'
+              : 'Добавьте первый код двигателя в форме выше'}
+          </p>
         </div>
       )}
 
-      {sortedFamilies.length > 0 && (
+      {visibleFamilies.length > 0 && (
         <div className="engine-code-list">
-          {sortedFamilies.map((family) => {
+          {visibleFamilies.map((family) => {
             const open = expandedId === family.id;
             const linked = family.vehicle_models || [];
             const productCount = family.product_count || 0;
@@ -419,38 +464,55 @@ export default function SettingsEngineFamiliesSection() {
                 key={family.id}
                 className={`engine-code-card${open ? ' engine-code-card--open' : ''}${family.is_active === false ? ' engine-code-card--inactive' : ''}`}
               >
-                <button
-                  type="button"
-                  className="engine-code-card__head"
-                  onClick={() => (open ? setExpandedId(null) : openEdit(family))}
-                >
-                  <div className="engine-code-card__code-wrap">
-                    <span className="engine-code-card__code">{family.code}</span>
-                    {family.is_active === false && (
-                      <span className="engine-code-card__badge engine-code-card__badge--muted">неактивен</span>
-                    )}
-                  </div>
-                  {summary ? (
-                    <p className="engine-code-card__desc">{summary}</p>
-                  ) : family.name ? (
-                    <p className="engine-code-card__desc">{family.name}</p>
-                  ) : null}
-                  <div className="engine-code-card__meta">
-                    <span className="engine-code-card__badge">
-                      <FiPackage size={12} />
-                      {productCount} {pluralProducts(productCount)}
-                    </span>
-                    {linked.length > 0 && (
+                <div className="engine-code-card__head">
+                  <button
+                    type="button"
+                    className="engine-code-card__main"
+                    onClick={() => (open ? setExpandedId(null) : openEdit(family))}
+                  >
+                    <div className="engine-code-card__code-wrap">
+                      <span className="engine-code-card__code">{family.code}</span>
+                      {family.is_active === false && (
+                        <span className="engine-code-card__badge engine-code-card__badge--muted">скрыт</span>
+                      )}
+                    </div>
+                    {summary ? (
+                      <p className="engine-code-card__desc">{summary}</p>
+                    ) : family.name ? (
+                      <p className="engine-code-card__desc">{family.name}</p>
+                    ) : null}
+                    <div className="engine-code-card__meta">
                       <span className="engine-code-card__badge">
-                        <FiTruck size={12} />
-                        {linked.length} мод.
+                        <FiPackage size={12} />
+                        {productCount} {pluralProducts(productCount)}
                       </span>
-                    )}
-                  </div>
-                  <span className="engine-code-card__chevron" aria-hidden>
+                      {linked.length > 0 && (
+                        <span className="engine-code-card__badge">
+                          <FiTruck size={12} />
+                          {linked.length} мод.
+                        </span>
+                      )}
+                    </div>
+                  </button>
+                  <button
+                    type="button"
+                    className="engine-code-card__hide-btn"
+                    title={family.is_active !== false ? 'Скрыть код' : 'Показать код'}
+                    aria-label={family.is_active !== false ? 'Скрыть код' : 'Показать код'}
+                    disabled={updateMut.isPending}
+                    onClick={(e) => toggleFamilyVisibility(family, e)}
+                  >
+                    {family.is_active !== false ? <FiEyeOff size={17} /> : <FiEye size={17} />}
+                  </button>
+                  <button
+                    type="button"
+                    className="engine-code-card__chevron-btn"
+                    aria-label={open ? 'Свернуть' : 'Развернуть'}
+                    onClick={() => (open ? setExpandedId(null) : openEdit(family))}
+                  >
                     {open ? <FiChevronUp size={18} /> : <FiChevronDown size={18} />}
-                  </span>
-                </button>
+                  </button>
+                </div>
 
                 {open && (
                   <div className="engine-code-card__body">
@@ -516,12 +578,9 @@ export default function SettingsEngineFamiliesSection() {
                         type="button"
                         className="engine-code-card__btn engine-code-card__btn--ghost"
                         disabled={updateMut.isPending}
-                        onClick={() => updateMut.mutate({
-                          id: family.id,
-                          payload: { is_active: !family.is_active },
-                        })}
+                        onClick={() => toggleFamilyVisibility(family)}
                       >
-                        {family.is_active !== false ? 'Деактивировать' : 'Активировать'}
+                        {family.is_active !== false ? 'Скрыть' : 'Показать'}
                       </button>
                       <button
                         type="button"
