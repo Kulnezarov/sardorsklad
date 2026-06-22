@@ -218,9 +218,17 @@ def _validate_engine_families_for_category(
         return
     schema = get_category_schema(db, category_id) or {}
     profile = resolve_category_profile(schema)
-    if profile.get("engine_code_mode") != "required":
+    ecm = profile.get("engine_code_mode")
+    if ecm not in ("required", "required_single"):
         return
     ids = [int(x) for x in (engine_family_ids or []) if x]
+    if ecm == "required_single":
+        if len(ids) != 1:
+            raise HTTPException(
+                status_code=422,
+                detail="Для этой категории укажите ровно один код мотора",
+            )
+        return
     if not ids:
         raise HTTPException(
             status_code=422,

@@ -946,7 +946,7 @@ class CategoryUpdate(BaseModel):
 
 
 class CategoryEngineCodeModePatch(BaseModel):
-    engine_code_mode: Literal["none", "required"]
+    engine_code_mode: Literal["none", "required", "required_single"]
 
 
 class CategoryResponse(BaseModel):

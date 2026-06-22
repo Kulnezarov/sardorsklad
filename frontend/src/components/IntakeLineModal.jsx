@@ -23,7 +23,7 @@ import { readStoredLabelLayout } from '../utils/labelPrintUtils';
 import CameraBarcodeScanner from './CameraBarcodeScanner';
 import { productApi, categoryApi, compatibilityApi, resolveUploadedAssetUrl } from '../api/client';
 import CategoryPicker, { findGroupIdForCategory, findCategoryInTree } from './CategoryPicker';
-import { resolveCategorySchemaForProduct, categoryTreeQueryKey } from '../utils/formLayoutUtils';
+import { resolveCategorySchemaForProduct, categoryTreeQueryKey, isEngineCodeRequired, isEngineCodeSingle } from '../utils/formLayoutUtils';
 import ProductFormByLayout from './ProductFormByLayout';
 import VehicleCompatibilityPicker, {
   inferCompatIdsFromBrandModel,
@@ -214,7 +214,8 @@ export default function IntakeLineModal({
   const vehicleMode = selectedSubcategorySchema?.vehicle_mode || 'none';
   const liquidsGroup = /жидкост/i.test(selectedCategoryGroup?.name || '');
   const showCompatibilityBlock = !liquidsGroup || vehicleMode !== 'none';
-  const showEngineFamilyBlock = selectedSubcategorySchema?.engine_code_mode === 'required';
+  const showEngineFamilyBlock = isEngineCodeRequired(selectedSubcategorySchema?.engine_code_mode);
+  const engineCodeSingleSelect = isEngineCodeSingle(selectedSubcategorySchema?.engine_code_mode);
   const showBrandModelBlock = false;
 
   const { data: vehicleBrands = [] } = useQuery({
@@ -375,10 +376,12 @@ export default function IntakeLineModal({
         vehicleModelIds={form.compatibility_vehicle_model_ids || []}
         onChange={handleEngineFamilyChange}
         disabled={readonly}
+        singleSelect={engineCodeSingleSelect}
       />
     );
   }, [
     showEngineFamilyBlock,
+    engineCodeSingleSelect,
     enginePickerKey,
     engineInitialIds,
     form.compatibility_vehicle_model_ids,
@@ -802,9 +805,16 @@ export default function IntakeLineModal({
       toast.error('Укажите название');
       return;
     }
-    if (showEngineFamilyBlock && !normalizeCompatIds(form.compatibility_engine_family_ids).length) {
-      toast.error('Выберите хотя бы один код мотора');
-      return;
+    if (showEngineFamilyBlock) {
+      const efs = normalizeCompatIds(form.compatibility_engine_family_ids);
+      if (engineCodeSingleSelect && efs.length !== 1) {
+        toast.error('Укажите ровно один код мотора');
+        return;
+      }
+      if (!engineCodeSingleSelect && !efs.length) {
+        toast.error('Выберите хотя бы один код мотора');
+        return;
+      }
     }
     const barcode = form.barcode.trim() || generateEAN13();
     const cnyV = roundMoney2(num(form.cny_price));

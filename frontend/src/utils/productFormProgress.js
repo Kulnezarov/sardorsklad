@@ -12,6 +12,7 @@ export function buildProductFormProgress({
   schema,
   showCompatibility = false,
   showEngineFamilies = false,
+  engineFamiliesSingle = false,
 }) {
   const items = [];
 
@@ -36,10 +37,11 @@ export function buildProductFormProgress({
   }
 
   if (showEngineFamilies) {
+    const count = (formData?.compatibility_engine_family_ids || []).length;
     items.push({
       key: 'engine_families',
-      label: 'Код мотора',
-      done: (formData?.compatibility_engine_family_ids || []).length > 0,
+      label: engineFamiliesSingle ? 'Код мотора (один)' : 'Код мотора',
+      done: engineFamiliesSingle ? count === 1 : count > 0,
     });
   }
 

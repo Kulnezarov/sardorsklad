@@ -317,7 +317,8 @@ export default function SettingsCategoriesSection() {
         <div className="settings-profile-chips">
           {[
             { value: 'none', label: 'Не нужен', sub: 'кузов, интерьер, оптика' },
-            { value: 'required', label: 'Обязателен', sub: 'несколько кодов на товар' },
+            { value: 'required', label: 'Несколько', sub: 'запчасти, несколько кодов' },
+            { value: 'required_single', label: 'Один код', sub: 'моторы в сборе' },
           ].map((opt) => (
             <button
               key={opt.value}

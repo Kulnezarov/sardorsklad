@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { FiChevronLeft, FiChevronRight } from 'react-icons/fi';
+import { FiChevronLeft, FiChevronRight, FiSearch } from 'react-icons/fi';
 
 function fieldCount(schema) {
   if (!schema) return 0;
@@ -25,8 +25,13 @@ function pluralFields(n) {
   return 'полей';
 }
 
+function normalizeSearch(s) {
+  return String(s || '').trim().toLowerCase();
+}
+
 /**
  * Drill-down: группы → подкатегории (как в макете «Новый товар»).
+ * Поиск: плоский список «Группа → Подкатегория» с выбором в один тап.
  */
 export default function CategoryPicker({
   tree = [],
@@ -45,10 +50,41 @@ export default function CategoryPicker({
   const selectedChild = children.find((c) => c.id === categoryId) || null;
 
   const [drillGroupId, setDrillGroupId] = useState(null);
+  const [searchQuery, setSearchQuery] = useState('');
   const drillGroup = drillGroupId != null ? groups.find((g) => g.id === drillGroupId) : null;
+
+  const flatRows = useMemo(() => {
+    const rows = [];
+    groups.forEach((g) => {
+      (g.children || []).forEach((c) => {
+        rows.push({
+          groupId: g.id,
+          groupName: g.name || '—',
+          categoryId: c.id,
+          categoryName: c.name || '—',
+          schema: c.attribute_schema,
+        });
+      });
+    });
+    return rows.sort((a, b) =>
+      `${a.groupName} ${a.categoryName}`.localeCompare(`${b.groupName} ${b.categoryName}`, 'ru'),
+    );
+  }, [groups]);
+
+  const searchActive = normalizeSearch(searchQuery).length > 0;
+
+  const searchResults = useMemo(() => {
+    const q = normalizeSearch(searchQuery);
+    if (!q) return [];
+    return flatRows.filter((row) => {
+      const hay = `${row.groupName} ${row.categoryName}`.toLowerCase();
+      return hay.includes(q);
+    });
+  }, [flatRows, searchQuery]);
 
   const openGroup = (gid) => {
     if (disabled) return;
+    setSearchQuery('');
     setDrillGroupId(gid);
     onChange?.({ groupId: gid, categoryId: null });
   };
@@ -57,11 +93,12 @@ export default function CategoryPicker({
     if (disabled) return;
     onChange?.({ groupId: gid, categoryId: cid });
     setDrillGroupId(null);
+    setSearchQuery('');
   };
 
   const goBack = () => setDrillGroupId(null);
 
-  if (drillGroup) {
+  if (drillGroup && !searchActive) {
     const subs = drillGroup.children || [];
     return (
       <div className={`catalog-picker catalog-picker--wizard catalog-picker--touch${className ? ` ${className}` : ''}`}>
@@ -107,27 +144,71 @@ export default function CategoryPicker({
         <h3 className="catalog-picker__title">{stepTitle}</h3>
       </div>
 
-      <div className="catalog-picker__cards">
-        {groups.map((g) => {
-          const subCount = (g.children || []).length;
-          return (
-            <button
-              key={g.id}
-              type="button"
-              className={`catalog-picker__card catalog-picker__card--group${groupId === g.id && categoryId ? ' catalog-picker__card--active' : ''}`}
-              disabled={disabled}
-              onClick={() => openGroup(g.id)}
-            >
-              <span className="catalog-picker__emoji">{g.icon || '📦'}</span>
-              <span className="catalog-picker__card-body">
-                <strong>{g.name}</strong>
-                <small>{subCount} {pluralCategories(subCount)}</small>
-              </span>
-              <FiChevronRight size={18} className="catalog-picker__chevron" />
-            </button>
-          );
-        })}
+      <div className="catalog-picker__search">
+        <FiSearch className="catalog-picker__search-icon" size={17} aria-hidden />
+        <input
+          type="search"
+          className="catalog-picker__search-input"
+          placeholder="Поиск группы или категории…"
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          disabled={disabled}
+          autoComplete="off"
+          enterKeyHint="search"
+        />
       </div>
+
+      {searchActive ? (
+        <div className="catalog-picker__cards catalog-picker__cards--search">
+          {searchResults.length === 0 ? (
+            <p className="catalog-picker__search-empty">Ничего не найдено</p>
+          ) : (
+            searchResults.map((row) => {
+              const fc = fieldCount(row.schema);
+              const letter = row.categoryName.charAt(0).toUpperCase();
+              const isActive = categoryId === row.categoryId;
+              return (
+                <button
+                  key={`${row.groupId}-${row.categoryId}`}
+                  type="button"
+                  className={`catalog-picker__card catalog-picker__card--search${isActive ? ' catalog-picker__card--active' : ''}`}
+                  disabled={disabled}
+                  onClick={() => pickSubcategory(row.groupId, row.categoryId)}
+                >
+                  <span className="catalog-picker__letter">{letter}</span>
+                  <span className="catalog-picker__card-body">
+                    <strong>{row.groupName} → {row.categoryName}</strong>
+                    <small>{fc} {pluralFields(fc)}</small>
+                  </span>
+                  <FiChevronRight size={18} className="catalog-picker__chevron" />
+                </button>
+              );
+            })
+          )}
+        </div>
+      ) : (
+        <div className="catalog-picker__cards">
+          {groups.map((g) => {
+            const subCount = (g.children || []).length;
+            return (
+              <button
+                key={g.id}
+                type="button"
+                className={`catalog-picker__card catalog-picker__card--group${groupId === g.id && categoryId ? ' catalog-picker__card--active' : ''}`}
+                disabled={disabled}
+                onClick={() => openGroup(g.id)}
+              >
+                <span className="catalog-picker__emoji">{g.icon || '📦'}</span>
+                <span className="catalog-picker__card-body">
+                  <strong>{g.name}</strong>
+                  <small>{subCount} {pluralCategories(subCount)}</small>
+                </span>
+                <FiChevronRight size={18} className="catalog-picker__chevron" />
+              </button>
+            );
+          })}
+        </div>
+      )}
 
       {!categoryId && legacyCategoryText && (
         <div className="product-form-legacy-banner">

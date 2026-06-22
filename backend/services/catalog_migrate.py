@@ -58,8 +58,11 @@ def _target_engine_code_mode(group_name: str | None, cat_name: str | None) -> st
     None — не менять (уже задан явно пользователем).
     """
     combined = f"{group_name or ''} {cat_name or ''}".casefold()
+    cat = (cat_name or "").casefold()
     if group_name in LIQUID_GROUP_NAMES:
         return "none"
+    if ("мотор" in cat or "двигател" in cat) and ("в сборе" in cat or "сборе" in cat):
+        return "required_single"
     if _group_name_matches(combined, ENGINE_CODE_REQUIRED_GROUP_KEYWORDS):
         return "required"
     if _group_name_matches(combined, ENGINE_CODE_NONE_GROUP_KEYWORDS):

@@ -23,7 +23,15 @@ export const BUILTIN_LABELS = {
 
 export const VALID_PRICING_MODES = ['import_cny', 'local_kzt'];
 export const VALID_VEHICLE_MODES = ['compatibility', 'brand_model', 'none'];
-export const VALID_ENGINE_CODE_MODES = ['none', 'required'];
+export const VALID_ENGINE_CODE_MODES = ['none', 'required', 'required_single'];
+
+export function isEngineCodeRequired(mode) {
+  return mode === 'required' || mode === 'required_single';
+}
+
+export function isEngineCodeSingle(mode) {
+  return mode === 'required_single';
+}
 
 export function resolveCategoryProfile(schema) {
   const s = schema && typeof schema === 'object' ? schema : {};

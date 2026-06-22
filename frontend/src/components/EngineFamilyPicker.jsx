@@ -18,6 +18,7 @@ export default function EngineFamilyPicker({
   vehicleModelIds = [],
   onChange,
   disabled = false,
+  singleSelect = false,
 }) {
   const userEditedRef = useRef(false);
   const [selectedIds, setSelectedIds] = useState(() => normalizeIds(initialSelectedIds));
@@ -72,6 +73,14 @@ export default function EngineFamilyPicker({
   const toggle = (id) => {
     const nid = Number(id);
     if (!nid) return;
+    if (singleSelect) {
+      if (selectedIds.includes(nid)) {
+        emitChange([]);
+      } else {
+        emitChange([nid]);
+      }
+      return;
+    }
     if (selectedIds.includes(nid)) {
       emitChange(selectedIds.filter((x) => x !== nid));
     } else {
@@ -103,7 +112,9 @@ export default function EngineFamilyPicker({
           </button>
           );
         }) : (
-          <span className="engine-family-picker__empty">Выберите один или несколько кодов</span>
+          <span className="engine-family-picker__empty">
+            {singleSelect ? 'Выберите код мотора' : 'Выберите один или несколько кодов'}
+          </span>
         )}
       </div>
 
@@ -113,7 +124,7 @@ export default function EngineFamilyPicker({
         disabled={disabled}
         onClick={() => setOpen((v) => !v)}
       >
-        {open ? 'Скрыть список' : 'Выбрать коды'}
+        {open ? 'Скрыть список' : (singleSelect ? 'Выбрать код' : 'Выбрать коды')}
       </button>
 
       {open && (

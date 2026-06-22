@@ -51,8 +51,8 @@ DEFAULT_PRICING_MODE = "import_cny"
 VALID_VEHICLE_MODES = frozenset({"compatibility", "brand_model", "none"})
 DEFAULT_VEHICLE_MODE = "none"
 
-# engine_code_mode: none (скрыть) | required (multi-select кодов мотора обязателен)
-VALID_ENGINE_CODE_MODES = frozenset({"none", "required"})
+# engine_code_mode: none | required (multi) | required_single (ровно один код)
+VALID_ENGINE_CODE_MODES = frozenset({"none", "required", "required_single"})
 DEFAULT_ENGINE_CODE_MODE = "none"
 
 

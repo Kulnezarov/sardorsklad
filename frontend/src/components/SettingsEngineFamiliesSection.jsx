@@ -23,7 +23,7 @@ import {
   engineFamilyDetailsFromFamily,
   formatEngineFamilySummary,
 } from '../utils/engineFamilyUtils';
-import { resolveCategoryProfile, categoryTreeQueryKey, patchEngineCodeModeInSchema, mergeEngineCodeModeIntoCategoryTree } from '../utils/formLayoutUtils';
+import { resolveCategoryProfile, isEngineCodeRequired, categoryTreeQueryKey, patchEngineCodeModeInSchema, mergeEngineCodeModeIntoCategoryTree } from '../utils/formLayoutUtils';
 
 function pluralProducts(n) {
   const m = n % 10;
@@ -42,7 +42,7 @@ function normalizeModelIds(ids) {
 
 function MatrixModeToggle({ value, onChange }) {
   return (
-    <div className="engine-matrix-toggle" role="group" aria-label="Режим кода мотора">
+    <div className="engine-matrix-toggle engine-matrix-toggle--triple" role="group" aria-label="Режим кода мотора">
       <button
         type="button"
         className={`engine-matrix-toggle__btn${value === 'none' ? ' engine-matrix-toggle__btn--active' : ''}`}
@@ -57,7 +57,15 @@ function MatrixModeToggle({ value, onChange }) {
         onClick={() => onChange('required')}
       >
         <FiCheck size={13} aria-hidden />
-        Обязателен
+        Несколько
+      </button>
+      <button
+        type="button"
+        className={`engine-matrix-toggle__btn engine-matrix-toggle__btn--single${value === 'required_single' ? ' engine-matrix-toggle__btn--active' : ''}`}
+        onClick={() => onChange('required_single')}
+      >
+        <FiCheck size={13} aria-hidden />
+        Один
       </button>
     </div>
   );
@@ -155,7 +163,7 @@ export default function SettingsEngineFamiliesSection() {
     const total = sortedFamilies.length;
     const active = sortedFamilies.filter((f) => f.is_active !== false).length;
     const requiredCats = categoryMatrix.filter((r) =>
-      (matrixDraft[r.id] ?? r.engine_code_mode) === 'required',
+      isEngineCodeRequired(matrixDraft[r.id] ?? r.engine_code_mode),
     ).length;
     return { total, active, requiredCats };
   }, [sortedFamilies, categoryMatrix, matrixDraft]);
@@ -304,7 +312,7 @@ export default function SettingsEngineFamiliesSection() {
 
   const matrixStats = useMemo(() => {
     const required = categoryMatrix.filter((row) =>
-      (matrixDraft[row.id] ?? row.engine_code_mode) === 'required',
+      isEngineCodeRequired(matrixDraft[row.id] ?? row.engine_code_mode),
     ).length;
     return { total: categoryMatrix.length, required };
   }, [categoryMatrix, matrixDraft]);
@@ -567,7 +575,7 @@ export default function SettingsEngineFamiliesSection() {
             <div className="engine-matrix-groups">
               {groupedMatrix.map(([groupName, rows]) => {
                 const groupRequired = rows.filter((row) =>
-                  (matrixDraft[row.id] ?? row.engine_code_mode) === 'required',
+                  isEngineCodeRequired(matrixDraft[row.id] ?? row.engine_code_mode),
                 ).length;
                 return (
                   <div key={groupName} className="engine-matrix-group">
@@ -587,14 +595,14 @@ export default function SettingsEngineFamiliesSection() {
                         return (
                           <div
                             key={row.id}
-                            className={`engine-matrix-row${dirty ? ' engine-matrix-row--dirty' : ''}${mode === 'required' ? ' engine-matrix-row--required' : ''}`}
+                            className={`engine-matrix-row${dirty ? ' engine-matrix-row--dirty' : ''}${isEngineCodeRequired(mode) ? ' engine-matrix-row--required' : ''}`}
                           >
                             <div className="engine-matrix-row__info">
                               <span className="engine-matrix-row__cat">{row.name}</span>
-                              {mode === 'required' && (
+                              {isEngineCodeRequired(mode) && (
                                 <span className="engine-matrix-row__badge">
                                   <FiCheck size={11} aria-hidden />
-                                  Код обязателен
+                                  {mode === 'required_single' ? 'Один код' : 'Код обязателен'}
                                 </span>
                               )}
                               {dirty && (

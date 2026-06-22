@@ -12,7 +12,7 @@ import { productApi, resolveUploadedAssetUrl, compatibilityApi, categoryApi, get
 import CategoryPicker, { findGroupIdForCategory, findCategoryInTree } from '../components/CategoryPicker';
 import ProductFormByLayout from '../components/ProductFormByLayout';
 import ProductStockFormSection from '../components/ProductStockFormSection';
-import { priceLayoutRows, resolveCategorySchemaForProduct, categoryTreeQueryKey } from '../utils/formLayoutUtils';
+import { priceLayoutRows, resolveCategorySchemaForProduct, categoryTreeQueryKey, isEngineCodeRequired, isEngineCodeSingle } from '../utils/formLayoutUtils';
 import ProductFormSection, { ProductFormTemplateBadge } from '../components/ProductFormSection';
 import FormAccordionSection from '../components/FormAccordionSection';
 import VehicleCompatibilityPicker from '../components/VehicleCompatibilityPicker';
@@ -255,6 +255,17 @@ function isLegacyProduct(p) {
 }
 
 const PRODUCTS_VIEW_KEY = 'skladpro_products_view';
+const CATALOG_CHROME_VISIBLE_KEY = 'skladpro:catalog-chrome-visible';
+
+function readCatalogChromeVisible() {
+  try {
+    const v = localStorage.getItem(CATALOG_CHROME_VISIBLE_KEY);
+    if (v === '0' || v === 'false') return false;
+    return true;
+  } catch {
+    return true;
+  }
+}
 
 function readProductsViewMode() {
   try {
@@ -605,12 +616,11 @@ const Products = () => {
   const tableScrollRef = useRef(null);
   const chromeRef = useRef(null);
   const gridLoadSentinelRef = useRef(null);
-  const lastGridScrollTopRef = useRef(0);
   const queryClient = useQueryClient();
 
   const [tableScrollTop, setTableScrollTop] = useState(0);
   const [tableViewportH, setTableViewportH] = useState(480);
-  const [gridChromeHidden, setGridChromeHidden] = useState(false);
+  const [catalogChromeVisible, setCatalogChromeVisible] = useState(readCatalogChromeVisible);
   const [chromeHeight, setChromeHeight] = useState(0);
   const [lightboxState, setLightboxState] = useState(null);
   const [sidePhotoIdx, setSidePhotoIdx] = useState(0);
@@ -817,7 +827,12 @@ const Products = () => {
   }, [selectedCategoryGroup?.name, selectedSubcategorySchema?.vehicle_mode]);
 
   const showEngineFamilyPicker = useMemo(
-    () => selectedSubcategorySchema?.engine_code_mode === 'required',
+    () => isEngineCodeRequired(selectedSubcategorySchema?.engine_code_mode),
+    [selectedSubcategorySchema?.engine_code_mode],
+  );
+
+  const engineCodeSingleSelect = useMemo(
+    () => isEngineCodeSingle(selectedSubcategorySchema?.engine_code_mode),
     [selectedSubcategorySchema?.engine_code_mode],
   );
 
@@ -826,7 +841,8 @@ const Products = () => {
     schema: selectedSubcategorySchema,
     showCompatibility: showCompatibilityPicker,
     showEngineFamilies: showEngineFamilyPicker,
-  }), [formData, selectedSubcategorySchema, showCompatibilityPicker, showEngineFamilyPicker]);
+    engineFamiliesSingle: engineCodeSingleSelect,
+  }), [formData, selectedSubcategorySchema, showCompatibilityPicker, showEngineFamilyPicker, engineCodeSingleSelect]);
 
   const storefrontPreview = useMemo(() => buildStorefrontPreview({
     formData,
@@ -869,10 +885,12 @@ const Products = () => {
         initialSelectedIds={engineInitialIds}
         vehicleModelIds={formData.compatibility_vehicle_model_ids || []}
         onChange={handleEngineFamilyChange}
+        singleSelect={engineCodeSingleSelect}
       />
     );
   }, [
     showEngineFamilyPicker,
+    engineCodeSingleSelect,
     enginePickerKey,
     engineInitialIds,
     formData.compatibility_vehicle_model_ids,
@@ -1172,21 +1190,24 @@ const Products = () => {
     const el = tableScrollRef.current;
     if (el) el.scrollTop = 0;
     setTableScrollTop(0);
-    setGridChromeHidden(false);
-    lastGridScrollTopRef.current = 0;
+  }, []);
+
+  const toggleCatalogChrome = useCallback(() => {
+    setCatalogChromeVisible((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem(CATALOG_CHROME_VISIBLE_KEY, next ? '1' : '0');
+      } catch {
+        /* ignore */
+      }
+      return next;
+    });
   }, []);
 
   const handleCatalogScroll = useCallback((e) => {
-    const st = e.currentTarget.scrollTop;
     if (viewMode === 'table') {
-      setTableScrollTop(st);
-      return;
+      setTableScrollTop(e.currentTarget.scrollTop);
     }
-    // Скрыть один раз при прокрутке вниз; при прокрутке вверх не показывать снова.
-    if (st > 24 && st > lastGridScrollTopRef.current + 8) {
-      setGridChromeHidden(true);
-    }
-    lastGridScrollTopRef.current = st;
   }, [viewMode]);
 
   useEffect(() => {
@@ -1840,8 +1861,13 @@ const Products = () => {
       });
     }
 
-    if (showEngineFamilyPicker && !(formData.compatibility_engine_family_ids || []).length) {
-      errors.engine_families = 'Выберите хотя бы один код мотора';
+    const efs = formData.compatibility_engine_family_ids || [];
+    if (showEngineFamilyPicker) {
+      if (engineCodeSingleSelect && efs.length !== 1) {
+        errors.engine_families = 'Укажите ровно один код мотора';
+      } else if (!engineCodeSingleSelect && !efs.length) {
+        errors.engine_families = 'Выберите хотя бы один код мотора';
+      }
     }
 
     if (Object.keys(errors).length > 0) {
@@ -2316,17 +2342,13 @@ const Products = () => {
       )}
 
       <div
-        className={`products-catalog-chrome-slot${viewMode === 'grid' && gridChromeHidden ? ' products-catalog-chrome-slot--collapsed' : ''}`}
+        className={`products-catalog-chrome-slot${!catalogChromeVisible ? ' products-catalog-chrome-slot--collapsed' : ''}`}
         style={
-          viewMode === 'grid'
-            ? {
-                height: gridChromeHidden
-                  ? 0
-                  : chromeHeight > 0
-                    ? chromeHeight
-                    : undefined,
-              }
-            : undefined
+          !catalogChromeVisible
+            ? { height: 0 }
+            : chromeHeight > 0
+              ? { height: chromeHeight }
+              : undefined
         }
       >
         <div ref={chromeRef} className="products-catalog-chrome">
@@ -2723,6 +2745,17 @@ const Products = () => {
       )}
 
       {/* ── Bottom dock ── */}
+      <button
+        type="button"
+        className="catalog-chrome-fab"
+        onClick={toggleCatalogChrome}
+        aria-label={catalogChromeVisible ? 'Скрыть поиск и фильтры' : 'Показать поиск и фильтры'}
+        title={catalogChromeVisible ? 'Скрыть поиск и фильтры' : 'Показать поиск и фильтры'}
+      >
+        <FiSearch size={20} strokeWidth={2.25} />
+        <span>{catalogChromeVisible ? 'Скрыть' : 'Фильтры'}</span>
+      </button>
+
       <nav className="catalog-dock" aria-label="Навигация">
         <div style={{ fontSize: 12, color: 'var(--text-muted)', fontWeight: 600 }}>
           <div>
