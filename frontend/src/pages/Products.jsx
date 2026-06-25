@@ -20,7 +20,7 @@ import EngineFamilyPicker from '../components/EngineFamilyPicker';
 import ProductFormProgress from '../components/ProductFormProgress';
 import ProductStorefrontPreview from '../components/ProductStorefrontPreview';
 import { formatAttributePreview } from '../components/CategoryAttributeFields';
-import { compatibilityLabelsFromProduct, syncPrimaryVehicleFromSelection } from '../utils/productDisplayUtils';
+import { compatibilityLabelsFromProduct, productCompatSectionTitle, productEngineCodeLabels, productHasVehicleCompat, productModelOrEngineDisplay, syncPrimaryVehicleFromSelection } from '../utils/productDisplayUtils';
 import { buildProductFormProgress } from '../utils/productFormProgress';
 import { buildStorefrontPreview, formatCompatibilityTableCell } from '../utils/storefrontPreview';
 import { readStoredLabelLayout } from '../utils/labelPrintUtils';
@@ -410,9 +410,9 @@ const ProductGridCard = React.memo(function ProductGridCard({
           {compatCell ? (
             <span
               className="product-grid-card__compat"
-              title={compatCell.extra > 0 ? `Ещё ${compatCell.extra} совместимостей` : compatCell.primary}
+              title={compatCell.extra > 0 ? `Ещё ${compatCell.extra}` : compatCell.primary}
             >
-              <span aria-hidden>🚗</span>
+              <span aria-hidden>{compatCell.kind === 'engine' ? '⚙️' : '🚗'}</span>
               <span>{compatCell.primary}</span>
               {compatCell.extra > 0 ? (
                 <span className="product-grid-card__compat-extra">+{compatCell.extra}</span>
@@ -803,6 +803,12 @@ const Products = () => {
     staleTime: 60000,
   });
 
+  const { data: engineFamilies = [] } = useQuery({
+    queryKey: ['compatibility', 'engine-families', 'preview'],
+    queryFn: () => compatibilityApi.engineFamilies({ include_inactive: false }).then((r) => r.data),
+    staleTime: 60000,
+  });
+
   useEffect(() => {
     if (!formData.category_id || formData.category_group_id || !categoryTree.length) return;
     const gid = findGroupIdForCategory(categoryTree, formData.category_id);
@@ -857,7 +863,9 @@ const Products = () => {
     categoryName: selectedSubcategory?.name || formData.category || '',
     vehicleModels,
     compatibilityIds: formData.compatibility_vehicle_model_ids,
-  }), [formData, selectedSubcategorySchema, selectedSubcategory?.name, vehicleModels]);
+    engineFamilyIds: formData.compatibility_engine_family_ids,
+    engineFamilies,
+  }), [formData, selectedSubcategorySchema, selectedSubcategory?.name, vehicleModels, engineFamilies]);
 
   const handleEngineFamilyChange = useCallback((ids) => {
     const idList = Array.isArray(ids) ? ids : [];
@@ -2648,8 +2656,8 @@ const Products = () => {
                         const cell = formatCompatibilityTableCell(row);
                         if (!cell) return <span style={{ color: 'var(--text-muted)' }}>—</span>;
                         return (
-                          <span className="products-compat-cell" title={cell.extra > 0 ? `Ещё ${cell.extra} совместимостей` : cell.primary}>
-                            <span aria-hidden>🚗</span>
+                          <span className="products-compat-cell" title={cell.extra > 0 ? `Ещё ${cell.extra}` : cell.primary}>
+                            <span aria-hidden>{cell.kind === 'engine' ? '⚙️' : '🚗'}</span>
                             <span className="products-compat-cell__text">{cell.primary}</span>
                             {cell.extra > 0 && (
                               <span style={{
@@ -2827,7 +2835,14 @@ const Products = () => {
                 <div style={{ fontSize: 20, fontWeight: 800, letterSpacing: '-0.03em', color: 'var(--text)', lineHeight: 1.2, wordBreak: 'break-word' }}>{sidePanelProduct.name}</div>
                 <div style={{ marginTop: 8, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
                   {sidePanelProduct.brand && <span style={{ fontSize: 13, color: 'var(--text-secondary)', fontWeight: 600 }}>{sidePanelProduct.brand}</span>}
-                  {sidePanelProduct.model && <span style={{ fontSize: 13, color: 'var(--primary)', fontWeight: 700 }}>Модель: {sidePanelProduct.model}</span>}
+                  {productHasVehicleCompat(sidePanelProduct) && sidePanelProduct.model && (
+                    <span style={{ fontSize: 13, color: 'var(--primary)', fontWeight: 700 }}>Модель: {sidePanelProduct.model}</span>
+                  )}
+                  {!productHasVehicleCompat(sidePanelProduct) && productEngineCodeLabels(sidePanelProduct).length > 0 && (
+                    <span style={{ fontSize: 13, color: 'var(--primary)', fontWeight: 700 }}>
+                      Код мотора: {productEngineCodeLabels(sidePanelProduct).join(', ')}
+                    </span>
+                  )}
                   {(sidePanelProduct.is_legacy_category || sidePanelProduct.needs_category_refresh) && (
                     <span style={{ padding: '2px 10px', borderRadius: 999, fontSize: 11, fontWeight: 700, background: 'rgba(245,158,11,0.15)', color: '#b45309' }}>Обновить</span>
                   )}
@@ -2885,7 +2900,10 @@ const Products = () => {
                 {[
                   ['Штрих-код', sidePanelProduct.barcode || sidePanelProduct.sku || '—', true],
                   ['Марка', sidePanelProduct.brand || '—'],
-                  ['Модель', sidePanelProduct.model || '—'],
+                  [
+                    productHasVehicleCompat(sidePanelProduct) ? 'Модель' : (productEngineCodeLabels(sidePanelProduct).length ? 'Код мотора' : 'Модель'),
+                    productModelOrEngineDisplay(sidePanelProduct) || '—',
+                  ],
                   ['Производитель', sidePanelProduct.supplier || '—'],
                 ].map(([label, val, mono]) => (
                   <div key={label} style={{ padding: '12px 14px', borderRadius: 16, background: 'var(--ios-grouped-bg)', border: '1px solid var(--border)' }}>
@@ -2919,7 +2937,7 @@ const Products = () => {
                 if (!compatLabels.length) return null;
                 return (
                   <div style={{ padding: '14px 16px', borderRadius: 16, background: 'var(--ios-grouped-bg)', border: '1px solid var(--border)', marginBottom: 18 }}>
-                    <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 10 }}>Совместимость с авто</div>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 10 }}>{productCompatSectionTitle(sidePanelProduct)}</div>
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
                       {compatLabels.map((label) => (
                         <span

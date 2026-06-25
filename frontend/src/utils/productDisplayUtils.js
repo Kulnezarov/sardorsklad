@@ -152,6 +152,43 @@ export function removeLayoutEntry(list, id) {
 
 import { formatEngineFamilySummary } from './engineFamilyUtils';
 
+/** Коды мотора для отображения в карточке (без марки/модели авто). */
+export function productEngineCodeLabels(product) {
+  const labels = [];
+  (product?.compatibility?.engine_families || []).forEach((ef) => {
+    const code = String(ef?.code || '').trim();
+    if (code && !labels.includes(code)) labels.push(code);
+  });
+  if (!labels.length) {
+    const brand = String(product?.brand || '').trim();
+    const model = String(product?.model || '').trim();
+    if (model && !brand) labels.push(model);
+  }
+  return labels;
+}
+
+export function productHasVehicleCompat(product) {
+  if ((product?.compatibility?.vehicle_models || []).length) return true;
+  return Boolean(String(product?.brand || '').trim());
+}
+
+export function productCompatSectionTitle(product) {
+  if (productHasVehicleCompat(product)) return 'Совместимость с авто';
+  if (productEngineCodeLabels(product).length) return 'Код мотора';
+  return 'Совместимость';
+}
+
+/** Значение для поля «Модель» / «Код мотора» в боковой панели. */
+export function productModelOrEngineDisplay(product) {
+  const brand = String(product?.brand || '').trim();
+  const model = String(product?.model || '').trim();
+  if (brand && model) return model;
+  if (model && productHasVehicleCompat(product)) return model;
+  const codes = productEngineCodeLabels(product);
+  if (codes.length) return codes.join(', ');
+  return model || null;
+}
+
 /** Все метки совместимости для карточки товара. */
 export function compatibilityLabelsFromProduct(product) {
   const labels = [];

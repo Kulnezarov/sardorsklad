@@ -1,17 +1,35 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 import {
   FiPlus, FiX, FiPackage, FiTruck, FiShoppingCart, FiCheck,
-  FiUpload, FiDownload, FiCamera, FiTrash2, FiEdit2, FiRefreshCw,
-  FiChevronDown, FiChevronRight, FiAlertTriangle, FiRotateCcw,
+  FiCamera, FiTrash2, FiEdit2, FiRefreshCw,
+  FiChevronDown, FiChevronRight, FiAlertTriangle, FiRotateCcw, FiSearch,
 } from 'react-icons/fi';
 import { wishApi, poApi } from '../api/reserve';
 import { settingsApi } from '../api/settings';
-import { fetchAllProducts, getApiErrorMessage } from '../api/client';
+import { categoryApi, fetchAllProducts, getApiErrorMessage } from '../api/client';
 import { generateEAN13 } from '../utils/barcodeGen';
+import CategoryPicker, { findCategoryInTree, findGroupIdForCategory } from '../components/CategoryPicker';
+import ProductFormByLayout from '../components/ProductFormByLayout';
+import VehicleCompatibilityPicker from '../components/VehicleCompatibilityPicker';
+import EngineFamilyPicker from '../components/EngineFamilyPicker';
+import {
+  categoryTreeQueryKey,
+  isEngineCodeRequired,
+  isEngineCodeSingle,
+  layoutHasCompatibility,
+  layoutHasEngineCode,
+  normalizeFormLayout,
+  resolveCategorySchemaForProduct,
+} from '../utils/formLayoutUtils';
+
+function normalizeCompatIds(ids) {
+  if (!ids?.length) return [];
+  return [...new Set(ids.map((x) => Number(x)).filter((n) => Number.isFinite(n) && n > 0))];
+}
 
 /* ── helpers ── */
 const num = (v) => { const n = parseFloat(String(v || 0).replace(',', '.')); return Number.isFinite(n) ? n : 0; };
@@ -71,6 +89,21 @@ function getCatColor(cat) {
   return CAT_COLORS[h % CAT_COLORS.length];
 }
 
+function categoryLabelForItem(item, categoryTree) {
+  if (item?.category_id) {
+    const sub = findCategoryInTree(categoryTree, item.category_id);
+    if (sub) {
+      const group = categoryTree.find((g) => (g.children || []).some((c) => c.id === item.category_id));
+      return group ? `${group.name} · ${sub.name}` : sub.name;
+    }
+  }
+  return item?.category || '';
+}
+
+function normalizeSearch(s) {
+  return String(s || '').trim().toLowerCase();
+}
+
 /* ── Photo Upload Zone ── */
 function PhotoZone({ photoData, onPhoto, onRemove }) {
   const inputRef = useRef(null);
@@ -118,8 +151,8 @@ function PhotoZone({ photoData, onPhoto, onRemove }) {
 }
 
 /* ── Wish Card ── */
-function WishCard({ item, categories: _categories, onOrder, onEdit, onDelete }) {
-  const cat = getCatColor(item.category);
+function WishCard({ item, categoryLabel, onOrder, onEdit, onDelete }) {
+  const cat = getCatColor(categoryLabel || item.category);
   return (
     <div className="wish-card">
       <div className="wish-card-photo">
@@ -137,9 +170,9 @@ function WishCard({ item, categories: _categories, onOrder, onEdit, onDelete }) 
           </div>
         </div>
         {item.brand && <div style={{ fontSize: 12, color: 'var(--text-muted)', fontWeight: 500, marginBottom: 6 }}>{item.brand}</div>}
-        {item.category && (
+        {categoryLabel && (
           <span style={{ display: 'inline-block', padding: '2px 10px', borderRadius: 100, fontSize: 11, fontWeight: 700, background: cat.bg, color: cat.color, marginBottom: 8 }}>
-            {item.category}
+            {categoryLabel}
           </span>
         )}
         {item.notes && (
@@ -207,15 +240,21 @@ const Reserve = () => {
   const [mainTab, setMainTab] = useState('wish');      // 'wish' | 'orders'
   const [partialFilter, setPartialFilter] = useState(false);
   const [showCancelledBlock, setShowCancelledBlock] = useState(false);
+  const [wishSearch, setWishSearch] = useState('');
+  const [wishCategoryFilter, setWishCategoryFilter] = useState(null); // null | groupId | categoryId (negative group = -groupId)
 
   // ── Modal state ──
   const [showWishModal, setShowWishModal] = useState(false);
   const [editWish, setEditWish] = useState(null);       // WishItem being edited
   const [orderWish, setOrderWish] = useState(null);     // WishItem being ordered → PO modal
   const [acceptPO, setAcceptPO] = useState(null);       // PurchaseOrder being accepted
+  const [showNameSuggestions, setShowNameSuggestions] = useState(false);
 
   // ── Wish form ──
-  const emptyWish = () => ({ name: '', brand: '', category: '', notes: '', photo_data: '' });
+  const emptyWish = () => ({
+    name: '', brand: '', category: '', category_group_id: null, category_id: null,
+    notes: '', photo_data: '',
+  });
   const [wishForm, setWishForm] = useState(emptyWish());
 
   // ── Order (PurchaseOrder) form ──
@@ -227,8 +266,13 @@ const Reserve = () => {
   const emptyAccept = () => ({
     quantity_received: 1, purchase_price_kzt: '', delivery_cost_kzt: '', sale_price_kzt: '',
     storage_location: '', keep_remainder: true, notes: '', showExtra: false,
+    brand: '', model: '', attributes: {},
+    compatibility_vehicle_model_ids: [],
+    compatibility_engine_family_ids: [],
   });
   const [acceptForm, setAcceptForm] = useState(emptyAccept());
+  const [acceptCompatKey, setAcceptCompatKey] = useState(0);
+  const [acceptEngineKey, setAcceptEngineKey] = useState(0);
 
   // ── Data queries ──
   const { data: wishItems = [], isLoading: wishLoading } = useQuery({
@@ -255,15 +299,117 @@ const Reserve = () => {
     staleTime: 60_000,
   });
 
+  const { data: categoryTree = [] } = useQuery({
+    queryKey: categoryTreeQueryKey(true),
+    queryFn: () => categoryApi.getTree({ active_only: true }).then((r) => r.data),
+    staleTime: 120_000,
+  });
+
   const cnyRate = Number(settings?.cny_rate || 67);
 
-  // ── Derived categories ──
-  const categories = useMemo(() => {
-    const cats = new Set();
-    products.forEach((p) => p.category && cats.add(p.category));
-    wishItems.forEach((w) => w.category && cats.add(w.category));
-    return [...cats].sort();
-  }, [products, wishItems]);
+  const categoryFilterOptions = useMemo(() => {
+    const opts = [{ id: null, label: 'Все категории', count: wishItems.length }];
+    categoryTree.forEach((g) => {
+      const childIds = new Set((g.children || []).map((c) => c.id));
+      const count = wishItems.filter((w) => w.category_id && childIds.has(w.category_id)).length;
+      if (count > 0) {
+        opts.push({ id: -g.id, label: g.name, count, groupId: g.id });
+        (g.children || []).forEach((c) => {
+          const cCount = wishItems.filter((w) => w.category_id === c.id).length;
+          if (cCount > 0) opts.push({ id: c.id, label: `${g.name} · ${c.name}`, count: cCount });
+        });
+      }
+    });
+    return opts;
+  }, [categoryTree, wishItems]);
+
+  const filterWishItems = useCallback((items) => {
+    let list = items;
+    const q = normalizeSearch(wishSearch);
+    if (q) {
+      list = list.filter((w) => {
+        const hay = `${w.name || ''} ${w.brand || ''} ${categoryLabelForItem(w, categoryTree)}`.toLowerCase();
+        return hay.includes(q);
+      });
+    }
+    if (wishCategoryFilter != null) {
+      if (wishCategoryFilter < 0) {
+        const groupId = -wishCategoryFilter;
+        const group = categoryTree.find((g) => g.id === groupId);
+        const childIds = new Set((group?.children || []).map((c) => c.id));
+        list = list.filter((w) => w.category_id && childIds.has(w.category_id));
+      } else {
+        list = list.filter((w) => w.category_id === wishCategoryFilter);
+      }
+    }
+    return list;
+  }, [wishSearch, wishCategoryFilter, categoryTree]);
+
+  const pendingWishItems = useMemo(
+    () => filterWishItems(wishItems.filter((w) => w.status === 'pending')),
+    [wishItems, filterWishItems],
+  );
+
+  const orderedWishItems = useMemo(
+    () => filterWishItems(wishItems.filter((w) => w.status === 'ordered')),
+    [wishItems, filterWishItems],
+  );
+
+  const nameSuggestions = useMemo(() => {
+    const q = normalizeSearch(wishForm.name);
+    if (q.length < 2) return [];
+    return products
+      .filter((p) => {
+        const hay = `${p.name || ''} ${p.brand || ''} ${p.sku || ''}`.toLowerCase();
+        return hay.includes(q);
+      })
+      .slice(0, 8);
+  }, [wishForm.name, products]);
+
+  const selectedWishSubcategory = useMemo(
+    () => findCategoryInTree(categoryTree, wishForm.category_id),
+    [categoryTree, wishForm.category_id],
+  );
+
+  const selectedWishSubcategorySchema = useMemo(
+    () => resolveCategorySchemaForProduct(selectedWishSubcategory),
+    [selectedWishSubcategory],
+  );
+
+  const selectedWishCategoryGroup = useMemo(() => {
+    if (wishForm.category_group_id) {
+      return categoryTree.find((g) => g.id === wishForm.category_group_id) || null;
+    }
+    if (wishForm.category_id) {
+      return categoryTree.find((g) => (g.children || []).some((c) => c.id === wishForm.category_id)) || null;
+    }
+    return null;
+  }, [categoryTree, wishForm.category_group_id, wishForm.category_id]);
+
+  const acceptSubcategory = useMemo(
+    () => (acceptPO ? findCategoryInTree(categoryTree, acceptPO.category_id) : null),
+    [acceptPO, categoryTree],
+  );
+
+  const acceptSubcategorySchema = useMemo(
+    () => resolveCategorySchemaForProduct(acceptSubcategory),
+    [acceptSubcategory],
+  );
+
+  const acceptCategoryGroup = useMemo(() => {
+    if (!acceptPO?.category_id) return null;
+    return categoryTree.find((g) => (g.children || []).some((c) => c.id === acceptPO.category_id)) || null;
+  }, [acceptPO, categoryTree]);
+
+  const acceptProductLayout = useMemo(
+    () => normalizeFormLayout(acceptSubcategorySchema?.form_layout, acceptSubcategorySchema),
+    [acceptSubcategorySchema],
+  );
+
+  const showAcceptCompat = acceptPO?.category_id && layoutHasCompatibility(acceptProductLayout);
+  const showAcceptEngine = acceptPO?.category_id && layoutHasEngineCode(acceptProductLayout)
+    && isEngineCodeRequired(acceptSubcategorySchema?.engine_code_mode);
+  const acceptEngineSingle = isEngineCodeSingle(acceptSubcategorySchema?.engine_code_mode);
 
   // ── Profit calc ──
   const acceptProfit = useMemo(() => {
@@ -309,7 +455,7 @@ const Reserve = () => {
 
   const updateWish = useMutation({
     mutationFn: ({ id, data }) => wishApi.update(id, data),
-    onSuccess: () => { queryClient.invalidateQueries(['wish-items']); toast.success('Сохранено'); setEditWish(null); setWishForm(emptyWish()); },
+    onSuccess: () => { queryClient.invalidateQueries(['wish-items']); toast.success('Сохранено'); setEditWish(null); setShowWishModal(false); setWishForm(emptyWish()); },
     onError: () => toast.error('Ошибка'),
   });
 
@@ -376,11 +522,14 @@ const Reserve = () => {
     if (typeof window !== 'undefined') sessionStorage.setItem(lockKey, 'pending');
 
     const category = searchParams.get('category') || null;
+    const categoryIdRaw = searchParams.get('category_id');
+    const category_id = categoryIdRaw ? Number(categoryIdRaw) : null;
     const brand = searchParams.get('brand') || null;
     const data = {
       name,
       brand: brand || null,
       category: category || null,
+      category_id: Number.isFinite(category_id) && category_id > 0 ? category_id : null,
       notes: null,
       photo_data: null,
     };
@@ -401,18 +550,72 @@ const Reserve = () => {
   }, [searchParams, navigate, queryClient]);
 
   // ── Handlers ──
-  const openAddWish = () => { setWishForm(emptyWish()); setEditWish(null); setShowWishModal(true); };
-  const openEditWish = (item) => { setEditWish(item); setWishForm({ name: item.name, brand: item.brand || '', category: item.category || '', notes: item.notes || '', photo_data: item.photo_data || '' }); setShowWishModal(true); };
+  const openAddWish = () => { setWishForm(emptyWish()); setEditWish(null); setShowWishModal(true); setShowNameSuggestions(false); };
+
+  const openEditWish = (item) => {
+    setEditWish(item);
+    setWishForm({
+      name: item.name,
+      brand: item.brand || '',
+      category: item.category || '',
+      category_group_id: findGroupIdForCategory(categoryTree, item.category_id),
+      category_id: item.category_id || null,
+      notes: item.notes || '',
+      photo_data: item.photo_data || '',
+    });
+    setShowWishModal(true);
+    setShowNameSuggestions(false);
+  };
+
+  const handleWishCategoryChange = ({ groupId, categoryId }) => {
+    const sub = findCategoryInTree(categoryTree, categoryId);
+    setWishForm((prev) => ({
+      ...prev,
+      category_group_id: groupId,
+      category_id: categoryId,
+      category: sub?.name || prev.category,
+    }));
+  };
+
+  const applyProductSuggestion = (product) => {
+    const gid = findGroupIdForCategory(categoryTree, product.category_id);
+    setWishForm((prev) => ({
+      ...prev,
+      name: product.name || prev.name,
+      brand: product.brand || prev.brand,
+      category_id: product.category_id || prev.category_id,
+      category_group_id: gid || prev.category_group_id,
+      category: product.category || prev.category,
+      photo_data: product.image_url || prev.photo_data,
+    }));
+    setShowNameSuggestions(false);
+  };
+
   const openOrderWish = (item) => { setOrderWish(item); setPoForm({ barcode: generateEAN13(), supplier: '', price_cny: '', quantity_ordered: 1, notes: item.notes || '' }); };
   const openAccept = (po) => {
     setAcceptPO(po);
     const remaining = po.quantity_ordered - po.quantity_received;
-    setAcceptForm({ ...emptyAccept(), quantity_received: remaining, purchase_price_kzt: po.price_kzt ? String(Math.round(Number(po.price_kzt))) : '', notes: po.notes || '' });
+    setAcceptForm({
+      ...emptyAccept(),
+      quantity_received: remaining,
+      purchase_price_kzt: po.price_kzt ? String(Math.round(Number(po.price_kzt))) : '',
+      notes: po.notes || '',
+      brand: po.brand || '',
+    });
+    setAcceptCompatKey((k) => k + 1);
+    setAcceptEngineKey((k) => k + 1);
   };
 
   const saveWish = () => {
     if (!wishForm.name.trim()) { toast.error('Введите название'); return; }
-    const data = { name: wishForm.name.trim(), brand: wishForm.brand || null, category: wishForm.category || null, notes: wishForm.notes || null, photo_data: wishForm.photo_data || null };
+    if (!wishForm.category_id) { toast.error('Выберите категорию'); return; }
+    const data = {
+      name: wishForm.name.trim(),
+      brand: wishForm.brand || null,
+      category_id: wishForm.category_id,
+      notes: wishForm.notes || null,
+      photo_data: wishForm.photo_data || null,
+    };
     if (editWish) updateWish.mutate({ id: editWish.id, data });
     else createWish.mutate(data);
   };
@@ -423,7 +626,7 @@ const Reserve = () => {
       wish_item_id: orderWish.id,
       name: orderWish.name,
       brand: orderWish.brand,
-      category: orderWish.category,
+      category_id: orderWish.category_id || null,
       photo_data: orderWish.photo_data,
       barcode: poForm.barcode || null,
       supplier: poForm.supplier || null,
@@ -439,6 +642,19 @@ const Reserve = () => {
   const saveAccept = () => {
     if (!acceptPO) return;
     if (!acceptForm.sale_price_kzt) { toast.error('Укажите продажную цену'); return; }
+    if (showAcceptEngine) {
+      const efs = normalizeCompatIds(acceptForm.compatibility_engine_family_ids);
+      if (acceptEngineSingle && efs.length !== 1) {
+        toast.error('Укажите ровно один код мотора');
+        return;
+      }
+      if (!acceptEngineSingle && !efs.length) {
+        toast.error('Выберите хотя бы один код мотора');
+        return;
+      }
+    }
+    const vIds = normalizeCompatIds(acceptForm.compatibility_vehicle_model_ids);
+    const eIds = normalizeCompatIds(acceptForm.compatibility_engine_family_ids);
     acceptMutation.mutate({
       id: acceptPO.id,
       data: {
@@ -449,9 +665,32 @@ const Reserve = () => {
         storage_location: acceptForm.storage_location || null,
         keep_remainder: acceptForm.keep_remainder,
         notes: acceptForm.notes || null,
+        brand: acceptForm.brand || null,
+        model: acceptForm.model || null,
+        attributes: acceptForm.attributes && Object.keys(acceptForm.attributes).length ? acceptForm.attributes : null,
+        compatibility_vehicle_model_ids: vIds.length ? vIds : null,
+        compatibility_engine_family_ids: eIds.length ? eIds : null,
       },
     });
   };
+
+  const acceptCompatSlot = showAcceptCompat ? (
+    <VehicleCompatibilityPicker
+      key={`accept-compat-${acceptCompatKey}`}
+      initialSelectedIds={acceptForm.compatibility_vehicle_model_ids}
+      onChange={(ids) => setAcceptForm((f) => ({ ...f, compatibility_vehicle_model_ids: normalizeCompatIds(ids) }))}
+    />
+  ) : null;
+
+  const acceptEngineSlot = showAcceptEngine ? (
+    <EngineFamilyPicker
+      key={`accept-engine-${acceptEngineKey}`}
+      initialSelectedIds={acceptForm.compatibility_engine_family_ids}
+      vehicleModelIds={acceptForm.compatibility_vehicle_model_ids}
+      singleSelect={acceptEngineSingle}
+      onChange={(ids) => setAcceptForm((f) => ({ ...f, compatibility_engine_family_ids: normalizeCompatIds(ids) }))}
+    />
+  ) : null;
 
   // ────────────────────────────────────────────────────────────────────────────
   return (
@@ -484,22 +723,59 @@ const Reserve = () => {
               <div>
                 <div style={{ fontSize: 22, fontWeight: 900, color: 'var(--text)' }}>Нужно заказать</div>
                 <div style={{ fontSize: 13, color: 'var(--text-muted)', fontWeight: 500, marginTop: 2 }}>
-                  {wishItems.filter((w) => w.status === 'pending').length} позиций ожидают заказа
+                  {pendingWishItems.length} позиций ожидают заказа
+                  {wishCategoryFilter != null || wishSearch ? ` · показано ${pendingWishItems.length}` : ''}
                 </div>
               </div>
               <div style={{ display: 'flex', gap: 8 }}>
-                <button type="button" className="reserve-ghost-btn" title="Экспорт"><FiDownload size={15} /></button>
-                <button type="button" className="reserve-ghost-btn" title="Импорт"><FiUpload size={15} /></button>
                 <button type="button" onClick={openAddWish} className="reserve-primary-btn">
                   <FiPlus size={16} /> Добавить
                 </button>
               </div>
             </div>
 
+            <div style={{ display: 'flex', gap: 10, marginBottom: 14, flexWrap: 'wrap', alignItems: 'center' }}>
+              <div style={{ position: 'relative', flex: '1 1 200px', minWidth: 180, maxWidth: 360 }}>
+                <FiSearch size={15} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
+                <input
+                  className="ios-input"
+                  placeholder="Поиск по названию или марке…"
+                  value={wishSearch}
+                  onChange={(e) => setWishSearch(e.target.value)}
+                  style={{ paddingLeft: 36 }}
+                />
+              </div>
+            </div>
+
+            {categoryFilterOptions.length > 1 && (
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 16 }}>
+                {categoryFilterOptions.map((opt) => (
+                  <button
+                    key={opt.id ?? 'all'}
+                    type="button"
+                    onClick={() => setWishCategoryFilter(opt.id)}
+                    className={`reserve-chip${wishCategoryFilter === opt.id ? ' reserve-chip--active' : ''}`}
+                    style={{
+                      padding: '6px 12px',
+                      borderRadius: 100,
+                      border: wishCategoryFilter === opt.id ? '1px solid var(--primary)' : '1px solid var(--border)',
+                      background: wishCategoryFilter === opt.id ? 'rgba(99,102,241,0.12)' : 'var(--surface)',
+                      fontSize: 12,
+                      fontWeight: 700,
+                      cursor: 'pointer',
+                      color: wishCategoryFilter === opt.id ? 'var(--primary)' : 'var(--text-secondary)',
+                    }}
+                  >
+                    {opt.label} · {opt.count}
+                  </button>
+                ))}
+              </div>
+            )}
+
             {/* Cards grid */}
             {wishLoading ? (
               <div style={{ textAlign: 'center', padding: 60, color: 'var(--text-muted)' }}>Загрузка…</div>
-            ) : wishItems.filter((w) => w.status === 'pending').length === 0 ? (
+            ) : pendingWishItems.length === 0 ? (
               <div className="reserve-empty">
                 <FiShoppingCart size={40} />
                 <div style={{ fontWeight: 700, fontSize: 17, marginTop: 12 }}>Список пуст</div>
@@ -507,21 +783,35 @@ const Reserve = () => {
               </div>
             ) : (
               <div className="wish-grid">
-                {wishItems.filter((w) => w.status === 'pending').map((item) => (
-                  <WishCard key={item.id} item={item} categories={categories} onOrder={openOrderWish} onEdit={openEditWish} onDelete={(it) => { if (window.confirm(`Удалить "${it.name}"?`)) deleteWish.mutate(it.id); }} />
+                {pendingWishItems.map((item) => (
+                  <WishCard
+                    key={item.id}
+                    item={item}
+                    categoryLabel={categoryLabelForItem(item, categoryTree)}
+                    onOrder={openOrderWish}
+                    onEdit={openEditWish}
+                    onDelete={(it) => { if (window.confirm(`Удалить "${it.name}"?`)) deleteWish.mutate(it.id); }}
+                  />
                 ))}
               </div>
             )}
 
             {/* Already ordered */}
-            {wishItems.filter((w) => w.status === 'ordered').length > 0 && (
+            {orderedWishItems.length > 0 && (
               <div style={{ marginTop: 20, opacity: 0.6 }}>
                 <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 10, paddingLeft: 2 }}>
-                  Уже заказаны · {wishItems.filter((w) => w.status === 'ordered').length}
+                  Уже заказаны · {orderedWishItems.length}
                 </div>
                 <div className="wish-grid">
-                  {wishItems.filter((w) => w.status === 'ordered').map((item) => (
-                    <WishCard key={item.id} item={item} categories={categories} onOrder={openOrderWish} onEdit={openEditWish} onDelete={(it) => { if (window.confirm(`Удалить "${it.name}"?`)) deleteWish.mutate(it.id); }} />
+                  {orderedWishItems.map((item) => (
+                    <WishCard
+                      key={item.id}
+                      item={item}
+                      categoryLabel={categoryLabelForItem(item, categoryTree)}
+                      onOrder={openOrderWish}
+                      onEdit={openEditWish}
+                      onDelete={(it) => { if (window.confirm(`Удалить "${it.name}"?`)) deleteWish.mutate(it.id); }}
+                    />
                   ))}
                 </div>
               </div>
@@ -539,10 +829,6 @@ const Reserve = () => {
                 <div style={{ fontSize: 13, color: 'var(--text-muted)', fontWeight: 500, marginTop: 2 }}>
                   Отслеживание заказов у поставщиков
                 </div>
-              </div>
-              <div style={{ display: 'flex', gap: 8 }}>
-                <button type="button" className="reserve-ghost-btn" title="Экспорт"><FiDownload size={15} /></button>
-                <button type="button" className="reserve-ghost-btn" title="Импорт"><FiUpload size={15} /></button>
               </div>
             </div>
 
@@ -608,9 +894,9 @@ const Reserve = () => {
                           </td>
                           <td>
                             <div style={{ fontWeight: 700, fontSize: 14, color: 'var(--text)' }}>{po.name}</div>
-                            {(po.brand || po.category) && (
+                            {(po.brand || po.category || po.category_id) && (
                               <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>
-                                {[po.brand, po.category].filter(Boolean).join(' · ')}
+                                {[po.brand, categoryLabelForItem(po, categoryTree) || po.category].filter(Boolean).join(' · ')}
                               </div>
                             )}
                           </td>
@@ -725,24 +1011,54 @@ const Reserve = () => {
       ══════════════════════════════════════════════════════════════════════ */}
 
       {/* ── Add / Edit Wish Item ── */}
-      <Modal isOpen={showWishModal || Boolean(editWish)} onClose={() => { setShowWishModal(false); setEditWish(null); }} title={editWish ? 'Редактировать товар' : 'Добавить в список'}>
+      <Modal isOpen={showWishModal || Boolean(editWish)} onClose={() => { setShowWishModal(false); setEditWish(null); setShowNameSuggestions(false); }} title={editWish ? 'Редактировать товар' : 'Добавить в список'} maxWidth={520}>
         <Field label="Фото товара">
           <PhotoZone photoData={wishForm.photo_data} onPhoto={(d) => setWishForm((f) => ({ ...f, photo_data: d }))} onRemove={() => setWishForm((f) => ({ ...f, photo_data: '' }))} />
         </Field>
         <Field label="Название" required>
-          <input className="ios-input" placeholder="Название товара" value={wishForm.name} onChange={(e) => setWishForm((f) => ({ ...f, name: e.target.value }))} />
+          <div style={{ position: 'relative' }}>
+            <input
+              className="ios-input"
+              placeholder="Название товара"
+              value={wishForm.name}
+              onChange={(e) => { setWishForm((f) => ({ ...f, name: e.target.value })); setShowNameSuggestions(true); }}
+              onFocus={() => setShowNameSuggestions(true)}
+              onBlur={() => setTimeout(() => setShowNameSuggestions(false), 150)}
+              autoComplete="off"
+            />
+            {showNameSuggestions && nameSuggestions.length > 0 && (
+              <div style={{ position: 'absolute', left: 0, right: 0, top: '100%', marginTop: 4, zIndex: 20, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12, boxShadow: '0 8px 24px rgba(0,0,0,0.12)', overflow: 'hidden' }}>
+                {nameSuggestions.map((p) => (
+                  <button
+                    key={p.id}
+                    type="button"
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => applyProductSuggestion(p)}
+                    style={{ display: 'block', width: '100%', textAlign: 'left', padding: '10px 12px', border: 'none', background: 'transparent', cursor: 'pointer', fontSize: 13 }}
+                  >
+                    <div style={{ fontWeight: 700, color: 'var(--text)' }}>{p.name}</div>
+                    <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
+                      {[p.brand, p.category].filter(Boolean).join(' · ') || 'Из каталога'}
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
         </Field>
-        <div className="reserve-form-row">
-          <Field label="Марка">
-            <input className="ios-input" placeholder="Бренд / марка" value={wishForm.brand} onChange={(e) => setWishForm((f) => ({ ...f, brand: e.target.value }))} />
-          </Field>
-          <Field label="Категория">
-            <input className="ios-input" list="wish-categories" placeholder="Выберите или введите" value={wishForm.category} onChange={(e) => setWishForm((f) => ({ ...f, category: e.target.value }))} />
-            <datalist id="wish-categories">
-              {categories.map((c) => <option key={c} value={c} />)}
-            </datalist>
-          </Field>
-        </div>
+        <Field label="Марка">
+          <input className="ios-input" placeholder="Бренд / марка" value={wishForm.brand} onChange={(e) => setWishForm((f) => ({ ...f, brand: e.target.value }))} />
+        </Field>
+        <Field label="Категория" required>
+          <CategoryPicker
+            tree={categoryTree}
+            groupId={wishForm.category_group_id}
+            categoryId={wishForm.category_id}
+            onChange={handleWishCategoryChange}
+            stepCaption="Нужно заказать"
+            legacyCategoryText={wishForm.category}
+          />
+        </Field>
         <Field label="Доп. информация">
           <textarea className="ios-input" rows={3} placeholder="Артикул, особые характеристики, примечания..." value={wishForm.notes} onChange={(e) => setWishForm((f) => ({ ...f, notes: e.target.value }))} style={{ resize: 'vertical', minHeight: 70 }} />
         </Field>
@@ -813,7 +1129,7 @@ const Reserve = () => {
       </Modal>
 
       {/* ── Accept to Stock modal ── */}
-      <Modal isOpen={Boolean(acceptPO)} onClose={() => { setAcceptPO(null); setAcceptForm(emptyAccept()); }} title="Приёмка товара" maxWidth={500}>
+      <Modal isOpen={Boolean(acceptPO)} onClose={() => { setAcceptPO(null); setAcceptForm(emptyAccept()); }} title="Приёмка товара" maxWidth={560}>
         {acceptPO && (
           <>
             {/* Product preview */}
@@ -825,6 +1141,7 @@ const Reserve = () => {
               <div>
                 <div style={{ fontWeight: 800, fontSize: 15, color: 'var(--text)' }}>{acceptPO.name}</div>
                 <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>
+                  {categoryLabelForItem(acceptPO, categoryTree) && <>{categoryLabelForItem(acceptPO, categoryTree)} · </>}
                   Заказано: <b>{acceptPO.quantity_ordered} шт.</b>
                   {acceptPO.quantity_received > 0 && <> · Принято: <b style={{ color: 'var(--success)' }}>{acceptPO.quantity_received} шт.</b></>}
                 </div>
@@ -882,6 +1199,33 @@ const Reserve = () => {
                 </div>
               )}
             </Field>
+
+            {acceptPO.category_id && acceptSubcategorySchema && (
+              <div style={{ marginBottom: 16, padding: '12px 0', borderTop: '1px solid var(--border)' }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 12 }}>
+                  Характеристики категории
+                </div>
+                <ProductFormByLayout
+                  schema={acceptSubcategorySchema}
+                  formData={acceptForm}
+                  onFormDataChange={setAcceptForm}
+                  layoutSection="main"
+                  categoryGroupName={acceptCategoryGroup?.name || ''}
+                  categoryName={acceptSubcategory?.name || acceptPO.category || ''}
+                  compatibilitySlot={acceptCompatSlot}
+                  engineCompatibilitySlot={acceptEngineSlot}
+                  showEngineFamilies={showAcceptEngine}
+                />
+                <ProductFormByLayout
+                  schema={acceptSubcategorySchema}
+                  formData={acceptForm}
+                  onFormDataChange={setAcceptForm}
+                  layoutSection="attributes"
+                  categoryGroupName={acceptCategoryGroup?.name || ''}
+                  categoryName={acceptSubcategory?.name || acceptPO.category || ''}
+                />
+              </div>
+            )}
 
             {/* Extra fields toggle */}
             <button type="button" onClick={() => setAcceptForm((f) => ({ ...f, showExtra: !f.showExtra }))} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 600, color: 'var(--primary)', padding: '4px 0 12px', display: 'flex', alignItems: 'center', gap: 6 }}>

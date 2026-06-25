@@ -1,5 +1,24 @@
 import { generateProductName } from './productNameUtils';
 
+function engineCodesFromRow(row, engineFamilies = []) {
+  const fromCompat = (row?.compatibility?.engine_families || [])
+    .map((ef) => String(ef?.code || '').trim())
+    .filter(Boolean);
+  if (fromCompat.length) return fromCompat;
+
+  const ids = row?.compatibility_engine_family_ids || [];
+  if (ids.length && engineFamilies.length) {
+    const codes = [];
+    ids.forEach((id) => {
+      const ef = engineFamilies.find((x) => Number(x.id) === Number(id));
+      const code = String(ef?.code || '').trim();
+      if (code && !codes.includes(code)) codes.push(code);
+    });
+    if (codes.length) return codes;
+  }
+  return [];
+}
+
 /**
  * Превью карточки CHPARTS из черновика формы склада.
  */
@@ -9,6 +28,8 @@ export function buildStorefrontPreview({
   categoryName = '',
   vehicleModels = [],
   compatibilityIds = [],
+  engineFamilyIds = [],
+  engineFamilies = [],
 }) {
   const name = String(formData?.name || '').trim()
     || generateProductName(
@@ -41,8 +62,19 @@ export function buildStorefrontPreview({
     }
   });
 
-  const compatPrimary = labels[0] || null;
-  const compatMore = Math.max(0, labels.length - 1);
+  let compatPrimary = labels[0] || null;
+  let compatMore = Math.max(0, labels.length - 1);
+
+  if (!compatPrimary && (engineFamilyIds || []).length) {
+    const engineLabels = [];
+    (engineFamilyIds || []).forEach((id) => {
+      const ef = (engineFamilies || []).find((x) => Number(x.id) === Number(id));
+      const code = String(ef?.code || '').trim();
+      if (code && !engineLabels.includes(code)) engineLabels.push(code);
+    });
+    compatPrimary = engineLabels[0] || null;
+    compatMore = Math.max(0, engineLabels.length - 1);
+  }
 
   const purpose = highlights.slice(0, 2).join(' · ') || categoryName || null;
 
@@ -58,13 +90,37 @@ export function buildStorefrontPreview({
   };
 }
 
-export function formatCompatibilityTableCell(row) {
+/**
+ * Подпись совместимости для сетки/таблицы: марка+модель авто или код мотора.
+ * @returns {{ primary: string, extra: number, kind: 'vehicle'|'engine' } | null}
+ */
+export function formatCompatibilityTableCell(row, engineFamilies = []) {
   const brand = String(row?.brand || '').trim();
   const model = String(row?.model || '').trim();
   const extra = Number(row?.compatibility_extra_count) || 0;
-  if (!brand && !model && extra <= 0) return null;
-  const primary = [brand, model].filter(Boolean).join(' ');
-  if (!primary && extra > 0) return `+${extra} авто`;
-  if (extra > 0) return { primary, extra };
-  return { primary: primary || '—', extra: 0 };
+
+  const vehiclePrimary = [brand, model].filter(Boolean).join(' ');
+  if (vehiclePrimary) {
+    const hasVehicle = Boolean(brand) || (row?.compatibility?.vehicle_models || []).length > 0;
+    const kind = hasVehicle ? 'vehicle' : 'engine';
+    if (extra > 0) return { primary: vehiclePrimary, extra, kind };
+    return { primary: vehiclePrimary, extra: 0, kind };
+  }
+
+  const engineCodes = engineCodesFromRow(row, engineFamilies);
+  if (engineCodes.length) {
+    return {
+      primary: engineCodes[0],
+      extra: Math.max(0, engineCodes.length - 1, extra),
+      kind: 'engine',
+    };
+  }
+
+  if (model) {
+    if (extra > 0) return { primary: model, extra, kind: 'engine' };
+    return { primary: model, extra: 0, kind: 'engine' };
+  }
+
+  if (extra > 0) return { primary: `+${extra} авто`, extra, kind: 'vehicle' };
+  return null;
 }

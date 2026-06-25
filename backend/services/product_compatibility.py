@@ -152,13 +152,15 @@ def apply_product_compatibility(
 
 
 def refresh_product_model_field_cache(db: Session, product: models.Product) -> None:
-    """Кэширует краткое описание в product.model и product.brand (первая марка/модель)."""
+    """Кэширует краткое описание в product.model и product.brand (марка/модель авто или код мотора)."""
     p = (
         db.query(models.Product)
         .options(
             joinedload(models.Product.compatibility_vehicle_models)
             .joinedload(models.ProductVehicleModelLink.vehicle_model)
             .joinedload(models.VehicleModel.vehicle_brand),
+            joinedload(models.Product.compatibility_engine_families)
+            .joinedload(models.ProductEngineFamilyLink.engine_family),
         )
         .filter(models.Product.id == product.id)
         .first()
@@ -193,6 +195,21 @@ def refresh_product_model_field_cache(db: Session, product: models.Product) -> N
                 product.brand = primary_brand
         return
 
+    ef_codes: List[str] = []
+    for link in p.compatibility_engine_families or []:
+        ef = link.engine_family
+        if not ef:
+            continue
+        code = str(ef.code or "").strip()
+        if code and code not in ef_codes:
+            ef_codes.append(code)
+
+    if ef_codes:
+        p.model = ef_codes[0][:120]
+        if product is not p:
+            product.model = p.model
+        return
+
     if product is not p:
         product.model = p.model
 
@@ -210,6 +227,10 @@ def compatibility_extra_model_count(comp: schemas.ProductCompatibilityOut) -> in
         s = f"{(ec.brand or '').strip()} {(ec.model or '').strip()}".strip()
         if s and s not in labels:
             labels.append(s)
+    for ef in comp.engine_families or []:
+        code = (ef.code or "").strip()
+        if code and code not in labels:
+            labels.append(code)
     return max(0, len(labels) - 1)
 
 
@@ -227,6 +248,25 @@ def refresh_legacy_model_cache_summaries(db: Session) -> int:
         db.query(models.Product)
         .filter(models.Product.model.isnot(None))
         .filter(models.Product.model.contains(","))
+        .all()
+    )
+    n = 0
+    for p in rows:
+        refresh_product_model_field_cache(db, p)
+        n += 1
+    if n:
+        db.commit()
+    return n
+
+
+def refresh_engine_family_model_cache_summaries(db: Session) -> int:
+    """Пересчитать кэш model для товаров только с кодами мотора (без привязки к авто)."""
+    ef_pids = db.query(models.ProductEngineFamilyLink.product_id).distinct()
+    vm_pids = db.query(models.ProductVehicleModelLink.product_id).distinct()
+    rows = (
+        db.query(models.Product)
+        .filter(models.Product.id.in_(ef_pids))
+        .filter(~models.Product.id.in_(vm_pids))
         .all()
     )
     n = 0

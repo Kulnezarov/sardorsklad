@@ -77,13 +77,19 @@ async def lifespan(app: FastAPI):
             logger.warning("Catalog profiles migration skipped: %s", _me)
 
         try:
-            from services.product_compatibility import refresh_legacy_model_cache_summaries
+            from services.product_compatibility import (
+                refresh_engine_family_model_cache_summaries,
+                refresh_legacy_model_cache_summaries,
+            )
 
             _db = next(database.get_db())
             fixed = refresh_legacy_model_cache_summaries(_db)
+            ef_fixed = refresh_engine_family_model_cache_summaries(_db)
             _db.close()
             if fixed:
                 logger.info("✓ Product model cache refresh: %d rows", fixed)
+            if ef_fixed:
+                logger.info("✓ Engine family model cache refresh: %d rows", ef_fixed)
         except Exception as _me:
             logger.warning("Product model cache refresh skipped: %s", _me)
 

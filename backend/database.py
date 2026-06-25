@@ -476,6 +476,86 @@ def ensure_schema_updates():
         "settings.mobile_app",
     )
 
+    # Резерв: category_id на wish_items и purchase_orders
+    _exec_schema_sql(
+        "ALTER TABLE wish_items ADD COLUMN IF NOT EXISTS category_id INTEGER",
+        "wish_items.category_id",
+    )
+    _exec_schema_sql(
+        "ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS category_id INTEGER",
+        "purchase_orders.category_id",
+    )
+    _exec_schema_sql(
+        "CREATE INDEX IF NOT EXISTS idx_wish_items_category_id ON wish_items(category_id)",
+        "wish_items.idx_category_id",
+    )
+    _exec_schema_sql(
+        "CREATE INDEX IF NOT EXISTS idx_purchase_orders_category_id ON purchase_orders(category_id)",
+        "purchase_orders.idx_category_id",
+    )
+    _exec_schema_sql(
+        """
+        DO $$
+        BEGIN
+          IF NOT EXISTS (
+            SELECT 1 FROM pg_constraint WHERE conname = 'fk_wish_items_category_id'
+          ) THEN
+            ALTER TABLE wish_items
+            ADD CONSTRAINT fk_wish_items_category_id
+            FOREIGN KEY (category_id) REFERENCES categories(id) ON DELETE SET NULL;
+          END IF;
+        EXCEPTION WHEN undefined_table THEN
+          NULL;
+        END $$;
+        """,
+        "wish_items.fk_category_id",
+    )
+    _exec_schema_sql(
+        """
+        DO $$
+        BEGIN
+          IF NOT EXISTS (
+            SELECT 1 FROM pg_constraint WHERE conname = 'fk_purchase_orders_category_id'
+          ) THEN
+            ALTER TABLE purchase_orders
+            ADD CONSTRAINT fk_purchase_orders_category_id
+            FOREIGN KEY (category_id) REFERENCES categories(id) ON DELETE SET NULL;
+          END IF;
+        EXCEPTION WHEN undefined_table THEN
+          NULL;
+        END $$;
+        """,
+        "purchase_orders.fk_category_id",
+    )
+    _exec_schema_sql(
+        """
+        UPDATE wish_items w
+        SET category_id = c.id
+        FROM categories c
+        WHERE w.category_id IS NULL
+          AND w.category IS NOT NULL
+          AND TRIM(w.category) <> ''
+          AND c.name = TRIM(w.category)
+          AND c.parent_id IS NOT NULL
+          AND c.is_active = TRUE;
+        """,
+        "wish_items.backfill_category_id",
+    )
+    _exec_schema_sql(
+        """
+        UPDATE purchase_orders p
+        SET category_id = c.id
+        FROM categories c
+        WHERE p.category_id IS NULL
+          AND p.category IS NOT NULL
+          AND TRIM(p.category) <> ''
+          AND c.name = TRIM(p.category)
+          AND c.parent_id IS NOT NULL
+          AND c.is_active = TRUE;
+        """,
+        "purchase_orders.backfill_category_id",
+    )
+
     ensure_compatibility_tables()
     ensure_compatibility_table_columns()
 

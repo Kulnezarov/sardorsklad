@@ -198,7 +198,8 @@ const Dashboard = () => {
     const q = new URLSearchParams();
     q.set('autoWish', '1');
     q.set('name', a.name || '');
-    if (a.category) q.set('category', a.category);
+    if (a.category_id) q.set('category_id', String(a.category_id));
+    else if (a.category) q.set('category', a.category);
     if (a.brand) q.set('brand', a.brand);
     navigate(`/reserve?${q.toString()}`);
   };

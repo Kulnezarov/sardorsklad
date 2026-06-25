@@ -605,6 +605,7 @@ class WishItemCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
     brand: Optional[str] = Field(None, max_length=100)
     category: Optional[str] = Field(None, max_length=100)
+    category_id: Optional[int] = Field(None, ge=1)
     notes: Optional[str] = None
     photo_data: Optional[str] = None   # base64
 
@@ -613,6 +614,7 @@ class WishItemUpdate(BaseModel):
     name: Optional[str] = Field(None, min_length=1, max_length=255)
     brand: Optional[str] = None
     category: Optional[str] = None
+    category_id: Optional[int] = Field(None, ge=1)
     notes: Optional[str] = None
     photo_data: Optional[str] = None
 
@@ -622,6 +624,7 @@ class WishItemResponse(BaseModel):
     name: str
     brand: Optional[str]
     category: Optional[str]
+    category_id: Optional[int]
     notes: Optional[str]
     photo_data: Optional[str]
     status: str
@@ -636,6 +639,7 @@ class PurchaseOrderCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
     brand: Optional[str] = None
     category: Optional[str] = None
+    category_id: Optional[int] = Field(None, ge=1)
     photo_data: Optional[str] = None
     barcode: Optional[str] = None
     supplier: Optional[str] = None
@@ -675,6 +679,7 @@ class PurchaseOrderResponse(BaseModel):
     name: str
     brand: Optional[str]
     category: Optional[str]
+    category_id: Optional[int]
     photo_data: Optional[str]
     barcode: Optional[str]
     supplier: Optional[str]
@@ -699,6 +704,11 @@ class AcceptToStockPayload(BaseModel):
     storage_location: Optional[str] = None
     keep_remainder: bool = True
     notes: Optional[str] = None
+    brand: Optional[str] = None
+    model: Optional[str] = None
+    attributes: Optional[dict[str, Any]] = None
+    compatibility_vehicle_model_ids: Optional[List[int]] = None
+    compatibility_engine_family_ids: Optional[List[int]] = None
 
     @field_validator('purchase_price_kzt', 'delivery_cost_kzt', 'sale_price_kzt', mode='before')
     @classmethod

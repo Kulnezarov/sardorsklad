@@ -607,6 +607,7 @@ class WishItem(Base):
     name = Column(String(255), nullable=False)
     brand = Column(String(100), nullable=True)
     category = Column(String(100), nullable=True)
+    category_id = Column(Integer, ForeignKey("categories.id", ondelete="SET NULL"), nullable=True, index=True)
     notes = Column(Text, nullable=True)
     photo_data = Column(Text, nullable=True)   # base64 compressed image
     status = Column(String(20), default='pending', nullable=False, index=True)
@@ -617,9 +618,12 @@ class WishItem(Base):
     # Relationships
     purchase_orders = relationship("PurchaseOrder", back_populates="wish_item")
 
+    category_rel = relationship("Category", foreign_keys=[category_id])
+
     __table_args__ = (
         Index('idx_wish_items_status', 'status'),
         Index('idx_wish_items_created_at', 'created_at'),
+        Index('idx_wish_items_category_id', 'category_id'),
     )
 
 
@@ -635,6 +639,7 @@ class PurchaseOrder(Base):
     name = Column(String(255), nullable=False)
     brand = Column(String(100), nullable=True)
     category = Column(String(100), nullable=True)
+    category_id = Column(Integer, ForeignKey("categories.id", ondelete="SET NULL"), nullable=True, index=True)
     photo_data = Column(Text, nullable=True)     # inherited from WishItem
     barcode = Column(String(50), nullable=True)  # auto-generated unique code
     supplier = Column(String(255), nullable=True)
@@ -656,11 +661,13 @@ class PurchaseOrder(Base):
 
     # Relationships
     wish_item = relationship("WishItem", back_populates="purchase_orders")
+    category_rel = relationship("Category", foreign_keys=[category_id])
 
     __table_args__ = (
         Index('idx_purchase_orders_status', 'status'),
         Index('idx_purchase_orders_ordered_at', 'ordered_at'),
         Index('idx_purchase_orders_wish_item', 'wish_item_id'),
+        Index('idx_purchase_orders_category_id', 'category_id'),
     )
 
 
