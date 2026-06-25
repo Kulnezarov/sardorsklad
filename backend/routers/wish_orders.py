@@ -23,8 +23,8 @@ from services.form_layout import (
     display_layout_from_form_layout,
     normalize_form_layout,
     resolve_category_profile,
-    sync_custom_fields_to_attributes,
 )
+from services.product_display import sync_custom_fields_to_attributes
 from services.product_compatibility import apply_product_compatibility
 
 router = APIRouter(
