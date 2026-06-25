@@ -13,6 +13,7 @@ import DebtReceiptModal from '../components/DebtReceiptModal';
 import SaleDiscountBar from '../components/SaleDiscountBar';
 import HiddenDiscountReveal from '../components/HiddenDiscountReveal';
 import SmartSearchField from '../components/SmartSearchField';
+import { useMediaQuery, MOBILE_MAX_WIDTH_QUERY } from '../utils/useMediaQuery';
 
 /* ── helpers ── */
 const num = (v) => { const n = parseFloat(String(v || 0).replace(',', '.')); return Number.isFinite(n) ? n : 0; };
@@ -26,6 +27,7 @@ const normalizeScanCode = (s) => String(s ?? '').replaceAll('\u0000', '').replac
 const Sales = ({ mode = 'cash', onOpenClients, onSwitchToDebtTab }) => {
   const isDebt = mode === 'debt';
   const navigate = useNavigate();
+  const isMobile = useMediaQuery(MOBILE_MAX_WIDTH_QUERY);
   const queryClient = useQueryClient();
 
   // Products data
@@ -708,6 +710,7 @@ const Sales = ({ mode = 'cash', onOpenClients, onSwitchToDebtTab }) => {
       </div>
 
       {/* Bottom dock */}
+      {!isMobile && (
       <nav className="catalog-dock" aria-label="Навигация">
         <div style={{ fontSize: 12, color: 'var(--text-muted)', fontWeight: 600 }}>
           {cart.length > 0 ? <><div>В чеке: {cartCount} шт</div><div style={{ color: 'var(--primary)', marginTop: 3, fontWeight: 700 }}>{formatMoney(total)} ₸</div></> : <div>Чек пуст</div>}
@@ -718,6 +721,7 @@ const Sales = ({ mode = 'cash', onOpenClients, onSwitchToDebtTab }) => {
         </div>
         <div style={{ width: 100 }} />
       </nav>
+      )}
       <CameraBarcodeScanner
         isOpen={showCameraScanner}
         onClose={() => setShowCameraScanner(false)}

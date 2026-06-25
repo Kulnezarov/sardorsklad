@@ -17,6 +17,7 @@ import Orders from './pages/Orders';
 import Intake from './pages/Intake';
 import NotFoundPage from './pages/NotFoundPage';
 import OnlineOverlay from './components/OnlineOverlay';
+import MobileAppDock from './components/MobileAppDock';
 
 class ErrorBoundary extends Component {
   constructor(props) { super(props); this.state = { hasError: false, error: null }; }
@@ -47,12 +48,12 @@ function AppShell() {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
 
   return (
-    <div className="app">
+    <div className="app app--mobile-dock">
       <CnyRateSync />
       <Sidebar isOpen={isMenuOpen} onClose={() => setIsMenuOpen(false)} />
       <div className="main-content">
         <TopBar onMenuClick={() => setIsMenuOpen((prev) => !prev)} />
-        <div className="content-area" onClick={() => isMenuOpen && setIsMenuOpen(false)}>
+        <div className="content-area content-area--mobile-dock" onClick={() => isMenuOpen && setIsMenuOpen(false)}>
           <ErrorBoundary>
             <Routes>
               <Route path="/" element={<Navigate to="/dashboard" replace />} />
@@ -73,6 +74,7 @@ function AppShell() {
           </ErrorBoundary>
         </div>
       </div>
+      <MobileAppDock />
     </div>
   );
 }

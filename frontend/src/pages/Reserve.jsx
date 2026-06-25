@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams, useLocation } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 import {
@@ -189,7 +189,7 @@ function WishCard({ item, categoryLabel, onOrder, onEdit, onDelete }) {
 }
 
 /* ── Modal wrapper ── */
-function Modal({ isOpen, onClose, title, children, maxWidth = 480 }) {
+function Modal({ isOpen, onClose, title, children, maxWidth = 480, tall = false }) {
   if (!isOpen) return null;
   return createPortal(
     <div
@@ -197,7 +197,7 @@ function Modal({ isOpen, onClose, title, children, maxWidth = 480 }) {
       onClick={onClose}
     >
       <div
-        className="reserve-modal-box"
+        className={`reserve-modal-box${tall ? ' reserve-modal-box--tall' : ''}`}
         onClick={(e) => e.stopPropagation()}
         style={{ maxWidth }}
       >
@@ -234,7 +234,9 @@ function Field({ label, children, required }) {
 const Reserve = () => {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
+  const location = useLocation();
   const [searchParams] = useSearchParams();
+  const prefillApplied = useRef(false);
 
   // ── Tabs ──
   const [mainTab, setMainTab] = useState('wish');      // 'wish' | 'orders'
@@ -505,49 +507,61 @@ const Reserve = () => {
     onSuccess: () => { queryClient.invalidateQueries(['purchase-orders']); toast.success('Удалено'); },
   });
 
-  /** Дашборд → «Заказать»: один раз создать позицию в «Нужно заказать» и убрать query (Strict Mode — sessionStorage lock). */
+  /** Дашборд / ссылка → открыть форму «Нужно заказать» с автозаполнением */
+  useEffect(() => {
+    const prefill = location.state?.prefillWish;
+    if (!prefill || prefillApplied.current) return;
+    prefillApplied.current = true;
+    navigate('/reserve', { replace: true, state: {} });
+    const categoryId = prefill.category_id ? Number(prefill.category_id) : null;
+    setWishForm({
+      name: prefill.name || '',
+      brand: prefill.brand || '',
+      category: prefill.category || '',
+      category_group_id: findGroupIdForCategory(categoryTree, categoryId),
+      category_id: Number.isFinite(categoryId) && categoryId > 0 ? categoryId : null,
+      notes: prefill.notes || '',
+      photo_data: prefill.photo_data || '',
+    });
+    setEditWish(null);
+    setShowWishModal(true);
+    setMainTab('wish');
+    setShowNameSuggestions(false);
+  }, [location.state, navigate, categoryTree]);
+
+  /** Legacy URL ?autoWish=1 → форма, не автосохранение */
   useEffect(() => {
     if (searchParams.get('autoWish') !== '1') return;
     const name = (searchParams.get('name') || '').trim();
-    const lockKey = `reserve-autowish:${typeof window !== 'undefined' ? `${window.location.pathname}${window.location.search}` : ''}`;
     if (!name) {
       navigate('/reserve', { replace: true });
       return;
     }
-    if (typeof window !== 'undefined' && sessionStorage.getItem(lockKey) === 'done') {
-      navigate('/reserve', { replace: true });
-      return;
-    }
-    if (typeof window !== 'undefined' && sessionStorage.getItem(lockKey) === 'pending') return;
-    if (typeof window !== 'undefined') sessionStorage.setItem(lockKey, 'pending');
-
-    const category = searchParams.get('category') || null;
+    const category = searchParams.get('category') || '';
     const categoryIdRaw = searchParams.get('category_id');
     const category_id = categoryIdRaw ? Number(categoryIdRaw) : null;
     const brand = searchParams.get('brand') || null;
-    const data = {
+    setWishForm({
       name,
-      brand: brand || null,
-      category: category || null,
+      brand: brand || '',
+      category,
+      category_group_id: findGroupIdForCategory(categoryTree, category_id),
       category_id: Number.isFinite(category_id) && category_id > 0 ? category_id : null,
-      notes: null,
-      photo_data: null,
-    };
+      notes: '',
+      photo_data: '',
+    });
+    setEditWish(null);
+    setShowWishModal(true);
+    setMainTab('wish');
+    setShowNameSuggestions(false);
+    navigate('/reserve', { replace: true });
+  }, [searchParams, navigate, categoryTree]);
 
-    wishApi
-      .create(data)
-      .then(() => {
-        queryClient.invalidateQueries(['wish-items']);
-        toast.success('Добавлено в «Нужно заказать»');
-        setMainTab('wish');
-        if (typeof window !== 'undefined') sessionStorage.setItem(lockKey, 'done');
-        navigate('/reserve', { replace: true });
-      })
-      .catch(() => {
-        if (typeof window !== 'undefined') sessionStorage.removeItem(lockKey);
-        toast.error('Не удалось добавить в список');
-      });
-  }, [searchParams, navigate, queryClient]);
+  useEffect(() => {
+    if (!showWishModal || !wishForm.category_id || wishForm.category_group_id) return;
+    const gid = findGroupIdForCategory(categoryTree, wishForm.category_id);
+    if (gid) setWishForm((f) => ({ ...f, category_group_id: gid }));
+  }, [showWishModal, wishForm.category_id, wishForm.category_group_id, categoryTree]);
 
   // ── Handlers ──
   const openAddWish = () => { setWishForm(emptyWish()); setEditWish(null); setShowWishModal(true); setShowNameSuggestions(false); };
@@ -696,8 +710,8 @@ const Reserve = () => {
   return (
     <div className="reserve-shell">
 
-      {/* ══ BOTTOM TAB BAR ══ */}
-      <nav className="reserve-dock">
+      {/* ══ BOTTOM TAB BAR (desktop) ══ */}
+      <nav className="reserve-dock" aria-label="Разделы резерва">
         <button type="button" className={`reserve-dock-tab ${mainTab === 'wish' ? 'active' : ''}`} onClick={() => setMainTab('wish')}>
           <FiShoppingCart size={20} />
           <span>Нужно заказать</span>
@@ -714,6 +728,33 @@ const Reserve = () => {
 
       {/* ══ MAIN CONTENT ══ */}
       <div className="reserve-content">
+
+        <div className="reserve-top-tabs" role="tablist" aria-label="Разделы резерва">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={mainTab === 'wish'}
+            className={`reserve-top-tab${mainTab === 'wish' ? ' reserve-top-tab--active' : ''}`}
+            onClick={() => setMainTab('wish')}
+          >
+            <FiShoppingCart size={16} />
+            <span>Нужно заказать</span>
+            {wishItems.filter((w) => w.status === 'pending').length > 0 && (
+              <span className="dock-badge">{wishItems.filter((w) => w.status === 'pending').length}</span>
+            )}
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={mainTab === 'orders'}
+            className={`reserve-top-tab${mainTab === 'orders' ? ' reserve-top-tab--active' : ''}`}
+            onClick={() => setMainTab('orders')}
+          >
+            <FiTruck size={16} />
+            <span>Заказано</span>
+            {activeOrders.length > 0 && <span className="dock-badge">{activeOrders.length}</span>}
+          </button>
+        </div>
 
         {/* ── TAB 1: Нужно заказать ── */}
         {mainTab === 'wish' && (
@@ -748,7 +789,7 @@ const Reserve = () => {
             </div>
 
             {categoryFilterOptions.length > 1 && (
-              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 16 }}>
+              <div className="reserve-category-chips">
                 {categoryFilterOptions.map((opt) => (
                   <button
                     key={opt.id ?? 'all'}
@@ -1129,7 +1170,7 @@ const Reserve = () => {
       </Modal>
 
       {/* ── Accept to Stock modal ── */}
-      <Modal isOpen={Boolean(acceptPO)} onClose={() => { setAcceptPO(null); setAcceptForm(emptyAccept()); }} title="Приёмка товара" maxWidth={560}>
+      <Modal isOpen={Boolean(acceptPO)} onClose={() => { setAcceptPO(null); setAcceptForm(emptyAccept()); }} title="Приёмка товара" maxWidth={560} tall>
         {acceptPO && (
           <>
             {/* Product preview */}
@@ -1253,7 +1294,15 @@ const Reserve = () => {
         )}
       </Modal>
 
-    </div>/* /reserve-shell */
+      {mainTab === 'wish' && (
+        <div className="reserve-add-fab-root">
+          <button type="button" className="reserve-add-fab-btn" aria-label="Добавить в список" onClick={openAddWish}>
+            <FiPlus size={26} />
+          </button>
+        </div>
+      )}
+
+    </div>
   );
 };
 

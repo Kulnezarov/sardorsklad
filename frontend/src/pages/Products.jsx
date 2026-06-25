@@ -28,6 +28,7 @@ import { importExcelStream } from '../api/importExcelStream';
 import { settingsApi } from '../api/settings';
 import { generateEAN13 } from '../utils/barcodeGen';
 import { productMatchesSearch } from '../utils/smartSearch';
+import { useMediaQuery, MOBILE_MAX_WIDTH_QUERY } from '../utils/useMediaQuery';
 import LabelPrint from '../components/LabelPrint';
 import SkuConflictModal from '../components/SkuConflictModal';
 import SkuMatchBanner from '../components/SkuMatchBanner';
@@ -503,6 +504,8 @@ const Products = () => {
   /** '' = все, 'on' = на витрине, 'off' = скрыто с сайта */
   const [storefrontFilter, setStorefrontFilter] = useState('');
   const [viewMode, setViewMode] = useState(readProductsViewMode);
+  const isMobile = useMediaQuery(MOBILE_MAX_WIDTH_QUERY);
+  const effectiveViewMode = isMobile ? 'grid' : viewMode;
 
   const [showForm, setShowForm] = useState(false);
   const [forceCreateMode, setForceCreateMode] = useState(false);
@@ -1220,10 +1223,10 @@ const Products = () => {
   }, []);
 
   const handleCatalogScroll = useCallback((e) => {
-    if (viewMode === 'table') {
+    if (effectiveViewMode === 'table') {
       setTableScrollTop(e.currentTarget.scrollTop);
     }
-  }, [viewMode]);
+  }, [effectiveViewMode]);
 
   useEffect(() => {
     resetCatalogScroll();
@@ -1235,12 +1238,12 @@ const Products = () => {
     needsRefreshFilter,
     search,
     storefrontFilter,
-    viewMode,
+    effectiveViewMode,
     resetCatalogScroll,
   ]);
 
   useEffect(() => {
-    if (viewMode !== 'grid' || !hasNextPage) return undefined;
+    if (effectiveViewMode !== 'grid' || !hasNextPage) return undefined;
     const root = tableScrollRef.current;
     const sentinel = gridLoadSentinelRef.current;
     if (!root || !sentinel) return undefined;
@@ -1256,7 +1259,7 @@ const Products = () => {
     );
     obs.observe(sentinel);
     return () => obs.disconnect();
-  }, [viewMode, hasNextPage, isFetchingNextPage, fetchNextPage, displayProducts.length]);
+  }, [effectiveViewMode, hasNextPage, isFetchingNextPage, fetchNextPage, displayProducts.length]);
 
   /* mutations */
   const saveMutation = useMutation({
@@ -2533,7 +2536,7 @@ const Products = () => {
           </button>
         </div>
         <div className="products-catalog-toolbar-row">
-          <ProductsViewToggle viewMode={viewMode} onChange={setViewMode} />
+          {!isMobile && <ProductsViewToggle viewMode={viewMode} onChange={setViewMode} />}
         </div>
         {(legacyOnlyFilter || needsRefreshFilter) && legacyGroups.length > 0 && (
           <div style={{ marginTop: 10, display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
@@ -2558,7 +2561,7 @@ const Products = () => {
       {/* ── Table / Grid ── */}
       <div
         ref={tableScrollRef}
-        className={`products-table-scroll${viewMode === 'grid' ? ' products-table-scroll--grid' : ''}`}
+        className={`products-table-scroll${effectiveViewMode === 'grid' ? ' products-table-scroll--grid' : ''}`}
         style={{ marginBottom: 0 }}
         onScroll={handleCatalogScroll}
       >
@@ -2577,7 +2580,7 @@ const Products = () => {
               </button>
             )}
           </div>
-        ) : viewMode === 'grid' ? (
+        ) : effectiveViewMode === 'grid' ? (
           <>
             <div className="products-catalog-grid">
               {displayProducts.map((row) => (
@@ -2746,7 +2749,7 @@ const Products = () => {
           </table>
         )}
       </div>
-      {hasNextPage && viewMode === 'table' && (
+      {hasNextPage && effectiveViewMode === 'table' && (
         <div className="products-load-more-bar">
           <button
             type="button"
@@ -2771,6 +2774,7 @@ const Products = () => {
         <span>{catalogChromeVisible ? 'Скрыть' : 'Фильтры'}</span>
       </button>
 
+      {!isMobile && (
       <nav className="catalog-dock" aria-label="Навигация">
         <div style={{ fontSize: 12, color: 'var(--text-muted)', fontWeight: 600 }}>
           <div>
@@ -2785,6 +2789,7 @@ const Products = () => {
         </div>
         <div style={{ width: 100 }} />
       </nav>
+      )}
 
       {/* ── Scanner: not found modal ── */}
       {scanNotFound && (
@@ -2827,8 +2832,35 @@ const Products = () => {
       {/* ── Side Sheet ── */}
       {sideProduct && sidePanelProduct && (
         <>
-          <div style={{ position: 'fixed', inset: 0, background: '#9ca3af', zIndex: 300 }} onClick={() => { setSideProduct(null); setSideProductDetail(null); }} />
-          <div style={{ position: 'fixed', right: 0, top: 0, bottom: 0, width: 'min(420px, 100vw)', background: 'var(--surface)', borderLeft: '1px solid var(--border)', boxShadow: 'none', zIndex: 301, overflow: 'auto', display: 'flex', flexDirection: 'column', animation: 'slideInRight 0.25s ease-out', willChange: 'transform' }}>
+          <div
+            className="product-detail-overlay"
+            style={{ position: 'fixed', inset: 0, background: '#9ca3af', zIndex: 300 }}
+            onClick={() => { setSideProduct(null); setSideProductDetail(null); }}
+          />
+          <div
+            className={isMobile ? 'product-detail-panel product-detail-panel--sheet' : 'product-detail-panel product-detail-panel--side'}
+            style={isMobile ? {
+              display: 'flex',
+              flexDirection: 'column',
+              overflow: 'auto',
+              background: 'var(--surface)',
+            } : {
+              position: 'fixed',
+              right: 0,
+              top: 0,
+              bottom: 0,
+              width: 'min(420px, 100vw)',
+              background: 'var(--surface)',
+              borderLeft: '1px solid var(--border)',
+              boxShadow: 'none',
+              zIndex: 301,
+              overflow: 'auto',
+              display: 'flex',
+              flexDirection: 'column',
+              animation: 'slideInRight 0.25s ease-out',
+              willChange: 'transform',
+            }}
+          >
             {/* Header */}
             <div style={{ padding: '20px 22px 16px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, background: 'var(--surface)', position: 'sticky', top: 0, zIndex: 10 }}>
               <div style={{ minWidth: 0 }}>

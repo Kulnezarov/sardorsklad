@@ -193,15 +193,24 @@ const Dashboard = () => {
     navigate(`/products?${q.toString()}`);
   };
 
-  /** Резерв → «Нужно заказать»: автосохранение позиции с названием и категорией из карточки */
+  /** Резерв → «Нужно заказать»: форма с автозаполнением из карточки товара */
   const goReserveOrder = (a) => {
-    const q = new URLSearchParams();
-    q.set('autoWish', '1');
-    q.set('name', a.name || '');
-    if (a.category_id) q.set('category_id', String(a.category_id));
-    else if (a.category) q.set('category', a.category);
-    if (a.brand) q.set('brand', a.brand);
-    navigate(`/reserve?${q.toString()}`);
+    const qty = Number(a?.quantity ?? 0);
+    const parts = [`Остаток: ${qty} шт`];
+    if (a?.sku) parts.push(`SKU ${a.sku}`);
+    if (a?.barcode) parts.push(`ШК ${a.barcode}`);
+    navigate('/reserve', {
+      state: {
+        prefillWish: {
+          name: a.name || '',
+          brand: a.brand || '',
+          category_id: a.category_id || null,
+          category: a.category || '',
+          photo_data: a.image_url || '',
+          notes: parts.join(' · '),
+        },
+      },
+    });
   };
 
   const detailsRows = useMemo(() => {

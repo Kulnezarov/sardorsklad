@@ -48,12 +48,19 @@ services:
       API_HOST: 0.0.0.0
       API_PORT: 8000
       ALLOW_OPEN_REGISTRATION: "false"
+      # Важно: перекрывает DATABASE_URL из backend/.env (localhost/Supabase ломают Docker)
       DATABASE_URL: postgresql://skladpro:${POSTGRES_PASSWORD:-skladpro_password}@postgresql:5432/skladpro
       REDIS_URL: redis://redis:6379
       # Фронт с :5173 шлёт Origin http://IP:5173 — без порта в списке CORS preflight падает
       ORIGINS: ${APP_ORIGIN:-http://194.32.142.253,http://194.32.142.253:5173}
     expose:
       - "8000"
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1:8000/health"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 90s
     depends_on:
       postgresql:
         condition: service_healthy
@@ -84,8 +91,10 @@ services:
       - caddy_data:/data
       - caddy_config:/config
     depends_on:
-      - frontend
-      - backend
+      frontend:
+        condition: service_started
+      backend:
+        condition: service_healthy
 
 volumes:
   postgres_data:

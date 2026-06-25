@@ -8,11 +8,20 @@
 		reverse_proxy backend:8000 {
 			# Реальный IP клиента для rate-limit (бэкенд читает X-Real-IP, не доверяя X-Forwarded-For клиента)
 			header_up X-Real-IP {remote_host}
+			# После пересоздания backend Docker выдаёт новый IP — переподключаемся
+			transport http {
+				resolvers 127.0.0.11
+			}
+			fail_duration 5s
 		}
 	}
 
 	handle /health {
-		reverse_proxy backend:8000
+		reverse_proxy backend:8000 {
+			transport http {
+				resolvers 127.0.0.11
+			}
+		}
 	}
 
 	# Статика фото (FastAPI StaticFiles) — иначе /uploads/* уйдёт в nginx SPA и картинки не откроются

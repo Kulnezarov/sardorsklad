@@ -14,6 +14,11 @@ const titles = {
   '/settings': 'Настройки',
 };
 
+function pageTitle(pathname) {
+  if (pathname.startsWith('/intake')) return 'Накладные';
+  return titles[pathname] || 'Склад';
+}
+
 const TopBar = ({ onMenuClick }) => {
   const location = useLocation();
   const { user } = useAuth();
@@ -57,7 +62,7 @@ const TopBar = ({ onMenuClick }) => {
         </button>
         <div className="topbar-title-block">
           <div className="topbar-title" style={{ fontSize: '20px', fontWeight: 700 }}>
-            {titles[location.pathname] || 'Склад'}
+            {pageTitle(location.pathname)}
           </div>
         </div>
       </div>
