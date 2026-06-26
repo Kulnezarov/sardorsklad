@@ -28,6 +28,7 @@ import { intakeApi } from '../api/intake';
 import { settingsApi } from '../api/settings';
 import { getApiErrorMessage, productApi } from '../api/client';
 import { generateEAN13 } from '../utils/barcodeGen';
+import { mergeInvoiceLinesWithServer } from '../utils/intakeLineMerge';
 import {
   computeInvoiceSummary,
   copyIntakeLine,
@@ -67,23 +68,10 @@ function formatKzt(value) {
 function IntakeLineMoneyValue({ line, kind }) {
   const t = lineMoneyTotals(line);
   const unit = kind === 'purchase' ? t.unitPurchase : t.unitSale;
-  const total = kind === 'purchase' ? t.purchaseTotal : t.saleTotal;
-  if (t.qty <= 0) {
-    return (
-      <span className="intake-line-money">
-        <span className="intake-col-value">{unit > 0 ? formatKzt(unit) : '—'}</span>
-        {unit > 0 ? <span className="intake-col-hint">за 1 шт</span> : null}
-      </span>
-    );
-  }
   return (
     <span className="intake-line-money">
-      <span className="intake-col-value">{formatKzt(total)}</span>
-      {t.qty > 1 && unit > 0 ? (
-        <span className="intake-col-hint">
-          {formatKzt(unit)} × {t.qty}
-        </span>
-      ) : null}
+      <span className="intake-col-value">{unit > 0 ? formatKzt(unit) : '—'}</span>
+      {unit > 0 ? <span className="intake-col-hint">за 1 шт</span> : null}
     </span>
   );
 }
@@ -188,10 +176,10 @@ function IntakeLineRow({ line, photoUrls, isUploaded, showWarn, onOpen, onPrint,
         <IntakeLineChips line={line} />
         <div className="intake-line-prices intake-line-prices--mobile">
           <span className="intake-price-pill intake-price-pill--muted">
-            Закуп {money.qty > 0 ? formatKzt(money.purchaseTotal) : formatKzt(line.purchase_kzt)}
+            Закуп {formatKzt(money.unitPurchase > 0 ? money.unitPurchase : line.purchase_kzt)}
           </span>
           <span className="intake-price-pill intake-price-pill--sale">
-            Продажа {money.qty > 0 ? formatKzt(money.saleTotal) : formatKzt(line.sale_price)}
+            Продажа {formatKzt(money.unitSale > 0 ? money.unitSale : line.sale_price)}
           </span>
         </div>
       </div>
@@ -243,13 +231,13 @@ function IntakeLineGridCard({ line, photoUrls, isUploaded, showWarn, onOpen, onP
         <div className="intake-line-card-price-box">
           <span className="intake-line-card-price-label">Закуп</span>
           <span className="intake-line-card-price-val">
-            {money.qty > 0 ? formatKzt(money.purchaseTotal) : formatKzt(line.purchase_kzt)}
+            {formatKzt(money.unitPurchase > 0 ? money.unitPurchase : line.purchase_kzt)}
           </span>
         </div>
         <div className="intake-line-card-price-box intake-line-card-price-box--sale">
           <span className="intake-line-card-price-label">Продажа</span>
           <span className="intake-line-card-price-val">
-            {money.qty > 0 ? formatKzt(money.saleTotal) : formatKzt(line.sale_price)}
+            {formatKzt(money.unitSale > 0 ? money.unitSale : line.sale_price)}
           </span>
         </div>
         <IntakeLineActions isUploaded={isUploaded} onPrint={onPrint} onCopy={onCopy} onDelete={onDelete} />
@@ -338,6 +326,8 @@ function IntakeList() {
       const r = await intakeApi.list();
       return Array.isArray(r.data) ? r.data : [];
     },
+    staleTime: 0,
+    refetchOnWindowFocus: true,
   });
 
   const stats = useMemo(() => {
@@ -515,6 +505,8 @@ function IntakeDetail() {
       const r = await intakeApi.list();
       return Array.isArray(r.data) ? r.data : [];
     },
+    staleTime: 0,
+    refetchOnWindowFocus: true,
   });
 
   const invoice = useMemo(
@@ -550,11 +542,21 @@ function IntakeDetail() {
 
   const saveInvoice = async (nextLines) => {
     if (!invoice) return;
+    let serverInvoice = invoice;
+    try {
+      const r = await intakeApi.list();
+      const list = Array.isArray(r.data) ? r.data : [];
+      const fresh = list.find((x) => String(x.id) === String(invoice.id));
+      if (fresh) serverInvoice = fresh;
+    } catch {
+      /* use cached invoice */
+    }
+    const mergedLines = mergeInvoiceLinesWithServer(serverInvoice, nextLines);
     await intakeApi.upsert({
       id: invoice.id,
       number: invoice.number,
       date: invoice.date,
-      lines: nextLines,
+      lines: mergedLines,
       uploaded: invoice.uploaded,
       pending_warehouse_upload: invoice.pending_warehouse_upload,
       uploaded_at: invoice.uploaded_at,

@@ -23,7 +23,7 @@ import { readStoredLabelLayout } from '../utils/labelPrintUtils';
 import CameraBarcodeScanner from './CameraBarcodeScanner';
 import { productApi, categoryApi, compatibilityApi, resolveUploadedAssetUrl } from '../api/client';
 import CategoryPicker, { findGroupIdForCategory, findCategoryInTree } from './CategoryPicker';
-import { resolveCategorySchemaForProduct, categoryTreeQueryKey, isEngineCodeRequired, isEngineCodeSingle, layoutHasCompatibility, layoutHasEngineCode, normalizeFormLayout } from '../utils/formLayoutUtils';
+import { resolveCategorySchemaForProduct, categoryTreeQueryKey, isEngineCodeRequired, isEngineCodeSingle } from '../utils/formLayoutUtils';
 import ProductFormByLayout from './ProductFormByLayout';
 import VehicleCompatibilityPicker, {
   inferCompatIdsFromBrandModel,
@@ -46,7 +46,7 @@ import {
   roundMoney2,
   roundWeight2,
 } from '../utils/intakeHelpers';
-import { compressImageFile } from '../utils/intakePhotoUtils';
+import { mergeIntakeLine } from '../utils/intakeLineMerge';
 
 const DELIVERY_MODES = [
   { key: 'custom', label: 'Своя цена', sub: () => '₸/кг' },
@@ -212,16 +212,9 @@ export default function IntakeLineModal({
   const showCategoryPickerExpanded = changeCategoryMode;
 
   const vehicleMode = selectedSubcategorySchema?.vehicle_mode || 'none';
-  const liquidsGroup = /жидкост/i.test(selectedCategoryGroup?.name || '');
-  const intakeProductLayout = useMemo(
-    () => normalizeFormLayout(selectedSubcategorySchema?.form_layout, selectedSubcategorySchema),
-    [selectedSubcategorySchema],
-  );
 
-  const showCompatibilityBlock = layoutHasCompatibility(intakeProductLayout)
-    && (!liquidsGroup || vehicleMode !== 'none');
-  const showEngineFamilyBlock = layoutHasEngineCode(intakeProductLayout)
-    && isEngineCodeRequired(selectedSubcategorySchema?.engine_code_mode);
+  const showCompatibilityBlock = vehicleMode === 'compatibility';
+  const showEngineFamilyBlock = isEngineCodeRequired(selectedSubcategorySchema?.engine_code_mode);
   const engineCodeSingleSelect = isEngineCodeSingle(selectedSubcategorySchema?.engine_code_mode);
   const showBrandModelBlock = false;
 
@@ -835,7 +828,7 @@ export default function IntakeLineModal({
       await addCnyHistory({ barcode, cny: cnyV, deliveryKzt: num(form.delivery_kzt) > 0 ? form.delivery_kzt : null });
     }
 
-    const saved = {
+    const formSaved = {
       local_id: line?.local_id || seedLine?.local_id || newIntakeLineId(),
       barcode,
       sku: form.sku.trim() || null,
@@ -846,10 +839,10 @@ export default function IntakeLineModal({
       category_id: form.category_id || null,
       category_group_id: form.category_group_id || null,
       attributes: Object.keys(form.attributes || {}).length ? form.attributes : null,
-      compatibility_vehicle_model_ids: normalizeCompatIds(form.compatibility_vehicle_model_ids).length
+      compatibility_vehicle_model_ids: showCompatibilityBlock && normalizeCompatIds(form.compatibility_vehicle_model_ids).length
         ? normalizeCompatIds(form.compatibility_vehicle_model_ids)
         : null,
-      compatibility_engine_family_ids: normalizeCompatIds(form.compatibility_engine_family_ids).length
+      compatibility_engine_family_ids: showEngineFamilyBlock && normalizeCompatIds(form.compatibility_engine_family_ids).length
         ? normalizeCompatIds(form.compatibility_engine_family_ids)
         : null,
       manufacturer: form.manufacturer.trim() || null,
@@ -865,8 +858,11 @@ export default function IntakeLineModal({
     };
     const wh = photos.filter((p) => p.kind === 'warehouse').map((p) => p.url);
     const pending = photos.filter((p) => p.kind === 'pending').map((p) => p.src);
-    if (wh.length) saved.warehouse_image_urls = wh;
-    if (pending.length) saved.intake_photo_data = pending;
+    const saved = mergeIntakeLine(line || {}, {
+      ...formSaved,
+      ...(wh.length ? { warehouse_image_urls: wh } : {}),
+      ...(pending.length ? { intake_photo_data: pending } : {}),
+    });
     onSave(saved);
     onClose();
   };

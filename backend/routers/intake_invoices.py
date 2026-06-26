@@ -16,6 +16,7 @@ from services.intake_images import (
     MAX_INTAKE_LINE_IMAGES,
     save_intake_line_image,
 )
+from services.intake_line_merge import merge_intake_lines
 from services.intake_warehouse_revert import revert_intake_warehouse_upload
 
 router = APIRouter(
@@ -107,10 +108,12 @@ def upsert_intake_invoice(
         )
         .first()
     )
+    existing_lines = list(row.lines) if row and isinstance(row.lines, list) else []
+    merged_lines = merge_intake_lines(existing_lines, payload.lines)
     data = {
         "number": payload.number,
         "date_str": payload.date.strip(),
-        "lines": payload.lines,
+        "lines": merged_lines,
         "uploaded": payload.uploaded,
         "pending_warehouse_upload": payload.pending_warehouse_upload,
         "uploaded_at": payload.uploaded_at,
