@@ -210,10 +210,15 @@ export async function uploadInvoiceLinesToWarehouse(lines, cnyRate) {
     throw new Error(check.message);
   }
 
-  const report = { created: 0, updated: 0, photosUploaded: 0, errors: [] };
+  const report = { created: 0, updated: 0, photosUploaded: 0, errors: [], skipped: 0 };
   const updatedLines = [];
   for (const raw of lines) {
     const l = raw;
+    if (isLineWarehouseSynced(l)) {
+      report.skipped += 1;
+      updatedLines.push({ ...l });
+      continue;
+    }
     const name = (l.name || '').trim();
     try {
       const barcode = String(l.barcode || '').trim();

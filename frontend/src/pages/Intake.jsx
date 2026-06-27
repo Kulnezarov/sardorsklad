@@ -19,6 +19,7 @@ import {
   FiClock,
   FiAlertCircle,
   FiRotateCcw,
+  FiRefreshCw,
 } from 'react-icons/fi';
 import { Button, LoadingSpinner, Modal } from '../components/ui';
 import IntakeAddFab from '../components/IntakeAddFab';
@@ -499,7 +500,7 @@ function IntakeDetail() {
   const deliveryPerKg = num(settingsRow?.delivery_kzt_per_kg) || 800;
   const labelSize = 'medium';
 
-  const { data: invoices = [], isLoading } = useQuery({
+  const { data: invoices = [], isLoading, isFetching, refetch } = useQuery({
     queryKey: ['intake-invoices'],
     queryFn: async () => {
       const r = await intakeApi.list();
@@ -757,6 +758,15 @@ function IntakeDetail() {
     revertMutation.mutate();
   };
 
+  const handleRefresh = async () => {
+    try {
+      await refetch();
+      toast.success('Накладная обновлена');
+    } catch (e) {
+      toast.error(getApiErrorMessage(e, 'Не удалось обновить накладную'));
+    }
+  };
+
   const renderLine = ({ line: l, index }) => {
     const showWarn = !isUploaded && !isLineWarehouseSynced(l) && !isLineWarehouseReady(l);
     const handlers = {
@@ -822,6 +832,15 @@ function IntakeDetail() {
           </div>
         </div>
         <div className="intake-detail-hero-right">
+          <Button
+            variant="secondary"
+            icon={FiRefreshCw}
+            onClick={handleRefresh}
+            loading={isFetching}
+            title="Обновить с сервера"
+          >
+            Обновить
+          </Button>
           <span className={`intake-status-pill intake-status-pill--lg${isUploaded ? ' intake-status-pill--done' : ''}`}>
             {isUploaded ? (
               <>
@@ -850,10 +869,10 @@ function IntakeDetail() {
               icon={FiUpload}
               onClick={handleUploadClick}
               loading={uploadMutation.isPending}
-              disabled={!uploadCheck.ok}
+              disabled={!uploadCheck.ok || uploadMutation.isPending}
               title={uploadCheck.ok ? undefined : uploadCheck.message}
             >
-              В склад
+              {uploadMutation.isPending ? 'Загрузка…' : 'В склад'}
             </Button>
           )}
         </div>
