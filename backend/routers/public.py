@@ -785,12 +785,51 @@ def list_public_vehicle_models(
 
 
 @router.get("/compatibility/engine-families", response_model=list[schemas.EngineFamilyResponse])
-def list_public_engine_families():
-    """
-    Справочник кодов двигателя витрине не отдаётся (только склад).
-    Эндпоинт оставлен для обратной совместимости — всегда пустой список.
-    """
-    return []
+def list_public_engine_families(db: Session = Depends(get_db)):
+    rows = (
+        db.query(models.EngineFamily)
+        .options(
+            joinedload(models.EngineFamily.product_links),
+            joinedload(models.EngineFamily.model_links)
+            .joinedload(models.EngineFamilyModel.vehicle_model)
+            .joinedload(models.VehicleModel.vehicle_brand),
+        )
+        .filter(models.EngineFamily.is_active.is_(True))
+        .order_by(asc(models.EngineFamily.code))
+        .all()
+    )
+    out: list[schemas.EngineFamilyResponse] = []
+    for row in rows:
+        vehicle_models: list[schemas.VehicleModelResponse] = []
+        for link in row.model_links or []:
+            vm = link.vehicle_model
+            if not vm or not vm.is_active:
+                continue
+            item = schemas.VehicleModelResponse.model_validate(vm, from_attributes=True)
+            if vm.vehicle_brand:
+                item = item.model_copy(
+                    update={"brand": vehicle_brand_to_response(vm.vehicle_brand)}
+                )
+            vehicle_models.append(item)
+        out.append(
+            schemas.EngineFamilyResponse(
+                id=row.id,
+                code=row.code,
+                name=row.name,
+                displacement_l=row.displacement_l,
+                fuel_type=row.fuel_type,
+                power=row.power,
+                manufacturer=row.manufacturer,
+                notes=None,
+                summary=row.name,
+                is_active=row.is_active,
+                product_count=len(row.product_links or []),
+                created_at=row.created_at,
+                updated_at=row.updated_at,
+                vehicle_models=vehicle_models,
+            )
+        )
+    return out
 
 
 @router.get("/brands", response_model=list[schemas.PublicBrandItem])
