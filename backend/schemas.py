@@ -1078,6 +1078,8 @@ class PublicProductListResponse(BaseModel):
 class PublicCategoryItem(BaseModel):
     id: int
     name: str
+    parent_id: Optional[int] = None
+    sort_order: int = 0
 
 
 class PublicBrandItem(BaseModel):

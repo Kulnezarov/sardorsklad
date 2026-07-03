@@ -704,7 +704,15 @@ def list_public_categories(db: Session = Depends(get_db)):
         .all()
     )
     norm_names = {c.name.casefold() for c in normalized}
-    items = [schemas.PublicCategoryItem(id=c.id, name=c.name) for c in normalized]
+    items = [
+        schemas.PublicCategoryItem(
+            id=c.id,
+            name=c.name,
+            parent_id=c.parent_id,
+            sort_order=c.sort_order or 0,
+        )
+        for c in normalized
+    ]
     for idx, name in enumerate(_legacy_only_category_names(db, norm_names)):
         if idx > LEGACY_ID_SLOT_MAX:
             break
