@@ -401,6 +401,33 @@ def _legacy_only_brand_names(db: Session, normalized_names: set[str]) -> list[st
     return [n for n in _distinct_legacy_brand_names(db) if n.casefold() not in normalized_names]
 
 
+def _category_with_descendant_ids(db: Session, category_id: int) -> list[int]:
+    rows = (
+        db.query(models.Category.id, models.Category.parent_id)
+        .filter(models.Category.is_active.is_(True))
+        .all()
+    )
+    children_by_parent: dict[int, list[int]] = {}
+    known_ids: set[int] = set()
+    for row_id, parent_id in rows:
+        known_ids.add(row_id)
+        if parent_id is not None:
+            children_by_parent.setdefault(parent_id, []).append(row_id)
+
+    if category_id not in known_ids:
+        return [category_id]
+
+    result: set[int] = set()
+    stack = [category_id]
+    while stack:
+        current = stack.pop()
+        if current in result:
+            continue
+        result.add(current)
+        stack.extend(children_by_parent.get(current, []))
+    return sorted(result)
+
+
 def _apply_product_filters(
     query,
     db: Session,
@@ -468,7 +495,8 @@ def _apply_product_filters(
             else:
                 query = query.filter(models.Product.id == -1)
         else:
-            query = query.filter(models.Product.category_id == category_id)
+            category_ids = _category_with_descendant_ids(db, category_id)
+            query = query.filter(models.Product.category_id.in_(category_ids))
     if brand_id is not None:
         if LEGACY_BRAND_ID_BASE <= brand_id < LEGACY_BRAND_ID_BASE + LEGACY_ID_SLOT_MAX + 1:
             legacy_names = _legacy_only_brand_names(
