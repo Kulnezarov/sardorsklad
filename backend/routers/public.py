@@ -25,8 +25,11 @@ from services.product_display import (
 )
 from services.public_rate_limit import check_public_order_rate_limit, check_rate_limit, client_ip
 from services.telegram_orders import send_new_order_notification
+from config.logger import setup_logger
+from sqlalchemy.exc import SQLAlchemyError
 
 router = APIRouter(prefix="/api/v1/public", tags=["public"])
+logger = setup_logger("public_api")
 
 SITE_NEW_ORDER_STATUS = "Новый заказ"
 
@@ -909,37 +912,50 @@ def create_public_order(
         notes=notes,
     )
     db.add(reserve)
-    db.flush()
 
-    for item in payload.items:
-        p = by_id[item.product_id]
-        line_total = Decimal(str(p.sale_price or 0)) * item.quantity
-        reserve_item = models.ReserveItem(
-            reserve_id=reserve.id,
-            product_id=p.id,
-            product_name=p.name,
-            quantity_ordered=item.quantity,
-            quantity_received=0,
-            quantity=item.quantity,
-            price_cny=Decimal("0"),
-            price_kzt=Decimal(str(p.sale_price or 0)),
-            sale_price_snapshot=Decimal(str(p.sale_price or 0)),
-            line_total=line_total,
-        )
-        db.add(reserve_item)
-        if reserve_stock:
-            p.quantity = max(0, (p.quantity or 0) - item.quantity)
+    try:
+        db.flush()
 
-    db.add(
-        models.History(
-            product_id=None,
-            operation_type=models.OperationType.ORDERED.value,
-            reference_type="reserve",
-            reference_id=reserve.id,
-            details={"source": "website", "status": SITE_NEW_ORDER_STATUS},
+        for item in payload.items:
+            p = by_id[item.product_id]
+            line_total = Decimal(str(p.sale_price or 0)) * item.quantity
+            reserve_item = models.ReserveItem(
+                reserve_id=reserve.id,
+                product_id=p.id,
+                product_name=p.name,
+                quantity_ordered=item.quantity,
+                quantity_received=0,
+                quantity=item.quantity,
+                price_cny=Decimal("0"),
+                price_kzt=Decimal(str(p.sale_price or 0)),
+                sale_price_snapshot=Decimal(str(p.sale_price or 0)),
+                line_total=line_total,
+            )
+            db.add(reserve_item)
+            if reserve_stock:
+                p.quantity = max(0, (p.quantity or 0) - item.quantity)
+
+        db.add(
+            models.History(
+                product_id=None,
+                operation_type=models.OperationType.ORDERED.value,
+                reference_type="reserve",
+                reference_id=reserve.id,
+                details={"source": "website", "status": SITE_NEW_ORDER_STATUS},
+            )
         )
-    )
-    db.commit()
+        db.commit()
+    except SQLAlchemyError as exc:
+        db.rollback()
+        logger.exception("create_public_order failed: %s", exc)
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Не удалось сохранить заказ. На сервере нужно применить миграцию "
+                "backend/migrations/006_public_order_schema.sql и перезапустить backend."
+            ),
+        ) from exc
+
     db.refresh(reserve)
     reserve = (
         db.query(models.Reserve)
