@@ -123,11 +123,14 @@ export function computeInvoiceSummary(lines) {
 }
 
 export function lineToProductForPrint(line) {
+  const sale = num(line?.sale_price);
   return {
+    id: line?.id || line?.product_id || null,
     name: line.name || 'Товар',
     barcode: line.barcode || '',
     sku: line.sku || '',
     brand: line.brand || '',
+    sale_price: sale > 0 ? roundMoney2(sale) : null,
   };
 }
 

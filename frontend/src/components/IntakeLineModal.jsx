@@ -868,10 +868,12 @@ export default function IntakeLineModal({
   };
 
   const printProduct = lineToProductForPrint({
+    id: line?.product_id || line?.id,
     name: form.name,
     barcode: form.barcode,
     sku: form.sku,
     brand: form.brand,
+    sale_price: num(form.sale_price) > 0 ? roundMoney2(num(form.sale_price)) : null,
   });
 
   const photoPreview = (p) =>

@@ -8,6 +8,7 @@ import {
   LABEL_LAYOUT_OPTIONS,
   getLabelLayoutFlags,
   labelCompatOneBrand,
+  formatLabelPrice,
   normalizeLabelLayout,
   readStoredLabelLayout,
   storeLabelLayout,
@@ -72,11 +73,16 @@ const LabelPrint = ({
   const [loadingProduct, setLoadingProduct] = useState(false);
 
   const barcodeCanvasRef = useRef(null);
-  const product = resolvedProduct || productProp;
+  const baseProduct = resolvedProduct || productProp;
+  const product =
+    baseProduct && productProp && Number(productProp.sale_price) > 0
+      ? { ...baseProduct, sale_price: productProp.sale_price }
+      : baseProduct;
 
   const barcodeVal = custom.trim() || product?.barcode || product?.sku || String(product?.id || '');
   const layoutFlags = getLabelLayoutFlags(layoutMode);
   const compatText = layoutFlags.showCompat ? labelCompatOneBrand(product) : '';
+  const priceText = formatLabelPrice(product);
 
   useEffect(() => {
     if (!isOpen) {
@@ -141,7 +147,7 @@ const LabelPrint = ({
         /* нечитаемый штрих */
       }
     }
-  }, [isOpen, barcodeVal, layoutMode, compatText, product?.name]);
+  }, [isOpen, barcodeVal, layoutMode, compatText, product?.name, product?.sale_price]);
 
   const buildPrintHtml = async () => {
     const { wmm, hmm } = LABEL_PAPER;
@@ -159,7 +165,10 @@ const LabelPrint = ({
       : '';
 
     const textBlocks = showName || showCompat;
-    const codeMaxH = !textBlocks ? '22mm' : showCompat ? '13mm' : '16mm';
+    const baseCodeMaxH = !textBlocks ? '22mm' : showCompat ? '13mm' : '16mm';
+    const codeMaxH = priceText
+      ? (!textBlocks ? '19mm' : showCompat ? '10mm' : '13mm')
+      : baseCodeMaxH;
 
     const codeBlock = codeImgUrl
       ? `<div class="code-wrap">
@@ -168,10 +177,15 @@ const LabelPrint = ({
          <div class="code-digits">${escHtml(barcodeVal)}</div>`
       : `<div class="code-fail">Не удалось сгенерировать код</div>`;
 
+    const priceBlock = priceText
+      ? `<div class="label-price">${escHtml(priceText)}</div>`
+      : '';
+
     const labelHtml = `<div class="label">
             ${nameBlock}
             ${compatBlock}
             ${codeBlock}
+            ${priceBlock}
           </div>`;
 
     return `<!DOCTYPE html>
@@ -266,6 +280,17 @@ const LabelPrint = ({
       line-height: 1.1;
       max-width: ${maxIn}mm;
       word-break: break-all;
+    }
+    .label-price {
+      flex-shrink: 0;
+      margin-top: 0.6mm;
+      padding: 0 1mm;
+      font-size: 9pt;
+      font-weight: 800;
+      line-height: 1.1;
+      color: #000;
+      text-align: center;
+      width: 100%;
     }
     .code-fail { font-size: 8pt; color: #c00; padding: 2mm; }
     @media print {
@@ -569,6 +594,20 @@ const LabelPrint = ({
                   >
                     {barcodeVal}
                   </div>
+                  {priceText && (
+                    <div
+                      style={{
+                        marginTop: 4,
+                        fontSize: 13,
+                        fontWeight: 800,
+                        color: '#111',
+                        textAlign: 'center',
+                        width: '100%',
+                      }}
+                    >
+                      {priceText}
+                    </div>
+                  )}
                 </div>
               </div>
             </div>

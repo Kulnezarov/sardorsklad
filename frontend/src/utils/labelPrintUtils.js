@@ -77,3 +77,9 @@ export function normalizeLabelLayout(value) {
   if (value && Object.values(LABEL_LAYOUT_MODES).includes(value)) return value;
   return readStoredLabelLayout();
 }
+
+export function formatLabelPrice(product) {
+  const price = Number(product?.sale_price ?? 0);
+  if (!price || price <= 0) return '';
+  return `${price.toLocaleString('ru-RU')} ₸`;
+}
