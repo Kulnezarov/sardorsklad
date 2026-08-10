@@ -282,7 +282,12 @@ def ensure_schema_updates():
         SET image_url = trim(image_urls->>0)
         WHERE image_urls IS NOT NULL
           AND jsonb_typeof(image_urls) = 'array'
-          AND jsonb_array_length(image_urls) > 0
+          AND jsonb_array_length(
+                CASE
+                  WHEN jsonb_typeof(image_urls) = 'array' THEN image_urls
+                  ELSE '[]'::jsonb
+                END
+              ) > 0
           AND (image_url IS NULL OR trim(image_url) = '');
         """,
         "products.sync_image_url_from_image_urls",
