@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import { FiMenu, FiMoon, FiSun } from 'react-icons/fi';
 import { useAuth } from '../auth/AuthContext';
+import { useMediaQuery, MOBILE_MAX_WIDTH_QUERY } from '../utils/useMediaQuery';
 
 const titles = {
   '/dashboard': 'Главная',
@@ -22,6 +23,7 @@ function pageTitle(pathname) {
 const TopBar = ({ onMenuClick }) => {
   const location = useLocation();
   const { user } = useAuth();
+  const isMobile = useMediaQuery(MOBILE_MAX_WIDTH_QUERY);
   const [dark, setDark] = useState(
     () => typeof document !== 'undefined' && document.documentElement.getAttribute('data-theme') === 'dark'
   );
@@ -55,13 +57,15 @@ const TopBar = ({ onMenuClick }) => {
     .toUpperCase();
 
   return (
-    <header className="topbar ios-glass-panel topbar-shell">
+    <header className={`topbar ios-glass-panel topbar-shell${isMobile ? ' topbar-shell--mobile' : ''}`}>
       <div className="topbar-left">
-        <button type="button" className="menu-toggle menu-toggle--icon" onClick={onMenuClick} aria-label="Открыть меню">
-          <FiMenu size={22} strokeWidth={2.25} aria-hidden />
-        </button>
+        {!isMobile && (
+          <button type="button" className="menu-toggle menu-toggle--icon" onClick={onMenuClick} aria-label="Открыть меню">
+            <FiMenu size={22} strokeWidth={2.25} aria-hidden />
+          </button>
+        )}
         <div className="topbar-title-block">
-          <div className="topbar-title" style={{ fontSize: '20px', fontWeight: 700 }}>
+          <div className="topbar-title">
             {pageTitle(location.pathname)}
           </div>
         </div>

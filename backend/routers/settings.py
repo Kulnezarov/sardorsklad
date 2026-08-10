@@ -19,6 +19,22 @@ router = APIRouter(
 )
 
 
+def _dashboard_alert(p: models.Product, kind: str) -> schemas.DashboardAlertItem:
+    is_legacy = p.category_id is None
+    refresh = bool(getattr(p, "needs_category_refresh", False)) or is_legacy
+    return schemas.DashboardAlertItem(
+        id=p.id,
+        name=p.name,
+        quantity=p.quantity,
+        kind=kind,
+        category=p.category,
+        brand=p.brand,
+        category_id=p.category_id,
+        is_legacy_category=is_legacy,
+        needs_category_refresh=refresh,
+    )
+
+
 def get_or_create_settings(db: Session):
     settings = db.query(models.Settings).first()
     if settings:
@@ -154,39 +170,9 @@ def get_dashboard_stats(db: Session = Depends(get_db)):
         .all()
     )
 
-    alert_out_of_stock = [
-        schemas.DashboardAlertItem(
-            id=p.id,
-            name=p.name,
-            quantity=p.quantity,
-            kind="out_of_stock",
-            category=p.category,
-            brand=p.brand,
-        )
-        for p in out_rows
-    ]
-    alert_low_stock = [
-        schemas.DashboardAlertItem(
-            id=p.id,
-            name=p.name,
-            quantity=p.quantity,
-            kind="low_stock",
-            category=p.category,
-            brand=p.brand,
-        )
-        for p in low_rows
-    ]
-    alert_stale = [
-        schemas.DashboardAlertItem(
-            id=p.id,
-            name=p.name,
-            quantity=p.quantity,
-            kind="stale",
-            category=p.category,
-            brand=p.brand,
-        )
-        for p in stale_rows
-    ]
+    alert_out_of_stock = [_dashboard_alert(p, "out_of_stock") for p in out_rows]
+    alert_low_stock = [_dashboard_alert(p, "low_stock") for p in low_rows]
+    alert_stale = [_dashboard_alert(p, "stale") for p in stale_rows]
 
     recent_sales = []
     sales_recent = (

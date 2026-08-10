@@ -47,6 +47,22 @@ def _resolve_category_id(db: Session, data: dict) -> dict:
     return data
 
 
+def _normalize_compat_ids(ids) -> list[int] | None:
+    if ids is None:
+        return None
+    out = []
+    seen = set()
+    for x in ids:
+        try:
+            n = int(x)
+        except (TypeError, ValueError):
+            continue
+        if n > 0 and n not in seen:
+            seen.add(n)
+            out.append(n)
+    return out
+
+
 def _validate_engine_families_for_category(
     db: Session,
     category_id: int | None,
@@ -108,6 +124,36 @@ def _build_product_payload_from_accept(
     return product_data
 
 
+def _find_existing_product_for_accept(
+    db: Session,
+    order: models.PurchaseOrder,
+    payload: schemas.AcceptToStockPayload,
+) -> models.Product | None:
+    """Найти товар для merge: явный product_id → order.product_id → barcode."""
+    pid = payload.product_id or order.product_id
+    if pid:
+        product = db.query(models.Product).filter(models.Product.id == int(pid)).first()
+        if not product:
+            raise HTTPException(status_code=404, detail="Товар для приёмки не найден")
+        return product
+    if order.barcode:
+        return (
+            db.query(models.Product)
+            .filter(models.Product.barcode == order.barcode)
+            .first()
+        )
+    return None
+
+
+def _sync_wish_status_for_order(db: Session, order: models.PurchaseOrder, new_status: str) -> None:
+    if not order.wish_item_id:
+        return
+    wish = db.query(models.WishItem).filter(models.WishItem.id == order.wish_item_id).first()
+    if not wish:
+        return
+    wish.status = new_status
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # WISH ITEMS — «Нужно заказать»
 # ─────────────────────────────────────────────────────────────────────────────
@@ -132,6 +178,13 @@ def list_wish_items(
 )
 def create_wish_item(payload: schemas.WishItemCreate, db: Session = Depends(get_db)):
     data = _resolve_category_id(db, payload.model_dump())
+    data["compatibility_vehicle_model_ids"] = _normalize_compat_ids(
+        data.get("compatibility_vehicle_model_ids")
+    )
+    if data.get("product_id"):
+        product = db.query(models.Product).filter(models.Product.id == data["product_id"]).first()
+        if not product:
+            raise HTTPException(status_code=422, detail="Товар со склада не найден")
     item = models.WishItem(**data)
     db.add(item)
     db.commit()
@@ -149,6 +202,14 @@ def update_wish_item(
     data = payload.model_dump(exclude_unset=True)
     if "category_id" in data:
         data = _resolve_category_id(db, data)
+    if "compatibility_vehicle_model_ids" in data:
+        data["compatibility_vehicle_model_ids"] = _normalize_compat_ids(
+            data.get("compatibility_vehicle_model_ids")
+        )
+    if data.get("product_id"):
+        product = db.query(models.Product).filter(models.Product.id == data["product_id"]).first()
+        if not product:
+            raise HTTPException(status_code=422, detail="Товар со склада не найден")
     for k, v in data.items():
         setattr(item, k, v)
     db.commit()
@@ -189,6 +250,20 @@ def list_purchase_orders(
 )
 def create_purchase_order(payload: schemas.PurchaseOrderCreate, db: Session = Depends(get_db)):
     data = _resolve_category_id(db, payload.model_dump())
+
+    # Существующий товар: фиксируем identity (название/штрихкод/категория) с каталога
+    if data.get("product_id"):
+        product = db.query(models.Product).filter(models.Product.id == data["product_id"]).first()
+        if not product:
+            raise HTTPException(status_code=422, detail="Товар со склада не найден")
+        data["name"] = product.name
+        data["brand"] = product.brand
+        data["category"] = product.category
+        data["category_id"] = product.category_id
+        data["barcode"] = product.barcode or data.get("barcode")
+        if not data.get("photo_data") and product.image_url:
+            data["photo_data"] = product.image_url
+
     order = models.PurchaseOrder(**data)
     db.add(order)
 
@@ -199,6 +274,8 @@ def create_purchase_order(payload: schemas.PurchaseOrderCreate, db: Session = De
         ).first()
         if wish:
             wish.status = 'ordered'
+            if data.get("product_id") and not wish.product_id:
+                wish.product_id = data["product_id"]
 
     db.commit()
     db.refresh(order)
@@ -228,7 +305,7 @@ def accept_to_stock(
 ):
     """
     Accept goods from a purchase order into the warehouse catalog.
-    Supports partial receipt — if received < ordered the order stays 'partial'.
+    Supports partial receipt and merge into an existing product.
     """
     order = db.query(models.PurchaseOrder).filter(models.PurchaseOrder.id == order_id).first()
     if not order:
@@ -245,45 +322,71 @@ def accept_to_stock(
             detail=f"Cannot receive {qty} — only {remaining_ordered} remaining in this order",
         )
 
-    category_id = order.category_id
-    v_ids = payload.compatibility_vehicle_model_ids
-    e_ids = payload.compatibility_engine_family_ids
-    _validate_engine_families_for_category(db, category_id, e_ids)
+    existing = _find_existing_product_for_accept(db, order, payload)
 
-    product_extra = _build_product_payload_from_accept(db, order, payload)
+    if existing:
+        # Merge: не трогаем name / sku / barcode / category / identity
+        existing.quantity = (existing.quantity or 0) + qty
+        if payload.purchase_price_kzt is not None:
+            existing.purchase_price = payload.purchase_price_kzt
+        if payload.delivery_cost_kzt is not None:
+            existing.delivery_cost_kzt = payload.delivery_cost_kzt
+        if payload.sale_price_kzt is not None:
+            existing.sale_price = payload.sale_price_kzt
+        if order.price_cny is not None:
+            existing.cny_price = order.price_cny
+        if order.supplier:
+            existing.supplier = order.supplier
+        if payload.storage_location:
+            existing.location_zone = payload.storage_location
+        existing.received_at = datetime.now(UTC)
+        if not order.product_id:
+            order.product_id = existing.id
+        product = existing
+        message = "Количество добавлено к существующему товару"
+    else:
+        category_id = order.category_id
+        v_ids = payload.compatibility_vehicle_model_ids
+        e_ids = payload.compatibility_engine_family_ids
+        _validate_engine_families_for_category(db, category_id, e_ids)
 
-    # ── Create product in catalog ─────────────────────────────────────────
-    sku = f"PO-{order_id}-{int(time.time())}"
-    new_product = models.Product(
-        name=order.name,
-        sku=sku,
-        barcode=order.barcode,
-        brand=product_extra.get("brand") or order.brand,
-        model=payload.model,
-        category=product_extra.get("category") or order.category,
-        category_id=product_extra.get("category_id"),
-        attributes=product_extra.get("attributes"),
-        display_layout=product_extra.get("display_layout"),
-        needs_category_refresh=product_extra.get("needs_category_refresh", True),
-        purchase_price=payload.purchase_price_kzt,
-        delivery_cost_kzt=payload.delivery_cost_kzt or Decimal('0'),
-        sale_price=payload.sale_price_kzt,
-        quantity=qty,
-        supplier=order.supplier,
-        location_zone=payload.storage_location,
-        description=payload.notes or order.notes,
-        is_active=True,
-        received_at=datetime.now(UTC),
-    )
-    db.add(new_product)
-    db.flush()
+        product_extra = _build_product_payload_from_accept(db, order, payload)
 
-    apply_product_compatibility(
-        db,
-        new_product,
-        vehicle_model_ids=v_ids,
-        engine_family_ids=e_ids,
-    )
+        sku = f"PO-{order_id}-{int(time.time())}"
+        product = models.Product(
+            name=order.name,
+            sku=sku,
+            barcode=order.barcode,
+            brand=product_extra.get("brand") or order.brand,
+            model=payload.model,
+            category=product_extra.get("category") or order.category,
+            category_id=product_extra.get("category_id"),
+            attributes=product_extra.get("attributes"),
+            display_layout=product_extra.get("display_layout"),
+            needs_category_refresh=product_extra.get("needs_category_refresh", True),
+            purchase_price=payload.purchase_price_kzt,
+            delivery_cost_kzt=payload.delivery_cost_kzt or Decimal('0'),
+            sale_price=payload.sale_price_kzt,
+            cny_price=order.price_cny,
+            quantity=qty,
+            supplier=order.supplier,
+            location_zone=payload.storage_location,
+            description=payload.notes or order.notes,
+            image_url=order.photo_data,
+            is_active=True,
+            received_at=datetime.now(UTC),
+        )
+        db.add(product)
+        db.flush()
+
+        apply_product_compatibility(
+            db,
+            product,
+            vehicle_model_ids=v_ids,
+            engine_family_ids=e_ids,
+        )
+        order.product_id = product.id
+        message = "Товар добавлен в склад"
 
     # ── Update order ──────────────────────────────────────────────────────
     order.quantity_received += qty
@@ -295,20 +398,25 @@ def accept_to_stock(
 
     # ── History log ───────────────────────────────────────────────────────
     hist = models.History(
-        product_id=new_product.id,
+        product_id=product.id,
         operation_type=models.OperationType.TO_STOCK,
         quantity_change=qty,
         reference_type='purchase_order',
         reference_id=order_id,
-        details={"order_name": order.name, "qty": qty},
+        details={
+            "order_name": order.name,
+            "qty": qty,
+            "merged": bool(existing),
+        },
     )
     db.add(hist)
 
     db.commit()
     db.refresh(order)
     return {
-        "message": "Товар добавлен в склад",
-        "product_id": new_product.id,
+        "message": message,
+        "product_id": product.id,
+        "merged": bool(existing),
         "order": schemas.PurchaseOrderResponse.model_validate(order),
     }
 
@@ -318,7 +426,22 @@ def cancel_purchase_order(order_id: int, db: Session = Depends(get_db)):
     order = db.query(models.PurchaseOrder).filter(models.PurchaseOrder.id == order_id).first()
     if not order:
         raise HTTPException(status_code=404, detail="PurchaseOrder not found")
+    if order.status == 'completed':
+        raise HTTPException(status_code=400, detail="Нельзя отменить полностью принятый заказ")
     order.status = 'cancelled'
+    # Вернуть wish в «Нужно заказать», если нет других активных PO по этой позиции
+    if order.wish_item_id:
+        active_other = (
+            db.query(models.PurchaseOrder)
+            .filter(
+                models.PurchaseOrder.wish_item_id == order.wish_item_id,
+                models.PurchaseOrder.id != order.id,
+                models.PurchaseOrder.status.in_(['in_transit', 'partial']),
+            )
+            .count()
+        )
+        if active_other == 0:
+            _sync_wish_status_for_order(db, order, 'pending')
     db.commit()
     return {"message": "Заказ отменён"}
 
@@ -330,7 +453,8 @@ def restore_purchase_order(order_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="PurchaseOrder not found")
     if order.status != 'cancelled':
         raise HTTPException(status_code=400, detail="Only cancelled orders can be restored")
-    order.status = 'in_transit'
+    order.status = 'partial' if order.quantity_received > 0 else 'in_transit'
+    _sync_wish_status_for_order(db, order, 'ordered')
     db.commit()
     return {"message": "Заказ восстановлен"}
 
@@ -343,5 +467,20 @@ def delete_purchase_order(order_id: int, db: Session = Depends(get_db)):
     order = db.query(models.PurchaseOrder).filter(models.PurchaseOrder.id == order_id).first()
     if not order:
         raise HTTPException(status_code=404, detail="PurchaseOrder not found")
+    wish_id = order.wish_item_id
     db.delete(order)
+    db.flush()
+    if wish_id:
+        active_other = (
+            db.query(models.PurchaseOrder)
+            .filter(
+                models.PurchaseOrder.wish_item_id == wish_id,
+                models.PurchaseOrder.status.in_(['in_transit', 'partial']),
+            )
+            .count()
+        )
+        if active_other == 0:
+            wish = db.query(models.WishItem).filter(models.WishItem.id == wish_id).first()
+            if wish and wish.status == 'ordered':
+                wish.status = 'pending'
     db.commit()

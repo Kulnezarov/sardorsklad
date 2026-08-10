@@ -3,14 +3,16 @@ import { createPortal } from 'react-dom';
 import { useNavigate, useSearchParams, useLocation } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
+import * as XLSX from 'xlsx';
 import {
   FiPlus, FiX, FiPackage, FiTruck, FiShoppingCart, FiCheck,
   FiCamera, FiTrash2, FiEdit2, FiRefreshCw,
   FiChevronDown, FiChevronRight, FiAlertTriangle, FiRotateCcw, FiSearch,
+  FiDownload, FiBox,
 } from 'react-icons/fi';
 import { wishApi, poApi } from '../api/reserve';
 import { settingsApi } from '../api/settings';
-import { categoryApi, fetchAllProducts, getApiErrorMessage } from '../api/client';
+import { categoryApi, compatibilityApi, fetchAllProducts, getApiErrorMessage } from '../api/client';
 import { generateEAN13 } from '../utils/barcodeGen';
 import CategoryPicker, { findCategoryInTree, findGroupIdForCategory } from '../components/CategoryPicker';
 import ProductFormByLayout from '../components/ProductFormByLayout';
@@ -151,40 +153,137 @@ function PhotoZone({ photoData, onPhoto, onRemove }) {
 }
 
 /* ── Wish Card ── */
-function WishCard({ item, categoryLabel, onOrder, onEdit, onDelete }) {
+function WishCard({ item, categoryLabel, stockProduct, carsLabel, onOrder, onEdit, onDelete, index = 0 }) {
   const cat = getCatColor(categoryLabel || item.category);
+  const qty = item.quantity || 1;
   return (
-    <div className="wish-card">
+    <article className="wish-card" style={{ '--card-i': Math.min(index, 8) }}>
       <div className="wish-card-photo">
         {item.photo_data
           ? <img src={item.photo_data} alt={item.name} />
-          : <div className="wish-card-photo-placeholder"><FiPackage size={28} /><span>Нет фото</span></div>
+          : <div className="wish-card-photo-placeholder"><FiPackage size={26} /><span>Нет фото</span></div>
         }
+        <span className="wish-card-qty-pill">{qty} шт.</span>
       </div>
       <div className="wish-card-body">
-        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8, marginBottom: 4 }}>
-          <div style={{ fontWeight: 800, fontSize: 15, color: 'var(--text)', lineHeight: 1.25, flex: 1 }}>{item.name}</div>
-          <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
-            <button type="button" onClick={() => onEdit(item)} className="wish-icon-btn"><FiEdit2 size={13} /></button>
-            <button type="button" onClick={() => onDelete(item)} className="wish-icon-btn wish-icon-btn-danger"><FiTrash2 size={13} /></button>
+        <div className="wish-card-top">
+          <h3 className="wish-card-title">{item.name}</h3>
+          <div className="wish-card-actions">
+            <button type="button" onClick={() => onEdit(item)} className="wish-icon-btn" aria-label="Редактировать"><FiEdit2 size={13} /></button>
+            <button type="button" onClick={() => onDelete(item)} className="wish-icon-btn wish-icon-btn-danger" aria-label="Удалить"><FiTrash2 size={13} /></button>
           </div>
         </div>
-        {item.brand && <div style={{ fontSize: 12, color: 'var(--text-muted)', fontWeight: 500, marginBottom: 6 }}>{item.brand}</div>}
-        {categoryLabel && (
-          <span style={{ display: 'inline-block', padding: '2px 10px', borderRadius: 100, fontSize: 11, fontWeight: 700, background: cat.bg, color: cat.color, marginBottom: 8 }}>
-            {categoryLabel}
-          </span>
-        )}
-        {item.notes && (
-          <div style={{ fontSize: 12, color: 'var(--text-muted)', fontStyle: 'italic', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', marginBottom: 8 }}>
-            {item.notes}
-          </div>
-        )}
+        <div className="wish-card-meta">
+          {categoryLabel && (
+            <span className="wish-pill" style={{ background: cat.bg, color: cat.color }}>{categoryLabel}</span>
+          )}
+          {stockProduct && (
+            <span className="wish-pill wish-pill--stock">
+              <FiBox size={11} /> Склад: {stockProduct.quantity ?? 0}
+            </span>
+          )}
+        </div>
+        {carsLabel && <p className="wish-card-cars">Авто: {carsLabel}</p>}
+        {item.notes && <p className="wish-card-notes">{item.notes}</p>}
         <button type="button" onClick={() => onOrder(item)} className="wish-order-btn">
-          Заказать →
+          Заказать
         </button>
       </div>
-    </div>
+    </article>
+  );
+}
+
+/* ── PO Card (mobile + compact) ── */
+function PoCard({
+  po, categoryLabel, stockQty, onAccept, onCancel, onRestore, onDelete, cancelled = false, index = 0,
+}) {
+  const days = daysSince(po.ordered_at);
+  const remaining = po.quantity_ordered - po.quantity_received;
+  const isPartial = po.status === 'partial';
+  const pct = po.quantity_ordered ? po.quantity_received / po.quantity_ordered : 0;
+  const daysTone = days > 30 ? 'red' : days > 14 ? 'amber' : 'green';
+
+  return (
+    <article
+      className={`po-card${isPartial ? ' po-card--partial' : ''}${cancelled ? ' po-card--cancelled' : ''}`}
+      style={{ '--card-i': Math.min(index, 8) }}
+    >
+      <div className="po-card-head">
+        <div className="po-thumb">
+          {po.photo_data
+            ? <img src={po.photo_data} alt={po.name} />
+            : <FiPackage size={20} />
+          }
+        </div>
+        <div className="po-card-head-text">
+          <div className="po-card-title">{po.name}</div>
+          <div className="po-card-sub">
+            {[categoryLabel, stockQty != null ? `склад ${stockQty}` : null].filter(Boolean).join(' · ') || '—'}
+          </div>
+        </div>
+        {!cancelled && (
+          <span className={`po-status-badge ${isPartial ? 'po-status-partial' : 'po-status-transit'}`}>
+            {isPartial ? 'Частично' : 'В пути'}
+          </span>
+        )}
+        {cancelled && <span className="po-status-badge po-status-cancelled">Отменён</span>}
+      </div>
+
+      <div className="po-card-grid">
+        <div className="po-card-cell">
+          <span className="po-card-label">Кол-во</span>
+          <span className="po-card-value">
+            {isPartial ? `${remaining} / ${po.quantity_ordered}` : `${po.quantity_ordered} шт.`}
+          </span>
+          {isPartial && (
+            <div className="po-progress-bar">
+              <div className="po-progress-fill" style={{ width: `${pct * 100}%` }} />
+            </div>
+          )}
+        </div>
+        <div className="po-card-cell">
+          <span className="po-card-label">Цена ¥</span>
+          <span className="po-card-value">
+            {po.price_cny != null ? `¥ ${money(po.price_cny)}` : '—'}
+          </span>
+          {po.price_kzt != null && (
+            <span className="po-card-hint">≈ ₸ {money(po.price_kzt)}</span>
+          )}
+        </div>
+        <div className="po-card-cell">
+          <span className="po-card-label">В пути</span>
+          <span className={`days-badge days-badge-${daysTone}`}>{daysLabel(days)}</span>
+        </div>
+        {po.barcode && (
+          <div className="po-card-cell po-card-cell--wide">
+            <span className="po-card-label">Штрих-код</span>
+            <span className="po-card-value po-card-mono">{po.barcode}</span>
+          </div>
+        )}
+      </div>
+
+      <div className="po-card-actions">
+        {cancelled ? (
+          <>
+            <button type="button" onClick={onRestore} className="po-action-btn po-action-amber">
+              <FiRotateCcw size={13} /> Восстановить
+            </button>
+            <button type="button" onClick={onDelete} className="po-action-btn po-action-red">
+              <FiTrash2 size={13} />
+            </button>
+          </>
+        ) : (
+          <>
+            <button type="button" onClick={onAccept} className="po-action-btn po-action-green">
+              <FiCheck size={13} /> {isPartial ? 'Принять ещё' : 'Принять'}
+            </button>
+            <button type="button" onClick={onCancel} className="po-action-btn po-action-red">
+              <FiX size={13} /> Отменить
+            </button>
+          </>
+        )}
+      </div>
+    </article>
   );
 }
 
@@ -192,36 +291,32 @@ function WishCard({ item, categoryLabel, onOrder, onEdit, onDelete }) {
 function Modal({ isOpen, onClose, title, children, maxWidth = 480, tall = false }) {
   if (!isOpen) return null;
   return createPortal(
-    <div
-      className="reserve-modal-overlay"
-      onClick={onClose}
-    >
+    <div className="reserve-modal-overlay" onClick={onClose}>
       <div
         className={`reserve-modal-box${tall ? ' reserve-modal-box--tall' : ''}`}
         onClick={(e) => e.stopPropagation()}
         style={{ maxWidth }}
       >
+        <div className="reserve-modal-grab" aria-hidden="true" />
         <div className="reserve-modal-header">
-          <div style={{ fontWeight: 800, fontSize: 17, color: 'var(--text)' }}>{title}</div>
-          <button type="button" onClick={onClose} style={{ width: 32, height: 32, borderRadius: 10, border: '1px solid var(--border)', background: 'var(--bg-secondary)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', flexShrink: 0 }}>
+          <div className="reserve-modal-title">{title}</div>
+          <button type="button" onClick={onClose} className="reserve-modal-close" aria-label="Закрыть">
             <FiX size={16} />
           </button>
         </div>
-        <div className="reserve-modal-body">
-          {children}
-        </div>
+        <div className="reserve-modal-body">{children}</div>
       </div>
     </div>,
-    document.body
+    document.body,
   );
 }
 
 /* ── Field ── */
 function Field({ label, children, required }) {
   return (
-    <div style={{ marginBottom: 14 }}>
-      <label style={{ display: 'block', fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 7 }}>
-        {label}{required && <span style={{ color: 'var(--danger)', marginLeft: 2 }}>*</span>}
+    <div className="reserve-field">
+      <label className="reserve-field-label">
+        {label}{required && <span className="reserve-field-req">*</span>}
       </label>
       {children}
     </div>
@@ -255,13 +350,16 @@ const Reserve = () => {
   // ── Wish form ──
   const emptyWish = () => ({
     name: '', brand: '', category: '', category_group_id: null, category_id: null,
+    product_id: null, quantity: 1, compatibility_vehicle_model_ids: [],
     notes: '', photo_data: '',
   });
   const [wishForm, setWishForm] = useState(emptyWish());
+  const [wishCompatKey, setWishCompatKey] = useState(0);
 
   // ── Order (PurchaseOrder) form ──
   const [poForm, setPoForm] = useState({
     barcode: '', supplier: '', price_cny: '', quantity_ordered: 1, notes: '',
+    name: '', category_group_id: null, category_id: null, category: '',
   });
 
   // ── Accept form ──
@@ -307,7 +405,46 @@ const Reserve = () => {
     staleTime: 120_000,
   });
 
+  const { data: vehicleBrands = [] } = useQuery({
+    queryKey: ['compatibility', 'vehicle-brands'],
+    queryFn: () => compatibilityApi.vehicleBrands().then((r) => r.data),
+    staleTime: 60_000,
+  });
+
+  const { data: vehicleModels = [] } = useQuery({
+    queryKey: ['compatibility', 'vehicle-models'],
+    queryFn: () => compatibilityApi.vehicleModels().then((r) => r.data),
+    staleTime: 60_000,
+  });
+
   const cnyRate = Number(settings?.cny_rate || 67);
+
+  const productsById = useMemo(() => {
+    const map = new Map();
+    products.forEach((p) => map.set(p.id, p));
+    return map;
+  }, [products]);
+
+  const carsLabelsForIds = useCallback((ids, { full = false } = {}) => {
+    const list = normalizeCompatIds(ids);
+    if (!list.length) return '';
+    const labels = list
+      .map((id) => {
+        const m = vehicleModels.find((x) => Number(x.id) === id);
+        if (!m) return null;
+        const brand = vehicleBrands.find((b) => b.id === m.vehicle_brand_id);
+        return brand ? `${brand.name} ${m.name}` : m.name;
+      })
+      .filter(Boolean);
+    if (!labels.length) return `${list.length} мод.`;
+    if (full || labels.length <= 2) return labels.join(', ');
+    return `${labels.slice(0, 2).join(', ')} +${labels.length - 2}`;
+  }, [vehicleModels, vehicleBrands]);
+
+  const carsLabelForIds = useCallback(
+    (ids) => carsLabelsForIds(ids, { full: false }),
+    [carsLabelsForIds],
+  );
 
   const categoryFilterOptions = useMemo(() => {
     const opts = [{ id: null, label: 'Все категории', count: wishItems.length }];
@@ -482,10 +619,11 @@ const Reserve = () => {
 
   const acceptMutation = useMutation({
     mutationFn: ({ id, data }) => poApi.accept(id, data),
-    onSuccess: () => {
+    onSuccess: (res) => {
       queryClient.invalidateQueries(['purchase-orders']);
       queryClient.invalidateQueries(['products']);
-      toast.success('Товар добавлен в склад! ✅');
+      queryClient.invalidateQueries(['wish-items']);
+      toast.success(res?.data?.merged ? 'Количество добавлено к товару на складе' : 'Товар добавлен в склад');
       setAcceptPO(null);
       setAcceptForm(emptyAccept());
     },
@@ -494,18 +632,64 @@ const Reserve = () => {
 
   const cancelPO = useMutation({
     mutationFn: (id) => poApi.cancel(id),
-    onSuccess: () => { queryClient.invalidateQueries(['purchase-orders']); toast.success('Заказ отменён'); },
+    onSuccess: () => {
+      queryClient.invalidateQueries(['purchase-orders']);
+      queryClient.invalidateQueries(['wish-items']);
+      toast.success('Заказ отменён — позиция снова в «Нужно заказать»');
+    },
   });
 
   const restorePO = useMutation({
     mutationFn: (id) => poApi.restore(id),
-    onSuccess: () => { queryClient.invalidateQueries(['purchase-orders']); toast.success('Заказ восстановлен'); },
+    onSuccess: () => {
+      queryClient.invalidateQueries(['purchase-orders']);
+      queryClient.invalidateQueries(['wish-items']);
+      toast.success('Заказ восстановлен');
+    },
   });
 
   const deletePO = useMutation({
     mutationFn: (id) => poApi.delete(id),
-    onSuccess: () => { queryClient.invalidateQueries(['purchase-orders']); toast.success('Удалено'); },
+    onSuccess: () => {
+      queryClient.invalidateQueries(['purchase-orders']);
+      queryClient.invalidateQueries(['wish-items']);
+      toast.success('Удалено');
+    },
   });
+
+  const ordersBySupplier = useMemo(() => {
+    const groups = new Map();
+    activeOrders.forEach((po) => {
+      const key = (po.supplier || '').trim() || 'Без поставщика';
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(po);
+    });
+    return [...groups.entries()].sort((a, b) => a[0].localeCompare(b[0], 'ru'));
+  }, [activeOrders]);
+
+  const linkedProductForWish = useCallback((item) => {
+    if (!item?.product_id) return null;
+    return productsById.get(item.product_id) || null;
+  }, [productsById]);
+
+  const exportWishExcel = () => {
+    const rows = pendingWishItems.map((w) => ({
+      'Название': w.name || '',
+      'Марка / модель': carsLabelsForIds(w.compatibility_vehicle_model_ids, { full: true }) || '',
+      'Количество': w.quantity || 1,
+      'Доп. информация': w.notes || '',
+    }));
+    if (!rows.length) {
+      toast.error('Нет позиций для выгрузки');
+      return;
+    }
+    const ws = XLSX.utils.json_to_sheet(rows);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Нужно заказать');
+    const stamp = new Date().toISOString().slice(0, 10);
+    XLSX.writeFile(wb, `nuzhno_zakazat_${stamp}.xlsx`);
+    toast.success('Excel скачан');
+  };
 
   /** Дашборд / ссылка → открыть форму «Нужно заказать» с автозаполнением */
   useEffect(() => {
@@ -520,9 +704,13 @@ const Reserve = () => {
       category: prefill.category || '',
       category_group_id: findGroupIdForCategory(categoryTree, categoryId),
       category_id: Number.isFinite(categoryId) && categoryId > 0 ? categoryId : null,
+      product_id: prefill.product_id || null,
+      quantity: prefill.quantity || 1,
+      compatibility_vehicle_model_ids: normalizeCompatIds(prefill.compatibility_vehicle_model_ids),
       notes: prefill.notes || '',
       photo_data: prefill.photo_data || '',
     });
+    setWishCompatKey((k) => k + 1);
     setEditWish(null);
     setShowWishModal(true);
     setMainTab('wish');
@@ -547,9 +735,13 @@ const Reserve = () => {
       category,
       category_group_id: findGroupIdForCategory(categoryTree, category_id),
       category_id: Number.isFinite(category_id) && category_id > 0 ? category_id : null,
+      product_id: null,
+      quantity: 1,
+      compatibility_vehicle_model_ids: [],
       notes: '',
       photo_data: '',
     });
+    setWishCompatKey((k) => k + 1);
     setEditWish(null);
     setShowWishModal(true);
     setMainTab('wish');
@@ -564,7 +756,13 @@ const Reserve = () => {
   }, [showWishModal, wishForm.category_id, wishForm.category_group_id, categoryTree]);
 
   // ── Handlers ──
-  const openAddWish = () => { setWishForm(emptyWish()); setEditWish(null); setShowWishModal(true); setShowNameSuggestions(false); };
+  const openAddWish = () => {
+    setWishForm(emptyWish());
+    setWishCompatKey((k) => k + 1);
+    setEditWish(null);
+    setShowWishModal(true);
+    setShowNameSuggestions(false);
+  };
 
   const openEditWish = (item) => {
     setEditWish(item);
@@ -574,9 +772,13 @@ const Reserve = () => {
       category: item.category || '',
       category_group_id: findGroupIdForCategory(categoryTree, item.category_id),
       category_id: item.category_id || null,
+      product_id: item.product_id || null,
+      quantity: item.quantity || 1,
+      compatibility_vehicle_model_ids: normalizeCompatIds(item.compatibility_vehicle_model_ids),
       notes: item.notes || '',
       photo_data: item.photo_data || '',
     });
+    setWishCompatKey((k) => k + 1);
     setShowWishModal(true);
     setShowNameSuggestions(false);
   };
@@ -588,11 +790,14 @@ const Reserve = () => {
       category_group_id: groupId,
       category_id: categoryId,
       category: sub?.name || prev.category,
+      // смена категории сбрасывает привязку к складу, если выбрали другую
+      product_id: prev.category_id && categoryId !== prev.category_id ? null : prev.product_id,
     }));
   };
 
   const applyProductSuggestion = (product) => {
     const gid = findGroupIdForCategory(categoryTree, product.category_id);
+    const compatIds = (product.compatibility?.vehicle_models || []).map((x) => x.id);
     setWishForm((prev) => ({
       ...prev,
       name: product.name || prev.name,
@@ -600,33 +805,90 @@ const Reserve = () => {
       category_id: product.category_id || prev.category_id,
       category_group_id: gid || prev.category_group_id,
       category: product.category || prev.category,
+      product_id: product.id,
       photo_data: product.image_url || prev.photo_data,
+      compatibility_vehicle_model_ids: compatIds.length ? normalizeCompatIds(compatIds) : prev.compatibility_vehicle_model_ids,
     }));
+    setWishCompatKey((k) => k + 1);
     setShowNameSuggestions(false);
   };
 
-  const openOrderWish = (item) => { setOrderWish(item); setPoForm({ barcode: generateEAN13(), supplier: '', price_cny: '', quantity_ordered: 1, notes: item.notes || '' }); };
+  const openOrderWish = (item) => {
+    const linked = linkedProductForWish(item);
+    setOrderWish(item);
+    if (linked) {
+      setPoForm({
+        barcode: linked.barcode || '',
+        supplier: linked.supplier || '',
+        price_cny: linked.cny_price != null ? String(linked.cny_price) : '',
+        quantity_ordered: item.quantity || 1,
+        notes: item.notes || '',
+        name: linked.name || item.name,
+        category_group_id: findGroupIdForCategory(categoryTree, linked.category_id || item.category_id),
+        category_id: linked.category_id || item.category_id || null,
+        category: linked.category || item.category || '',
+      });
+    } else {
+      setPoForm({
+        barcode: generateEAN13(),
+        supplier: '',
+        price_cny: '',
+        quantity_ordered: item.quantity || 1,
+        notes: item.notes || '',
+        name: item.name || '',
+        category_group_id: findGroupIdForCategory(categoryTree, item.category_id),
+        category_id: item.category_id || null,
+        category: item.category || '',
+      });
+    }
+  };
+
   const openAccept = (po) => {
     setAcceptPO(po);
     const remaining = po.quantity_ordered - po.quantity_received;
+    const linked = po.product_id ? productsById.get(po.product_id) : null;
+    const barcodeMatch = !linked && po.barcode
+      ? products.find((p) => p.barcode && p.barcode === po.barcode)
+      : null;
+    const existing = linked || barcodeMatch;
     setAcceptForm({
       ...emptyAccept(),
       quantity_received: remaining,
-      purchase_price_kzt: po.price_kzt ? String(Math.round(Number(po.price_kzt))) : '',
+      purchase_price_kzt: po.price_kzt
+        ? String(Math.round(Number(po.price_kzt)))
+        : (existing?.purchase_price != null ? String(Math.round(Number(existing.purchase_price))) : ''),
+      sale_price_kzt: existing?.sale_price != null ? String(Math.round(Number(existing.sale_price))) : '',
+      delivery_cost_kzt: existing?.delivery_cost_kzt != null ? String(Math.round(Number(existing.delivery_cost_kzt))) : '',
       notes: po.notes || '',
-      brand: po.brand || '',
+      brand: po.brand || existing?.brand || '',
+      compatibility_vehicle_model_ids: [],
     });
     setAcceptCompatKey((k) => k + 1);
     setAcceptEngineKey((k) => k + 1);
   };
 
+  const acceptExistingProduct = useMemo(() => {
+    if (!acceptPO) return null;
+    if (acceptPO.product_id) return productsById.get(acceptPO.product_id) || null;
+    if (acceptPO.barcode) return products.find((p) => p.barcode && p.barcode === acceptPO.barcode) || null;
+    return null;
+  }, [acceptPO, productsById, products]);
+
+  const orderLinkedProduct = useMemo(() => {
+    if (!orderWish?.product_id) return null;
+    return productsById.get(orderWish.product_id) || null;
+  }, [orderWish, productsById]);
+
   const saveWish = () => {
-    if (!wishForm.name.trim()) { toast.error('Введите название'); return; }
     if (!wishForm.category_id) { toast.error('Выберите категорию'); return; }
+    if (!wishForm.name.trim()) { toast.error('Введите название'); return; }
     const data = {
       name: wishForm.name.trim(),
       brand: wishForm.brand || null,
       category_id: wishForm.category_id,
+      product_id: wishForm.product_id || null,
+      quantity: Number(wishForm.quantity) || 1,
+      compatibility_vehicle_model_ids: normalizeCompatIds(wishForm.compatibility_vehicle_model_ids),
       notes: wishForm.notes || null,
       photo_data: wishForm.photo_data || null,
     };
@@ -636,15 +898,26 @@ const Reserve = () => {
 
   const saveOrder = () => {
     if (!orderWish) return;
+    const isExisting = Boolean(orderWish.product_id && orderLinkedProduct);
+    if (!isExisting) {
+      if (!poForm.category_id) { toast.error('Выберите категорию'); return; }
+      if (!poForm.name.trim()) { toast.error('Введите название'); return; }
+    }
+    if (!poForm.price_cny) { toast.error('Укажите цену закупки (¥)'); return; }
     const data = {
       wish_item_id: orderWish.id,
-      name: orderWish.name,
-      brand: orderWish.brand,
-      category_id: orderWish.category_id || null,
-      photo_data: orderWish.photo_data,
-      barcode: poForm.barcode || null,
+      product_id: isExisting ? orderWish.product_id : null,
+      name: isExisting ? orderLinkedProduct.name : poForm.name.trim(),
+      brand: isExisting ? (orderLinkedProduct.brand || null) : (orderWish.brand || null),
+      category_id: isExisting
+        ? (orderLinkedProduct.category_id || null)
+        : (poForm.category_id || null),
+      photo_data: orderWish.photo_data || (isExisting ? orderLinkedProduct.image_url : null),
+      barcode: isExisting
+        ? (orderLinkedProduct.barcode || null)
+        : (poForm.barcode || null),
       supplier: poForm.supplier || null,
-      price_cny: poForm.price_cny ? Number(poForm.price_cny) : null,
+      price_cny: Number(poForm.price_cny),
       price_kzt: cnyKzt || null,
       cny_rate: cnyRate,
       quantity_ordered: Number(poForm.quantity_ordered) || 1,
@@ -656,7 +929,8 @@ const Reserve = () => {
   const saveAccept = () => {
     if (!acceptPO) return;
     if (!acceptForm.sale_price_kzt) { toast.error('Укажите продажную цену'); return; }
-    if (showAcceptEngine) {
+    const merging = Boolean(acceptExistingProduct);
+    if (!merging && showAcceptEngine) {
       const efs = normalizeCompatIds(acceptForm.compatibility_engine_family_ids);
       if (acceptEngineSingle && efs.length !== 1) {
         toast.error('Укажите ровно один код мотора');
@@ -679,11 +953,14 @@ const Reserve = () => {
         storage_location: acceptForm.storage_location || null,
         keep_remainder: acceptForm.keep_remainder,
         notes: acceptForm.notes || null,
-        brand: acceptForm.brand || null,
-        model: acceptForm.model || null,
-        attributes: acceptForm.attributes && Object.keys(acceptForm.attributes).length ? acceptForm.attributes : null,
-        compatibility_vehicle_model_ids: vIds.length ? vIds : null,
-        compatibility_engine_family_ids: eIds.length ? eIds : null,
+        brand: merging ? null : (acceptForm.brand || null),
+        model: merging ? null : (acceptForm.model || null),
+        attributes: !merging && acceptForm.attributes && Object.keys(acceptForm.attributes).length
+          ? acceptForm.attributes
+          : null,
+        compatibility_vehicle_model_ids: !merging && vIds.length ? vIds : null,
+        compatibility_engine_family_ids: !merging && eIds.length ? eIds : null,
+        product_id: acceptExistingProduct?.id || null,
       },
     });
   };
@@ -691,10 +968,14 @@ const Reserve = () => {
   const acceptCompatSlot = showAcceptCompat ? (
     <VehicleCompatibilityPicker
       key={`accept-compat-${acceptCompatKey}`}
+      brands={vehicleBrands}
+      models={vehicleModels}
       initialSelectedIds={acceptForm.compatibility_vehicle_model_ids}
       onChange={(ids) => setAcceptForm((f) => ({ ...f, compatibility_vehicle_model_ids: normalizeCompatIds(ids) }))}
     />
   ) : null;
+
+  const wishLinkedStock = wishForm.product_id ? productsById.get(wishForm.product_id) : null;
 
   const acceptEngineSlot = showAcceptEngine ? (
     <EngineFamilyPicker
@@ -706,84 +987,70 @@ const Reserve = () => {
     />
   ) : null;
 
+  const pendingCount = wishItems.filter((w) => w.status === 'pending').length;
+
   // ────────────────────────────────────────────────────────────────────────────
   return (
     <div className="reserve-shell">
-
-      {/* ══ BOTTOM TAB BAR (desktop) ══ */}
-      <nav className="reserve-dock" aria-label="Разделы резерва">
-        <button type="button" className={`reserve-dock-tab ${mainTab === 'wish' ? 'active' : ''}`} onClick={() => setMainTab('wish')}>
-          <FiShoppingCart size={20} />
-          <span>Нужно заказать</span>
-          {wishItems.filter((w) => w.status === 'pending').length > 0 && (
-            <span className="dock-badge">{wishItems.filter((w) => w.status === 'pending').length}</span>
-          )}
-        </button>
-        <button type="button" className={`reserve-dock-tab ${mainTab === 'orders' ? 'active' : ''}`} onClick={() => setMainTab('orders')}>
-          <FiTruck size={20} />
-          <span>Заказано</span>
-          {activeOrders.length > 0 && <span className="dock-badge">{activeOrders.length}</span>}
-        </button>
-      </nav>
-
-      {/* ══ MAIN CONTENT ══ */}
       <div className="reserve-content">
-
-        <div className="reserve-top-tabs" role="tablist" aria-label="Разделы резерва">
+        <div className="reserve-segment" role="tablist" aria-label="Разделы резерва">
           <button
             type="button"
             role="tab"
             aria-selected={mainTab === 'wish'}
-            className={`reserve-top-tab${mainTab === 'wish' ? ' reserve-top-tab--active' : ''}`}
+            className={`reserve-segment-btn${mainTab === 'wish' ? ' is-active' : ''}`}
             onClick={() => setMainTab('wish')}
           >
             <FiShoppingCart size={16} />
             <span>Нужно заказать</span>
-            {wishItems.filter((w) => w.status === 'pending').length > 0 && (
-              <span className="dock-badge">{wishItems.filter((w) => w.status === 'pending').length}</span>
-            )}
+            {pendingCount > 0 && <span className="reserve-seg-badge">{pendingCount}</span>}
           </button>
           <button
             type="button"
             role="tab"
             aria-selected={mainTab === 'orders'}
-            className={`reserve-top-tab${mainTab === 'orders' ? ' reserve-top-tab--active' : ''}`}
+            className={`reserve-segment-btn${mainTab === 'orders' ? ' is-active' : ''}`}
             onClick={() => setMainTab('orders')}
           >
             <FiTruck size={16} />
             <span>Заказано</span>
-            {activeOrders.length > 0 && <span className="dock-badge">{activeOrders.length}</span>}
+            {activeOrders.length > 0 && <span className="reserve-seg-badge">{activeOrders.length}</span>}
           </button>
         </div>
 
         {/* ── TAB 1: Нужно заказать ── */}
         {mainTab === 'wish' && (
           <>
-            {/* Header */}
             <div className="reserve-header">
-              <div>
-                <div style={{ fontSize: 22, fontWeight: 900, color: 'var(--text)' }}>Нужно заказать</div>
-                <div style={{ fontSize: 13, color: 'var(--text-muted)', fontWeight: 500, marginTop: 2 }}>
+              <div className="reserve-header-text">
+                <h1 className="reserve-title">Нужно заказать</h1>
+                <p className="reserve-subtitle">
                   {pendingWishItems.length} позиций ожидают заказа
-                  {wishCategoryFilter != null || wishSearch ? ` · показано ${pendingWishItems.length}` : ''}
-                </div>
+                </p>
               </div>
-              <div style={{ display: 'flex', gap: 8 }}>
+              <div className="reserve-header-actions">
+                <button
+                  type="button"
+                  onClick={exportWishExcel}
+                  className="reserve-secondary-btn"
+                  disabled={!pendingWishItems.length}
+                >
+                  <FiDownload size={15} /> Excel
+                </button>
                 <button type="button" onClick={openAddWish} className="reserve-primary-btn">
                   <FiPlus size={16} /> Добавить
                 </button>
               </div>
             </div>
 
-            <div style={{ display: 'flex', gap: 10, marginBottom: 14, flexWrap: 'wrap', alignItems: 'center' }}>
-              <div style={{ position: 'relative', flex: '1 1 200px', minWidth: 180, maxWidth: 360 }}>
-                <FiSearch size={15} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
+            <div className="reserve-toolbar">
+              <div className="reserve-search">
+                <FiSearch size={15} className="reserve-search-icon" />
                 <input
-                  className="ios-input"
-                  placeholder="Поиск по названию или марке…"
+                  className="ios-input reserve-search-input"
+                  placeholder="Поиск по названию…"
                   value={wishSearch}
                   onChange={(e) => setWishSearch(e.target.value)}
-                  style={{ paddingLeft: 36 }}
                 />
               </div>
             </div>
@@ -795,17 +1062,7 @@ const Reserve = () => {
                     key={opt.id ?? 'all'}
                     type="button"
                     onClick={() => setWishCategoryFilter(opt.id)}
-                    className={`reserve-chip${wishCategoryFilter === opt.id ? ' reserve-chip--active' : ''}`}
-                    style={{
-                      padding: '6px 12px',
-                      borderRadius: 100,
-                      border: wishCategoryFilter === opt.id ? '1px solid var(--primary)' : '1px solid var(--border)',
-                      background: wishCategoryFilter === opt.id ? 'rgba(99,102,241,0.12)' : 'var(--surface)',
-                      fontSize: 12,
-                      fontWeight: 700,
-                      cursor: 'pointer',
-                      color: wishCategoryFilter === opt.id ? 'var(--primary)' : 'var(--text-secondary)',
-                    }}
+                    className={`reserve-chip${wishCategoryFilter === opt.id ? ' is-active' : ''}`}
                   >
                     {opt.label} · {opt.count}
                   </button>
@@ -813,22 +1070,27 @@ const Reserve = () => {
               </div>
             )}
 
-            {/* Cards grid */}
             {wishLoading ? (
-              <div style={{ textAlign: 'center', padding: 60, color: 'var(--text-muted)' }}>Загрузка…</div>
+              <div className="reserve-loading">Загрузка…</div>
             ) : pendingWishItems.length === 0 ? (
               <div className="reserve-empty">
-                <FiShoppingCart size={40} />
-                <div style={{ fontWeight: 700, fontSize: 17, marginTop: 12 }}>Список пуст</div>
-                <div style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 6 }}>Добавьте товары, которые нужно заказать</div>
+                <div className="reserve-empty-icon"><FiShoppingCart size={28} /></div>
+                <div className="reserve-empty-title">Список пуст</div>
+                <div className="reserve-empty-text">Добавьте товары, которые нужно заказать</div>
+                <button type="button" onClick={openAddWish} className="reserve-primary-btn">
+                  <FiPlus size={16} /> Добавить товар
+                </button>
               </div>
             ) : (
               <div className="wish-grid">
-                {pendingWishItems.map((item) => (
+                {pendingWishItems.map((item, index) => (
                   <WishCard
                     key={item.id}
                     item={item}
+                    index={index}
                     categoryLabel={categoryLabelForItem(item, categoryTree)}
+                    stockProduct={linkedProductForWish(item)}
+                    carsLabel={carsLabelForIds(item.compatibility_vehicle_model_ids)}
                     onOrder={openOrderWish}
                     onEdit={openEditWish}
                     onDelete={(it) => { if (window.confirm(`Удалить "${it.name}"?`)) deleteWish.mutate(it.id); }}
@@ -837,25 +1099,25 @@ const Reserve = () => {
               </div>
             )}
 
-            {/* Already ordered */}
             {orderedWishItems.length > 0 && (
-              <div style={{ marginTop: 20, opacity: 0.6 }}>
-                <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 10, paddingLeft: 2 }}>
-                  Уже заказаны · {orderedWishItems.length}
-                </div>
+              <section className="reserve-section reserve-section--muted">
+                <h2 className="reserve-section-title">Уже заказаны · {orderedWishItems.length}</h2>
                 <div className="wish-grid">
-                  {orderedWishItems.map((item) => (
+                  {orderedWishItems.map((item, index) => (
                     <WishCard
                       key={item.id}
                       item={item}
+                      index={index}
                       categoryLabel={categoryLabelForItem(item, categoryTree)}
+                      stockProduct={linkedProductForWish(item)}
+                      carsLabel={carsLabelForIds(item.compatibility_vehicle_model_ids)}
                       onOrder={openOrderWish}
                       onEdit={openEditWish}
                       onDelete={(it) => { if (window.confirm(`Удалить "${it.name}"?`)) deleteWish.mutate(it.id); }}
                     />
                   ))}
                 </div>
-              </div>
+              </section>
             )}
           </>
         )}
@@ -863,206 +1125,237 @@ const Reserve = () => {
         {/* ── TAB 2: Заказано / В пути ── */}
         {mainTab === 'orders' && (
           <>
-            {/* Header */}
             <div className="reserve-header">
-              <div>
-                <div style={{ fontSize: 22, fontWeight: 900, color: 'var(--text)' }}>Заказано</div>
-                <div style={{ fontSize: 13, color: 'var(--text-muted)', fontWeight: 500, marginTop: 2 }}>
-                  Отслеживание заказов у поставщиков
-                </div>
+              <div className="reserve-header-text">
+                <h1 className="reserve-title">Заказано</h1>
+                <p className="reserve-subtitle">Заказы у поставщиков в пути</p>
               </div>
             </div>
 
-            {/* Stats bar */}
             {activeOrders.length > 0 && (
               <div className="reserve-stats-bar">
-                <span>🚚 В пути: <b>{activeOrders.length}</b> заказа</span>
-                <span className="stats-dot">·</span>
-                <span>Ожидается: <b>{totalExpected} шт.</b></span>
+                <div className="reserve-stat">
+                  <span className="reserve-stat-label">В пути</span>
+                  <span className="reserve-stat-value">{activeOrders.length}</span>
+                </div>
+                <div className="reserve-stat">
+                  <span className="reserve-stat-label">Ожидается</span>
+                  <span className="reserve-stat-value">{totalExpected} шт.</span>
+                </div>
                 {partialCount > 0 && (
-                  <>
-                    <span className="stats-dot">·</span>
-                    <button type="button" onClick={() => setPartialFilter((v) => !v)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 600, color: partialFilter ? 'var(--primary)' : 'var(--warning)', padding: 0, textDecoration: partialFilter ? 'underline' : 'none' }}>
-                      Частично принято: {partialCount}
-                    </button>
-                  </>
+                  <button
+                    type="button"
+                    onClick={() => setPartialFilter((v) => !v)}
+                    className={`reserve-stat reserve-stat--btn${partialFilter ? ' is-active' : ''}`}
+                  >
+                    <span className="reserve-stat-label">Частично</span>
+                    <span className="reserve-stat-value">{partialCount}</span>
+                  </button>
                 )}
               </div>
             )}
 
-            {/* Table */}
             {poLoading ? (
-              <div style={{ textAlign: 'center', padding: 60, color: 'var(--text-muted)' }}>Загрузка…</div>
+              <div className="reserve-loading">Загрузка…</div>
             ) : activeOrders.length === 0 && !partialFilter ? (
               <div className="reserve-empty">
-                <FiTruck size={40} />
-                <div style={{ fontWeight: 700, fontSize: 17, marginTop: 12 }}>Нет активных заказов</div>
-                <div style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 6 }}>
-                  Перейдите в «Нужно заказать» и нажмите «Заказать →»
-                </div>
+                <div className="reserve-empty-icon"><FiTruck size={28} /></div>
+                <div className="reserve-empty-title">Нет активных заказов</div>
+                <div className="reserve-empty-text">Перейдите в «Нужно заказать» и оформите заказ</div>
               </div>
             ) : (
-              <div className="po-table-wrap">
-                <table className="po-table">
-                  <thead>
-                    <tr>
-                      <th style={{ width: 56 }}></th>
-                      <th>Товар</th>
-                      <th>Штрих-код</th>
-                      <th>Кол-во</th>
-                      <th>Цена (юань)</th>
-                      <th>Поставщик</th>
-                      <th>Дней в пути</th>
-                      <th>Статус</th>
-                      <th style={{ width: 180 }}>Действия</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {activeOrders.map((po) => {
-                      const days = daysSince(po.ordered_at);
-                      const remaining = po.quantity_ordered - po.quantity_received;
-                      const isPartial = po.status === 'partial';
-                      const pct = po.quantity_received / po.quantity_ordered;
-                      return (
-                        <tr key={po.id} className={`po-row ${isPartial ? 'po-row-partial' : ''}`}>
-                          <td>
-                            <div className="po-thumb">
-                              {po.photo_data
-                                ? <img src={po.photo_data} alt={po.name} />
-                                : <FiPackage size={20} style={{ color: 'var(--text-muted)' }} />
-                              }
-                            </div>
-                          </td>
-                          <td>
-                            <div style={{ fontWeight: 700, fontSize: 14, color: 'var(--text)' }}>{po.name}</div>
-                            {(po.brand || po.category || po.category_id) && (
-                              <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>
-                                {[po.brand, categoryLabelForItem(po, categoryTree) || po.category].filter(Boolean).join(' · ')}
-                              </div>
-                            )}
-                          </td>
-                          <td><span style={{ fontFamily: 'ui-monospace,monospace', fontSize: 12, color: 'var(--text-muted)' }}>{po.barcode || '—'}</span></td>
-                          <td>
-                            {isPartial ? (
-                              <div>
-                                <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--warning)' }}>
-                                  {remaining} / {po.quantity_ordered}
-                                </div>
-                                <div className="po-progress-bar">
-                                  <div className="po-progress-fill" style={{ width: `${pct * 100}%` }} />
-                                </div>
-                                <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
-                                  {po.quantity_received} принято
-                                </div>
-                              </div>
-                            ) : (
-                              <span style={{ fontWeight: 700, fontSize: 14 }}>{po.quantity_ordered} шт.</span>
-                            )}
-                          </td>
-                          <td>
-                            {po.price_cny
-                              ? <><b>¥ {money(po.price_cny)}</b><div style={{ fontSize: 11, color: 'var(--text-muted)' }}>≈ ₸ {money(po.price_kzt)}</div></>
-                              : <span style={{ color: 'var(--text-muted)' }}>—</span>
+              <div className="po-groups">
+                {ordersBySupplier.map(([supplier, orders]) => (
+                  <section key={supplier} className="po-group">
+                    <div className="po-group-head">
+                      <h2 className="po-group-title">{supplier}</h2>
+                      <span className="po-group-count">{orders.length}</span>
+                    </div>
+
+                    {/* Mobile cards */}
+                    <div className="po-cards">
+                      {orders.map((po, index) => (
+                        <PoCard
+                          key={po.id}
+                          po={po}
+                          index={index}
+                          categoryLabel={categoryLabelForItem(po, categoryTree) || po.category}
+                          stockQty={po.product_id ? productsById.get(po.product_id)?.quantity : null}
+                          onAccept={() => openAccept(po)}
+                          onCancel={() => {
+                            if (window.confirm('Отменить заказ? Позиция вернётся в «Нужно заказать».')) {
+                              cancelPO.mutate(po.id);
                             }
-                          </td>
-                          <td style={{ fontSize: 13, color: 'var(--text-secondary)' }}>{po.supplier || '—'}</td>
-                          <td>
-                            <div className={`days-badge ${days > 30 ? 'days-badge-red' : days > 14 ? 'days-badge-amber' : 'days-badge-green'}`}>
-                              🕒 {daysLabel(days)}
-                            </div>
-                          </td>
-                          <td>
-                            {isPartial
-                              ? <span className="po-status-badge po-status-partial">Частично 🔄</span>
-                              : <span className="po-status-badge po-status-transit">В пути 🚚</span>
-                            }
-                          </td>
-                          <td>
-                            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                              <button type="button" onClick={() => openAccept(po)} className="po-action-btn po-action-green">
-                                <FiCheck size={13} /> {isPartial ? 'Принять ещё' : 'Принять'}
-                              </button>
-                              <button type="button" onClick={() => { if (window.confirm('Отменить заказ?')) cancelPO.mutate(po.id); }} className="po-action-btn po-action-red">
-                                <FiX size={13} /> Отменить
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
+                          }}
+                        />
+                      ))}
+                    </div>
+
+                    {/* Laptop / desktop table */}
+                    <div className="po-table-wrap">
+                      <table className="po-table">
+                        <thead>
+                          <tr>
+                            <th style={{ width: 56 }} />
+                            <th>Товар</th>
+                            <th>Штрих-код</th>
+                            <th>Кол-во</th>
+                            <th>Цена ¥</th>
+                            <th>В пути</th>
+                            <th>Статус</th>
+                            <th style={{ width: 180 }}>Действия</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {orders.map((po) => {
+                            const days = daysSince(po.ordered_at);
+                            const remaining = po.quantity_ordered - po.quantity_received;
+                            const isPartial = po.status === 'partial';
+                            const pct = po.quantity_ordered ? po.quantity_received / po.quantity_ordered : 0;
+                            const stock = po.product_id ? productsById.get(po.product_id) : null;
+                            return (
+                              <tr key={po.id} className={`po-row${isPartial ? ' po-row-partial' : ''}`}>
+                                <td>
+                                  <div className="po-thumb">
+                                    {po.photo_data
+                                      ? <img src={po.photo_data} alt={po.name} />
+                                      : <FiPackage size={20} />
+                                    }
+                                  </div>
+                                </td>
+                                <td>
+                                  <div className="po-table-name">{po.name}</div>
+                                  <div className="po-table-sub">
+                                    {[categoryLabelForItem(po, categoryTree) || po.category, stock ? `склад ${stock.quantity ?? 0}` : null].filter(Boolean).join(' · ')}
+                                  </div>
+                                </td>
+                                <td><span className="po-card-mono">{po.barcode || '—'}</span></td>
+                                <td>
+                                  {isPartial ? (
+                                    <div>
+                                      <div className="po-table-warn">{remaining} / {po.quantity_ordered}</div>
+                                      <div className="po-progress-bar">
+                                        <div className="po-progress-fill" style={{ width: `${pct * 100}%` }} />
+                                      </div>
+                                    </div>
+                                  ) : (
+                                    <span className="po-table-qty">{po.quantity_ordered} шт.</span>
+                                  )}
+                                </td>
+                                <td>
+                                  {po.price_cny != null
+                                    ? <><b>¥ {money(po.price_cny)}</b><div className="po-card-hint">≈ ₸ {money(po.price_kzt)}</div></>
+                                    : '—'}
+                                </td>
+                                <td>
+                                  <span className={`days-badge ${days > 30 ? 'days-badge-red' : days > 14 ? 'days-badge-amber' : 'days-badge-green'}`}>
+                                    {daysLabel(days)}
+                                  </span>
+                                </td>
+                                <td>
+                                  <span className={`po-status-badge ${isPartial ? 'po-status-partial' : 'po-status-transit'}`}>
+                                    {isPartial ? 'Частично' : 'В пути'}
+                                  </span>
+                                </td>
+                                <td>
+                                  <div className="po-card-actions po-card-actions--inline">
+                                    <button type="button" onClick={() => openAccept(po)} className="po-action-btn po-action-green">
+                                      <FiCheck size={13} /> {isPartial ? 'Ещё' : 'Принять'}
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        if (window.confirm('Отменить заказ? Позиция вернётся в «Нужно заказать».')) {
+                                          cancelPO.mutate(po.id);
+                                        }
+                                      }}
+                                      className="po-action-btn po-action-red"
+                                    >
+                                      <FiX size={13} />
+                                    </button>
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </section>
+                ))}
               </div>
             )}
 
-            {/* Completed (hidden, recent) */}
             {completedOrders.length > 0 && (
-              <div style={{ marginTop: 20, opacity: 0.5 }}>
-                <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.07em', paddingLeft: 2 }}>
-                  Принято в склад · {completedOrders.length} заказов
-                </div>
+              <div className="reserve-section reserve-section--muted">
+                <h2 className="reserve-section-title">Принято в склад · {completedOrders.length}</h2>
               </div>
             )}
 
-            {/* Cancelled block */}
             {cancelledOrders.length > 0 && (
-              <div style={{ marginTop: 20 }}>
+              <div className="reserve-section">
                 <button
                   type="button"
                   onClick={() => setShowCancelledBlock((v) => !v)}
-                  style={{ background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, fontWeight: 700, color: 'var(--text-muted)', padding: '0 0 10px' }}
+                  className="reserve-collapse-btn"
                 >
                   {showCancelledBlock ? <FiChevronDown size={16} /> : <FiChevronRight size={16} />}
                   Отменённые · {cancelledOrders.length}
                 </button>
                 {showCancelledBlock && (
-                  <div className="po-table-wrap">
-                    <table className="po-table">
-                      <tbody>
-                        {cancelledOrders.map((po) => (
-                          <tr key={po.id} style={{ opacity: 0.6 }}>
-                            <td><div className="po-thumb">{po.photo_data ? <img src={po.photo_data} alt="" /> : <FiPackage size={20} />}</div></td>
-                            <td><div style={{ fontWeight: 700, fontSize: 14, textDecoration: 'line-through', color: 'var(--text-muted)' }}>{po.name}</div></td>
-                            <td colSpan={5}><span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{po.supplier || ''} · {po.quantity_ordered} шт.</span></td>
-                            <td><span className="po-status-badge po-status-cancelled">Отменён</span></td>
-                            <td>
-                              <div style={{ display: 'flex', gap: 6 }}>
-                                <button type="button" onClick={() => restorePO.mutate(po.id)} className="po-action-btn po-action-amber">
-                                  <FiRotateCcw size={13} /> Восстановить
-                                </button>
-                                <button type="button" onClick={() => { if (window.confirm('Удалить навсегда?')) deletePO.mutate(po.id); }} className="po-action-btn po-action-red">
-                                  <FiTrash2 size={13} />
-                                </button>
-                              </div>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                  <div className="po-cards">
+                    {cancelledOrders.map((po, index) => (
+                      <PoCard
+                        key={po.id}
+                        po={po}
+                        index={index}
+                        categoryLabel={po.supplier || ''}
+                        cancelled
+                        onRestore={() => restorePO.mutate(po.id)}
+                        onDelete={() => {
+                          if (window.confirm('Удалить навсегда?')) deletePO.mutate(po.id);
+                        }}
+                      />
+                    ))}
                   </div>
                 )}
               </div>
             )}
           </>
         )}
-      </div>{/* /reserve-content */}
+      </div>
 
       {/* ══════════════════════════════════════════════════════════════════════
           MODALS
       ══════════════════════════════════════════════════════════════════════ */}
 
       {/* ── Add / Edit Wish Item ── */}
-      <Modal isOpen={showWishModal || Boolean(editWish)} onClose={() => { setShowWishModal(false); setEditWish(null); setShowNameSuggestions(false); }} title={editWish ? 'Редактировать товар' : 'Добавить в список'} maxWidth={520}>
+      <Modal isOpen={showWishModal || Boolean(editWish)} onClose={() => { setShowWishModal(false); setEditWish(null); setShowNameSuggestions(false); }} title={editWish ? 'Редактировать товар' : 'Добавить в список'} maxWidth={560} tall>
+        <Field label="Категория" required>
+          <CategoryPicker
+            tree={categoryTree}
+            groupId={wishForm.category_group_id}
+            categoryId={wishForm.category_id}
+            onChange={handleWishCategoryChange}
+            stepCaption="Нужно заказать"
+            legacyCategoryText={wishForm.category}
+          />
+        </Field>
+
         <Field label="Фото товара">
           <PhotoZone photoData={wishForm.photo_data} onPhoto={(d) => setWishForm((f) => ({ ...f, photo_data: d }))} onRemove={() => setWishForm((f) => ({ ...f, photo_data: '' }))} />
         </Field>
+
         <Field label="Название" required>
           <div style={{ position: 'relative' }}>
             <input
               className="ios-input"
               placeholder="Название товара"
               value={wishForm.name}
-              onChange={(e) => { setWishForm((f) => ({ ...f, name: e.target.value })); setShowNameSuggestions(true); }}
+              onChange={(e) => {
+                setWishForm((f) => ({ ...f, name: e.target.value, product_id: null }));
+                setShowNameSuggestions(true);
+              }}
               onFocus={() => setShowNameSuggestions(true)}
               onBlur={() => setTimeout(() => setShowNameSuggestions(false), 150)}
               autoComplete="off"
@@ -1079,90 +1372,166 @@ const Reserve = () => {
                   >
                     <div style={{ fontWeight: 700, color: 'var(--text)' }}>{p.name}</div>
                     <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
-                      {[p.brand, p.category].filter(Boolean).join(' · ') || 'Из каталога'}
+                      {[p.sku, p.barcode, `склад ${p.quantity ?? 0}`].filter(Boolean).join(' · ') || 'Из каталога'}
                     </div>
                   </button>
                 ))}
               </div>
             )}
           </div>
+          {wishLinkedStock && (
+            <div style={{ marginTop: 8, padding: '8px 12px', borderRadius: 10, background: 'rgba(16,185,129,0.1)', border: '1px solid rgba(16,185,129,0.25)', fontSize: 12, fontWeight: 600, color: '#047857' }}>
+              Связь со складом: {wishLinkedStock.name}
+              {wishLinkedStock.sku ? ` · арт. ${wishLinkedStock.sku}` : ''}
+              {' · '}остаток {wishLinkedStock.quantity ?? 0} шт.
+              <button
+                type="button"
+                onClick={() => setWishForm((f) => ({ ...f, product_id: null }))}
+                style={{ marginLeft: 8, background: 'none', border: 'none', color: 'var(--danger)', fontWeight: 700, cursor: 'pointer', fontSize: 12 }}
+              >
+                отвязать
+              </button>
+            </div>
+          )}
         </Field>
-        <Field label="Марка">
-          <input className="ios-input" placeholder="Бренд / марка" value={wishForm.brand} onChange={(e) => setWishForm((f) => ({ ...f, brand: e.target.value }))} />
-        </Field>
-        <Field label="Категория" required>
-          <CategoryPicker
-            tree={categoryTree}
-            groupId={wishForm.category_group_id}
-            categoryId={wishForm.category_id}
-            onChange={handleWishCategoryChange}
-            stepCaption="Нужно заказать"
-            legacyCategoryText={wishForm.category}
+
+        <Field label="Для каких авто (марка–модель)">
+          <VehicleCompatibilityPicker
+            key={`wish-compat-${wishCompatKey}`}
+            brands={vehicleBrands}
+            models={vehicleModels}
+            initialSelectedIds={wishForm.compatibility_vehicle_model_ids}
+            onChange={(ids) => setWishForm((f) => ({ ...f, compatibility_vehicle_model_ids: normalizeCompatIds(ids) }))}
           />
         </Field>
+
+        <Field label="Количество" required>
+          <input
+            className="ios-input"
+            type="number"
+            min="1"
+            value={wishForm.quantity}
+            onChange={(e) => setWishForm((f) => ({ ...f, quantity: e.target.value }))}
+          />
+        </Field>
+
         <Field label="Доп. информация">
           <textarea className="ios-input" rows={3} placeholder="Артикул, особые характеристики, примечания..." value={wishForm.notes} onChange={(e) => setWishForm((f) => ({ ...f, notes: e.target.value }))} style={{ resize: 'vertical', minHeight: 70 }} />
         </Field>
-        <div style={{ display: 'flex', gap: 10, marginTop: 4 }}>
-          <button type="button" onClick={() => { setShowWishModal(false); setEditWish(null); }} style={{ flex: 1, padding: 13, borderRadius: 14, border: '1px solid var(--border)', background: 'var(--surface)', fontWeight: 600, fontSize: 14, cursor: 'pointer', color: 'var(--text-secondary)' }}>Отмена</button>
-          <button type="button" onClick={saveWish} disabled={createWish.isPending || updateWish.isPending} style={{ flex: 2, padding: 13, borderRadius: 14, border: 'none', background: 'linear-gradient(135deg,#6366f1,#7c3aed)', color: '#fff', fontWeight: 700, fontSize: 14, cursor: 'pointer' }}>
+
+        <div className="reserve-modal-actions">
+          <button type="button" onClick={() => { setShowWishModal(false); setEditWish(null); }} className="reserve-btn-ghost">Отмена</button>
+          <button type="button" onClick={saveWish} disabled={createWish.isPending || updateWish.isPending} className="reserve-btn-primary">
             {createWish.isPending || updateWish.isPending ? 'Сохранение…' : editWish ? 'Сохранить' : 'Добавить в список'}
           </button>
         </div>
       </Modal>
 
       {/* ── Place Order (PO) modal ── */}
-      <Modal isOpen={Boolean(orderWish)} onClose={() => setOrderWish(null)} title="Оформить заказ" maxWidth={460}>
+      <Modal isOpen={Boolean(orderWish)} onClose={() => setOrderWish(null)} title="Оформить заказ" maxWidth={480}>
         {orderWish && (
           <>
-            {/* Product preview */}
-            <div style={{ display: 'flex', gap: 14, alignItems: 'center', padding: '12px 14px', borderRadius: 16, background: 'var(--ios-grouped-bg)', border: '1px solid var(--border)', marginBottom: 20 }}>
-              {orderWish.photo_data
-                ? <img src={orderWish.photo_data} alt="" style={{ width: 56, height: 56, borderRadius: 12, objectFit: 'cover', flexShrink: 0 }} />
-                : <div style={{ width: 56, height: 56, borderRadius: 12, background: 'var(--bg-secondary)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}><FiPackage size={22} style={{ color: 'var(--text-muted)' }} /></div>
-              }
-              <div>
-                <div style={{ fontWeight: 800, fontSize: 15, color: 'var(--text)' }}>{orderWish.name}</div>
-                {orderWish.brand && <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>{orderWish.brand}</div>}
-              </div>
-            </div>
+            {orderLinkedProduct ? (
+              <>
+                <div style={{ padding: '12px 14px', borderRadius: 16, background: 'var(--ios-grouped-bg)', border: '1px solid var(--border)', marginBottom: 16 }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: '#047857', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8 }}>
+                    Существующий товар — данные не меняются
+                  </div>
+                  <div style={{ display: 'flex', gap: 14, alignItems: 'center' }}>
+                    {(orderWish.photo_data || orderLinkedProduct.image_url)
+                      ? <img src={orderWish.photo_data || orderLinkedProduct.image_url} alt="" style={{ width: 56, height: 56, borderRadius: 12, objectFit: 'cover', flexShrink: 0 }} />
+                      : <div style={{ width: 56, height: 56, borderRadius: 12, background: 'var(--bg-secondary)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}><FiPackage size={22} style={{ color: 'var(--text-muted)' }} /></div>
+                    }
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ fontWeight: 800, fontSize: 15, color: 'var(--text)' }}>{orderLinkedProduct.name}</div>
+                      <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4, lineHeight: 1.45 }}>
+                        {[
+                          orderLinkedProduct.sku ? `Арт. ${orderLinkedProduct.sku}` : null,
+                          orderLinkedProduct.barcode ? `ШК ${orderLinkedProduct.barcode}` : null,
+                          `Склад: ${orderLinkedProduct.quantity ?? 0} шт.`,
+                        ].filter(Boolean).join(' · ')}
+                      </div>
+                    </div>
+                  </div>
+                </div>
 
-            <Field label="Штрих-код (авто)">
-              <div style={{ position: 'relative' }}>
-                <input className="ios-input" value={poForm.barcode} onChange={(e) => setPoForm((f) => ({ ...f, barcode: e.target.value }))} style={{ paddingRight: 44 }} />
-                <button type="button" onClick={() => setPoForm((f) => ({ ...f, barcode: generateEAN13() }))} style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--primary)' }}>
-                  <FiRefreshCw size={16} />
-                </button>
-              </div>
-              <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4, fontWeight: 500 }}>
-                Сгенерирован автоматически — не совпадает с товарами на складе
-              </div>
-            </Field>
+                <Field label="Закуп за 1 шт. (юань ¥)" required>
+                  <input className="ios-input" type="number" min="0" step="0.01" placeholder="0.00" value={poForm.price_cny} onChange={(e) => setPoForm((f) => ({ ...f, price_cny: e.target.value }))} />
+                  {cnyKzt !== null && (
+                    <div style={{ fontSize: 12, color: 'var(--primary)', fontWeight: 700, marginTop: 4 }}>≈ ₸ {money(cnyKzt)} <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}>курс {cnyRate}</span></div>
+                  )}
+                </Field>
 
-            <Field label="Поставщик">
-              <input className="ios-input" placeholder="Имя или компания" value={poForm.supplier} onChange={(e) => setPoForm((f) => ({ ...f, supplier: e.target.value }))} />
-            </Field>
+                <div className="reserve-form-row">
+                  <Field label="Количество">
+                    <input className="ios-input" type="number" min="1" value={poForm.quantity_ordered} onChange={(e) => setPoForm((f) => ({ ...f, quantity_ordered: e.target.value }))} />
+                  </Field>
+                  <Field label="Поставщик">
+                    <input className="ios-input" placeholder="Имя или компания" value={poForm.supplier} onChange={(e) => setPoForm((f) => ({ ...f, supplier: e.target.value }))} />
+                  </Field>
+                </div>
+              </>
+            ) : (
+              <>
+                <Field label="Категория" required>
+                  <CategoryPicker
+                    tree={categoryTree}
+                    groupId={poForm.category_group_id}
+                    categoryId={poForm.category_id}
+                    onChange={({ groupId, categoryId }) => {
+                      const sub = findCategoryInTree(categoryTree, categoryId);
+                      setPoForm((f) => ({
+                        ...f,
+                        category_group_id: groupId,
+                        category_id: categoryId,
+                        category: sub?.name || f.category,
+                      }));
+                    }}
+                    stepCaption="Заказ"
+                    legacyCategoryText={poForm.category}
+                  />
+                </Field>
 
-            <div className="reserve-form-row">
-              <Field label="Цена (юань ¥)">
-                <input className="ios-input" type="number" min="0" step="0.01" placeholder="0.00" value={poForm.price_cny} onChange={(e) => setPoForm((f) => ({ ...f, price_cny: e.target.value }))} />
-                {cnyKzt !== null && (
-                  <div style={{ fontSize: 12, color: 'var(--primary)', fontWeight: 700, marginTop: 4 }}>≈ ₸ {money(cnyKzt)} <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}>курс {cnyRate}</span></div>
-                )}
-              </Field>
-              <Field label="Количество">
-                <input className="ios-input" type="number" min="1" value={poForm.quantity_ordered} onChange={(e) => setPoForm((f) => ({ ...f, quantity_ordered: e.target.value }))} />
-              </Field>
-            </div>
+                <Field label="Название" required>
+                  <input className="ios-input" value={poForm.name} onChange={(e) => setPoForm((f) => ({ ...f, name: e.target.value }))} />
+                </Field>
+
+                <div style={{ height: 1, background: 'var(--border)', margin: '6px 0 14px' }} />
+
+                <Field label="Стоимость за 1 товар (юань ¥)" required>
+                  <input className="ios-input" type="number" min="0" step="0.01" placeholder="0.00" value={poForm.price_cny} onChange={(e) => setPoForm((f) => ({ ...f, price_cny: e.target.value }))} />
+                  {cnyKzt !== null && (
+                    <div style={{ fontSize: 12, color: 'var(--primary)', fontWeight: 700, marginTop: 4 }}>≈ ₸ {money(cnyKzt)} <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}>курс {cnyRate}</span></div>
+                  )}
+                </Field>
+
+                <Field label="Поставщик">
+                  <input className="ios-input" placeholder="Имя или компания" value={poForm.supplier} onChange={(e) => setPoForm((f) => ({ ...f, supplier: e.target.value }))} />
+                </Field>
+
+                <Field label="Штрих-код">
+                  <div style={{ position: 'relative' }}>
+                    <input className="ios-input" value={poForm.barcode} onChange={(e) => setPoForm((f) => ({ ...f, barcode: e.target.value }))} style={{ paddingRight: 44 }} />
+                    <button type="button" onClick={() => setPoForm((f) => ({ ...f, barcode: generateEAN13() }))} style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--primary)' }}>
+                      <FiRefreshCw size={16} />
+                    </button>
+                  </div>
+                </Field>
+
+                <Field label="Количество">
+                  <input className="ios-input" type="number" min="1" value={poForm.quantity_ordered} onChange={(e) => setPoForm((f) => ({ ...f, quantity_ordered: e.target.value }))} />
+                </Field>
+              </>
+            )}
 
             <Field label="Доп. информация">
               <textarea className="ios-input" rows={2} value={poForm.notes} onChange={(e) => setPoForm((f) => ({ ...f, notes: e.target.value }))} style={{ resize: 'vertical' }} />
             </Field>
 
-            <div style={{ display: 'flex', gap: 10, marginTop: 4 }}>
-              <button type="button" onClick={() => setOrderWish(null)} style={{ flex: 1, padding: 13, borderRadius: 14, border: '1px solid var(--border)', background: 'var(--surface)', fontWeight: 600, fontSize: 14, cursor: 'pointer', color: 'var(--text-secondary)' }}>Отмена</button>
-              <button type="button" onClick={saveOrder} disabled={createPO.isPending} style={{ flex: 2, padding: 13, borderRadius: 14, border: 'none', background: 'linear-gradient(135deg,#6366f1,#7c3aed)', color: '#fff', fontWeight: 700, fontSize: 14, cursor: 'pointer' }}>
-                {createPO.isPending ? 'Оформление…' : '🚚 Заказать'}
+            <div className="reserve-modal-actions">
+              <button type="button" onClick={() => setOrderWish(null)} className="reserve-btn-ghost">Отмена</button>
+              <button type="button" onClick={saveOrder} disabled={createPO.isPending} className="reserve-btn-primary">
+                {createPO.isPending ? 'Оформление…' : 'Заказать'}
               </button>
             </div>
           </>
@@ -1186,6 +1555,12 @@ const Reserve = () => {
                   Заказано: <b>{acceptPO.quantity_ordered} шт.</b>
                   {acceptPO.quantity_received > 0 && <> · Принято: <b style={{ color: 'var(--success)' }}>{acceptPO.quantity_received} шт.</b></>}
                 </div>
+                {acceptExistingProduct && (
+                  <div style={{ fontSize: 12, fontWeight: 700, color: '#047857', marginTop: 6 }}>
+                    Приёмка в существующий товар · остаток {acceptExistingProduct.quantity ?? 0} шт.
+                    {acceptExistingProduct.sku ? ` · арт. ${acceptExistingProduct.sku}` : ''}
+                  </div>
+                )}
               </div>
             </div>
 
@@ -1241,7 +1616,7 @@ const Reserve = () => {
               )}
             </Field>
 
-            {acceptPO.category_id && acceptSubcategorySchema && (
+            {!acceptExistingProduct && acceptPO.category_id && acceptSubcategorySchema && (
               <div style={{ marginBottom: 16, padding: '12px 0', borderTop: '1px solid var(--border)' }}>
                 <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 12 }}>
                   Характеристики категории
@@ -1284,10 +1659,12 @@ const Reserve = () => {
               </div>
             )}
 
-            <div style={{ display: 'flex', gap: 10 }}>
-              <button type="button" onClick={() => { setAcceptPO(null); setAcceptForm(emptyAccept()); }} style={{ flex: 1, padding: 13, borderRadius: 14, border: '1px solid var(--border)', background: 'var(--surface)', fontWeight: 600, fontSize: 14, cursor: 'pointer', color: 'var(--text-secondary)' }}>Отмена</button>
-              <button type="button" onClick={saveAccept} disabled={acceptMutation.isPending} style={{ flex: 2, padding: 13, borderRadius: 14, border: 'none', background: 'linear-gradient(135deg,#10b981,#059669)', color: '#fff', fontWeight: 700, fontSize: 14, cursor: 'pointer' }}>
-                {acceptMutation.isPending ? 'Добавление…' : '✅ Добавить в склад'}
+            <div className="reserve-modal-actions">
+              <button type="button" onClick={() => { setAcceptPO(null); setAcceptForm(emptyAccept()); }} className="reserve-btn-ghost">Отмена</button>
+              <button type="button" onClick={saveAccept} disabled={acceptMutation.isPending} className="reserve-btn-success">
+                {acceptMutation.isPending
+                  ? 'Сохранение…'
+                  : (acceptExistingProduct ? 'Добавить к товару' : 'Добавить в склад')}
               </button>
             </div>
           </>

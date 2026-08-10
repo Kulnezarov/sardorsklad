@@ -606,6 +606,9 @@ class WishItemCreate(BaseModel):
     brand: Optional[str] = Field(None, max_length=100)
     category: Optional[str] = Field(None, max_length=100)
     category_id: Optional[int] = Field(None, ge=1)
+    product_id: Optional[int] = Field(None, ge=1)
+    quantity: int = Field(1, gt=0)
+    compatibility_vehicle_model_ids: Optional[List[int]] = None
     notes: Optional[str] = None
     photo_data: Optional[str] = None   # base64
 
@@ -615,6 +618,9 @@ class WishItemUpdate(BaseModel):
     brand: Optional[str] = None
     category: Optional[str] = None
     category_id: Optional[int] = Field(None, ge=1)
+    product_id: Optional[int] = Field(None, ge=1)
+    quantity: Optional[int] = Field(None, gt=0)
+    compatibility_vehicle_model_ids: Optional[List[int]] = None
     notes: Optional[str] = None
     photo_data: Optional[str] = None
 
@@ -625,6 +631,9 @@ class WishItemResponse(BaseModel):
     brand: Optional[str]
     category: Optional[str]
     category_id: Optional[int]
+    product_id: Optional[int] = None
+    quantity: int = 1
+    compatibility_vehicle_model_ids: Optional[List[int]] = None
     notes: Optional[str]
     photo_data: Optional[str]
     status: str
@@ -636,6 +645,7 @@ class WishItemResponse(BaseModel):
 # ── PurchaseOrder schemas ─────────────────────────────────────────────────────
 class PurchaseOrderCreate(BaseModel):
     wish_item_id: Optional[int] = None
+    product_id: Optional[int] = Field(None, ge=1)
     name: str = Field(..., min_length=1, max_length=255)
     brand: Optional[str] = None
     category: Optional[str] = None
@@ -676,6 +686,7 @@ class PurchaseOrderUpdate(BaseModel):
 class PurchaseOrderResponse(BaseModel):
     id: int
     wish_item_id: Optional[int]
+    product_id: Optional[int] = None
     name: str
     brand: Optional[str]
     category: Optional[str]
@@ -709,6 +720,8 @@ class AcceptToStockPayload(BaseModel):
     attributes: Optional[dict[str, Any]] = None
     compatibility_vehicle_model_ids: Optional[List[int]] = None
     compatibility_engine_family_ids: Optional[List[int]] = None
+    # Явно принять в существующий товар (иначе берётся order.product_id / barcode)
+    product_id: Optional[int] = Field(None, ge=1)
 
     @field_validator('purchase_price_kzt', 'delivery_cost_kzt', 'sale_price_kzt', mode='before')
     @classmethod
@@ -845,6 +858,9 @@ class DashboardAlertItem(BaseModel):
     kind: str  # out_of_stock | low_stock | stale
     category: Optional[str] = None
     brand: Optional[str] = None
+    category_id: Optional[int] = None
+    needs_category_refresh: bool = False
+    is_legacy_category: bool = False
 
 
 class DashboardRecentSaleRow(BaseModel):

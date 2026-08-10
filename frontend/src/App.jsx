@@ -1,4 +1,4 @@
-import React, { Component, useState } from 'react';
+import React, { Component, useEffect, useState } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider } from './auth/AuthContext';
 import PrivateRoute from './auth/PrivateRoute';
@@ -18,6 +18,7 @@ import Intake from './pages/Intake';
 import NotFoundPage from './pages/NotFoundPage';
 import OnlineOverlay from './components/OnlineOverlay';
 import MobileAppDock from './components/MobileAppDock';
+import { useMediaQuery, MOBILE_MAX_WIDTH_QUERY } from './utils/useMediaQuery';
 
 class ErrorBoundary extends Component {
   constructor(props) { super(props); this.state = { hasError: false, error: null }; }
@@ -46,11 +47,18 @@ class ErrorBoundary extends Component {
 
 function AppShell() {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const isMobile = useMediaQuery(MOBILE_MAX_WIDTH_QUERY);
+
+  useEffect(() => {
+    if (isMobile) setIsMenuOpen(false);
+  }, [isMobile]);
 
   return (
     <div className="app app--mobile-dock">
       <CnyRateSync />
-      <Sidebar isOpen={isMenuOpen} onClose={() => setIsMenuOpen(false)} />
+      {!isMobile && (
+        <Sidebar isOpen={isMenuOpen} onClose={() => setIsMenuOpen(false)} />
+      )}
       <div className="main-content">
         <TopBar onMenuClick={() => setIsMenuOpen((prev) => !prev)} />
         <div className="content-area content-area--mobile-dock" onClick={() => isMenuOpen && setIsMenuOpen(false)}>

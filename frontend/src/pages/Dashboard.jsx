@@ -202,11 +202,13 @@ const Dashboard = () => {
     navigate('/reserve', {
       state: {
         prefillWish: {
+          product_id: a.id || null,
           name: a.name || '',
           brand: a.brand || '',
           category_id: a.category_id || null,
           category: a.category || '',
           photo_data: a.image_url || '',
+          quantity: 1,
           notes: parts.join(' · '),
         },
       },

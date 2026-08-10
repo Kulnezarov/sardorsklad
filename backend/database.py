@@ -556,6 +556,66 @@ def ensure_schema_updates():
         "purchase_orders.backfill_category_id",
     )
 
+    # Резерв: связь со складом, количество, совместимость авто
+    _exec_schema_sql(
+        "ALTER TABLE wish_items ADD COLUMN IF NOT EXISTS product_id INTEGER",
+        "wish_items.product_id",
+    )
+    _exec_schema_sql(
+        "ALTER TABLE wish_items ADD COLUMN IF NOT EXISTS quantity INTEGER DEFAULT 1 NOT NULL",
+        "wish_items.quantity",
+    )
+    _exec_schema_sql(
+        "ALTER TABLE wish_items ADD COLUMN IF NOT EXISTS compatibility_vehicle_model_ids JSONB",
+        "wish_items.compatibility_vehicle_model_ids",
+    )
+    _exec_schema_sql(
+        "ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS product_id INTEGER",
+        "purchase_orders.product_id",
+    )
+    _exec_schema_sql(
+        "CREATE INDEX IF NOT EXISTS idx_wish_items_product_id ON wish_items(product_id)",
+        "wish_items.idx_product_id",
+    )
+    _exec_schema_sql(
+        "CREATE INDEX IF NOT EXISTS idx_purchase_orders_product_id ON purchase_orders(product_id)",
+        "purchase_orders.idx_product_id",
+    )
+    _exec_schema_sql(
+        """
+        DO $$
+        BEGIN
+          IF NOT EXISTS (
+            SELECT 1 FROM pg_constraint WHERE conname = 'fk_wish_items_product_id'
+          ) THEN
+            ALTER TABLE wish_items
+            ADD CONSTRAINT fk_wish_items_product_id
+            FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE SET NULL;
+          END IF;
+        EXCEPTION WHEN undefined_table THEN
+          NULL;
+        END $$;
+        """,
+        "wish_items.fk_product_id",
+    )
+    _exec_schema_sql(
+        """
+        DO $$
+        BEGIN
+          IF NOT EXISTS (
+            SELECT 1 FROM pg_constraint WHERE conname = 'fk_purchase_orders_product_id'
+          ) THEN
+            ALTER TABLE purchase_orders
+            ADD CONSTRAINT fk_purchase_orders_product_id
+            FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE SET NULL;
+          END IF;
+        EXCEPTION WHEN undefined_table THEN
+          NULL;
+        END $$;
+        """,
+        "purchase_orders.fk_product_id",
+    )
+
     ensure_compatibility_tables()
     ensure_compatibility_table_columns()
 

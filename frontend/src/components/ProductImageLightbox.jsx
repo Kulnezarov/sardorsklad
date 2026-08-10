@@ -1,7 +1,22 @@
-import React, { useCallback, useEffect } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { FiChevronLeft, FiChevronRight, FiX } from 'react-icons/fi';
+import { FiChevronLeft, FiChevronRight, FiDownload, FiX } from 'react-icons/fi';
 import { resolveUploadedAssetUrl } from '../api/client';
+
+function fileNameFromUrl(url, title, index) {
+  try {
+    const clean = String(url || '').split('?')[0];
+    const last = clean.split('/').filter(Boolean).pop();
+    if (last && last.includes('.')) return last;
+  } catch (_) {
+    /* ignore */
+  }
+  const base = String(title || 'photo')
+    .trim()
+    .replace(/[^\w\-а-яА-ЯёЁ]+/g, '_')
+    .slice(0, 40);
+  return `${base || 'photo'}_${index + 1}.jpg`;
+}
 
 export default function ProductImageLightbox({
   urls = [],
@@ -14,6 +29,7 @@ export default function ProductImageLightbox({
   const n = safeUrls.length;
   const current = n > 0 ? Math.min(Math.max(0, index), n - 1) : 0;
   const src = n > 0 ? resolveUploadedAssetUrl(safeUrls[current]) : '';
+  const [downloading, setDownloading] = useState(false);
 
   const goPrev = useCallback(() => {
     if (n <= 1) return;
@@ -24,6 +40,29 @@ export default function ProductImageLightbox({
     if (n <= 1) return;
     onIndexChange?.((current + 1) % n);
   }, [n, current, onIndexChange]);
+
+  const downloadCurrent = useCallback(async () => {
+    if (!src || downloading) return;
+    setDownloading(true);
+    try {
+      const res = await fetch(src, { credentials: 'include' });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const blob = await res.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = objectUrl;
+      a.download = fileNameFromUrl(src, title, current);
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(objectUrl);
+    } catch (_) {
+      // Fallback: open in new tab if blob download blocked
+      window.open(src, '_blank', 'noopener,noreferrer');
+    } finally {
+      setDownloading(false);
+    }
+  }, [src, downloading, title, current]);
 
   useEffect(() => {
     if (!n) return undefined;
@@ -53,9 +92,24 @@ export default function ProductImageLightbox({
             {current + 1} / {n}
           </span>
         ) : null}
-        <button type="button" className="product-image-lightbox__close" onClick={onClose} aria-label="Закрыть">
-          <FiX size={22} />
-        </button>
+        <div className="product-image-lightbox__actions">
+          <button
+            type="button"
+            className="product-image-lightbox__download"
+            onClick={(e) => {
+              e.stopPropagation();
+              downloadCurrent();
+            }}
+            disabled={downloading}
+            aria-label="Скачать фото"
+            title="Скачать фото"
+          >
+            <FiDownload size={20} />
+          </button>
+          <button type="button" className="product-image-lightbox__close" onClick={onClose} aria-label="Закрыть">
+            <FiX size={22} />
+          </button>
+        </div>
       </div>
       <div className="product-image-lightbox__stage" onClick={(e) => e.stopPropagation()}>
         {n > 1 ? (

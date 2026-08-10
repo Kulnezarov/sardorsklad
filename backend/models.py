@@ -608,6 +608,9 @@ class WishItem(Base):
     brand = Column(String(100), nullable=True)
     category = Column(String(100), nullable=True)
     category_id = Column(Integer, ForeignKey("categories.id", ondelete="SET NULL"), nullable=True, index=True)
+    product_id = Column(Integer, ForeignKey("products.id", ondelete="SET NULL"), nullable=True, index=True)
+    quantity = Column(Integer, nullable=False, default=1)
+    compatibility_vehicle_model_ids = Column(JSONB, nullable=True)  # [vehicle_model_id, ...]
     notes = Column(Text, nullable=True)
     photo_data = Column(Text, nullable=True)   # base64 compressed image
     status = Column(String(20), default='pending', nullable=False, index=True)
@@ -617,13 +620,14 @@ class WishItem(Base):
 
     # Relationships
     purchase_orders = relationship("PurchaseOrder", back_populates="wish_item")
-
+    product = relationship("Product", foreign_keys=[product_id])
     category_rel = relationship("Category", foreign_keys=[category_id])
 
     __table_args__ = (
         Index('idx_wish_items_status', 'status'),
         Index('idx_wish_items_created_at', 'created_at'),
         Index('idx_wish_items_category_id', 'category_id'),
+        Index('idx_wish_items_product_id', 'product_id'),
     )
 
 
@@ -635,6 +639,7 @@ class PurchaseOrder(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     wish_item_id = Column(Integer, ForeignKey("wish_items.id", ondelete="SET NULL"), nullable=True)
+    product_id = Column(Integer, ForeignKey("products.id", ondelete="SET NULL"), nullable=True, index=True)
 
     name = Column(String(255), nullable=False)
     brand = Column(String(100), nullable=True)
@@ -661,6 +666,7 @@ class PurchaseOrder(Base):
 
     # Relationships
     wish_item = relationship("WishItem", back_populates="purchase_orders")
+    product = relationship("Product", foreign_keys=[product_id])
     category_rel = relationship("Category", foreign_keys=[category_id])
 
     __table_args__ = (
@@ -668,6 +674,7 @@ class PurchaseOrder(Base):
         Index('idx_purchase_orders_ordered_at', 'ordered_at'),
         Index('idx_purchase_orders_wish_item', 'wish_item_id'),
         Index('idx_purchase_orders_category_id', 'category_id'),
+        Index('idx_purchase_orders_product_id', 'product_id'),
     )
 
 
